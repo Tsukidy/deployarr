@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Roadmap
+    url: https://github.com/Tsukidy/deployarr/blob/main/docs/roadmap.md
+    about: The milestones and the check that ends each one.

@@ -1,0 +1,31 @@
+name: Idea or change
+description: A new feature or a change to deployarr. One change per issue.
+labels: [enhancement, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Triage turns this into an agent brief, or asks you questions first. Check [`.out-of-scope/`](https://github.com/Tsukidy/deployarr/tree/main/.out-of-scope) and the roadmap's list of later work before you file.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What goes wrong or is missing today, from the point of view of a technician or an admin.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: Proposed change
+      description: What deployarr should do instead. Describe the behavior, not the code.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This issue is about one change.
+          required: true
+        - label: I searched open and closed issues for a duplicate.
+          required: true

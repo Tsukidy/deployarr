@@ -1,0 +1,45 @@
+name: Bug
+description: Something deployarr does wrong. One bug per issue.
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Put the steps to reproduce first and keep it short. Triage reproduces the bug before an agent works on it.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The smallest steps that show the bug, and what deployarr did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Where it happened
+      description: The task sequence, the PC model or VM, and the firmware type.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The agent's CMTrace log lines and the server log around the failure. Remove secrets first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This issue is about one problem.
+          required: true
+        - label: I searched open and closed issues for a duplicate.
+          required: true
