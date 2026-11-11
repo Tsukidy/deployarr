@@ -1,5 +1,7 @@
 # ConfigMgr 2509 OS deployment components
 
+This is the first report from the ConfigMgr 2509 analysis. [ConfigMgr 2509 OSD reference](../configmgr-2509.md) is the maintained page for this source, and it adds the PXE responder. This folder keeps the report with its REA evidence IDs, the generated [step catalog](task-sequence-steps.md), and the [binary inventory](osd-x64-inventory.tsv).
+
 What ConfigMgr 2509's installer ships for operating system deployment (OSD),
 and what that means for Windows 11 deployments. The question going in was
 whether ConfigMgr carries updated MDT components.

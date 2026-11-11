@@ -13,6 +13,7 @@ This page records what Configuration Manager (ConfigMgr) 2509 ships for operatin
 - `OSD/bin/x64/OsdPrestartCheck.exe` carries an Authenticode signature from Microsoft Corporation, issued by Microsoft Code Signing PCA 2011. REA decoded the certificate table but did not verify the chain.
 - One agent wrote each claim and re-opened its citation before writing it. Claims marked "inferred" come from names, strings, or partial code.
 - `tools/re/configmgr-osd/reproduce.sh` repeats the download, the MDT search, the binary inventory, and the step catalog. See [ConfigMgr 2509 in the agent guide](../../AGENTS.md#configmgr-2509).
+- [configmgr-2509-osd](configmgr-2509-osd/README.md) holds the first report from this analysis, with its REA evidence IDs, plus the generated [step catalog](configmgr-2509-osd/task-sequence-steps.md) and [binary inventory](configmgr-2509-osd/osd-x64-inventory.tsv).
 
 ## MDT components
 

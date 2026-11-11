@@ -17,6 +17,7 @@ The repository holds design documents only. There is no code yet. The next miles
 | `docs/research/mdt-8456.md` | How MDT 8456 scripts and templates implement each feature, with citations |
 | `docs/research/mdt-8450-binaries.md` | What MDT's compiled components do, from the 8450 installer |
 | `docs/research/configmgr-2509.md` | What ConfigMgr 2509 ships for OS deployment, how its steps handle Windows 11, and how its PXE responder boots WinPE without WDS |
+| `docs/research/configmgr-2509-osd/` | The first ConfigMgr 2509 report, the generated step catalog, and the binary inventory |
 | `tools/re/configmgr-osd/` | Scripts that rebuild the ConfigMgr research from the installer |
 
 ## Rules for changes
