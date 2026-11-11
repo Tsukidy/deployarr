@@ -1,13 +1,15 @@
-## Why
+## Summary
 
-<!-- The goal of this change, in one or two sentences. -->
+<!-- The smallest view that makes the change clear: a diff sketch, a file tree, a call tree, pseudocode, or a Mermaid diagram. Keep prose short. -->
 
-## What
+## Evidence
 
-<!-- The changes, as a short list. -->
+<!-- Before and after. A test that failed and now passes, command output, or a screenshot. -->
 
-## Checks
+## Merge danger
 
-<!-- What you ran, and what passed. -->
+**Door:** <!-- one-way or two-way. A two-way door is cheap to roll back. -->
+
+**Blast radius:** <!-- one word, then what could break if this is wrong -->
 
 <!-- Link the issue so that merging closes it. Write: Closes #<number> -->

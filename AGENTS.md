@@ -19,6 +19,8 @@ The repository holds design documents only. There is no code yet. The next miles
 | `docs/research/configmgr-2509.md` | What ConfigMgr 2509 ships for OS deployment, how its steps handle Windows 11, and how its PXE responder boots WinPE without WDS |
 | `docs/research/configmgr-2509-osd/` | The first ConfigMgr 2509 report, the generated step catalog, and the binary inventory |
 | `tools/re/configmgr-osd/` | Scripts that rebuild the ConfigMgr research from the installer |
+| `docs/agents/` | The issue workflow: the tracker operations, the triage labels, and the agent brief and ticket layouts |
+| `.out-of-scope/` | One page per rejected enhancement, with the reason. Its README gives the format. |
 | `tools/check_docs.py` | The docs check that CI runs: links, anchors, em and en dashes, and curly quotes |
 | `.github/` | Issue forms, the pull request template, labels, workflows, and `CODEOWNERS` |
 
@@ -32,29 +34,46 @@ The repository holds design documents only. There is no code yet. The next miles
 
 ## Work tracking with issues
 
-GitHub issues hold the project's work. [Roadmap](docs/roadmap.md) sets the order, and issues hold the details.
+GitHub issues hold the project's work. [Roadmap](docs/roadmap.md) sets the order, and issues hold the details. The labels and rules follow [mattpocock/skills](https://github.com/mattpocock/skills). The pages in `docs/agents/` give the details.
 
-### Find and claim work
+### Agent skills
+
+- Issue tracker: GitHub Issues on `Tsukidy/deployarr`, through the GitHub MCP tools in cloud sessions. See `docs/agents/issue-tracker.md`.
+- Triage labels: the canonical names, unchanged, plus `epic` and `area:*`. See `docs/agents/triage-labels.md`.
+- Agent briefs and the ticket layout: see `docs/agents/agent-brief.md`.
+
+### Labels
+
+- Every issue carries exactly one category label, `bug` or `enhancement`, and exactly one state label: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`.
+- An epic is the exception. It carries `epic` and no category or state. Each roadmap milestone has one, and its sub-issues are the milestone's tickets.
+- `area:*` labels are optional and can be combined.
+- Copy label names from `.github/labels.json`. To add a label or change its color or description, edit that file. To rename or remove one, open an issue for the owner, because the Labels workflow never renames or deletes.
+
+### Write tickets
+
+- When you break work into tickets, publish them yourself and label each one. Use `ready-for-agent` when an agent can finish it from a cloud session. Use `ready-for-human` when it needs the owner's judgment, the VM lab, real hardware, external access, or manual testing, and say which. Your tickets are specified by construction, so they skip triage, and the owner does not label them.
+- Write each body in the ticket layout from `docs/agents/agent-brief.md`. Make each ticket a sub-issue of its epic.
+- Publish blockers first, then list them in each ticket's `## Blocked by` section by number. The Blocked by workflow turns the section into native GitHub links.
+- When you find work outside your current ticket, open a ticket for it instead of doing it.
+- A question only the owner can answer is an `enhancement` labeled `ready-for-human`. State the question, the options, and the milestone it blocks. Before you open one, search the open issues for the same question.
+
+### Take a ticket
 
 - If your prompt names an issue, work on that issue.
-- Otherwise, pick an open issue that is labeled `agent-ready`, has none of `in-progress`, `blocked`, `needs-owner`, or `needs-lab`, and whose "Depends on" issues are all closed.
-- To claim it, add the `in-progress` label and comment `Claimed by branch <branch>`. Then read the comments again. If an earlier claim comment exists, remove your label and your comment and pick another issue. Two agents can look at the same issue at once, and this check settles which one keeps it.
-- If you get stuck, replace `in-progress` and `agent-ready` with `blocked`, and comment on what blocks you. The owner adds `agent-ready` again once it is unblocked.
-
-### Write issues
-
-- Each roadmap milestone has an epic issue labeled `epic`. Its sub-issues are the milestone's tasks. When work on a milestone starts, break it into task issues under its epic.
-- A task issue says what to change, what to read first, how to tell it is done, and which issues it depends on, as `#<number>`. Follow the layout of the form in `.github/ISSUE_TEMPLATE/task.yml`, and set the issue type to Task.
-- Issues you create through the API do not get a form's labels. Add them yourself. Copy label names from `.github/labels.json`.
-- Only the owner adds `agent-ready`. When you create task issues, leave it off and tell the owner they are ready for review.
-- When you find work outside your task, open an issue for it instead of doing it.
-- A question only the owner can answer goes in an issue labeled `decision` and `needs-owner`. Do not decide it yourself. Before you open one, search the open issues labeled `decision` for the same question.
-- Work that needs the VM lab or real hardware gets `needs-lab`. Cloud sessions cannot run it.
-
-### Close and label
-
+- Otherwise, take the first ticket on the frontier: open, `ready-for-agent`, unassigned, and with every issue in its `## Blocked by` section closed. Never take an issue in any other state.
+- Claim it before any other work. Assign it to yourself, comment `Claimed by branch <branch>`, then read the comments again for an earlier claim. `docs/agents/issue-tracker.md` gives the steps.
+- If you get stuck on something only a human can resolve, move the issue to `ready-for-human`, remove yourself as assignee, and comment on what you need.
 - In the pull request, write `Closes #<number>` so that merging closes the issue.
-- `.github/labels.json` defines the labels. To add a label or change its color or description, edit that file. A workflow applies the change when it reaches `main`. To rename or remove a label, open an issue for the owner, because the workflow never renames or deletes.
+
+### Triage
+
+Triage is for issues the owner or anyone else files by hand. They arrive with `needs-triage`. An agent triages only when the owner asks, and it recommends a state and waits for the owner's answer before it applies one.
+
+- Every triage comment starts with `> *This was generated by AI during triage.*`
+- Before you recommend a state, check whether the request is already implemented, and read `.out-of-scope/` for an earlier rejection of the same idea.
+- For a bug, reproduce it before it reaches `ready-for-agent`.
+- `ready-for-agent` and `ready-for-human` get an agent brief comment. `needs-info` gets triage notes: what is established, and specific questions for the reporter.
+- `wontfix` closes the issue as not planned. If the work already exists, point to it. If an enhancement is rejected, record it in `.out-of-scope/` as its README describes, and link the page from the closing comment.
 
 ## Branches and pull requests
 
@@ -62,6 +81,7 @@ Several agents can work in this repository at once. Each one delivers its work t
 
 - Do not commit to `main` directly. Work on your own branch, made from the latest `main`.
 - When the work is ready, push the branch and open a pull request into `main`. Keep each pull request to one change.
+- Fill in the pull request template. Summary shows the change with the smallest view that makes it clear, such as a diff sketch, a tree, or pseudocode. Evidence shows a before and an after, such as a failing and then passing test. Merge danger says whether the change is a one-way or a two-way door, and names its blast radius. The template comes from the `pr` skill in mattpocock/skills.
 - The repository owner merges pull requests with squash and merge. The repository setting "Automatically delete head branches" is on, so GitHub deletes a pull request's branch when it is merged. Do not delete branches yourself. An agent's GitHub access may not allow it anyway. If a merged branch is still there, tell the owner.
 - After your pull request is merged, start any follow-up work on a new branch from the latest `main`. If your session can push only to one branch, merge the latest `main` into that branch first, then open a new pull request. Do not rebase or force-push a branch that others may have fetched.
 - A closed pull request that was not merged leaves its branch behind. Tell the owner about it.

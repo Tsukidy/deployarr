@@ -1,0 +1,34 @@
+name: Blocked by
+
+# Mirrors each issue's `## Blocked by` section into GitHub's native
+# "blocked by" links, which the GitHub MCP tools cannot create.
+# See docs/agents/issue-tracker.md.
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions: {}
+
+concurrency:
+  group: blocked-by-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Blocked by
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/sync_blocked_by.py
+          sparse-checkout-cone-mode: false
+      - name: Sync the native links with the Blocked by section
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+        run: python3 tools/sync_blocked_by.py "$NUMBER"
