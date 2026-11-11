@@ -30,7 +30,122 @@ The 8456 `Client.xml` and `Server.xml` templates add an "Apply Patches" step. Th
 
 ## Task sequence engine
 
-The analysis of `TsCore.dll`, `TsManager.exe`, and `TsmBootstrap.exe` is still running. This section will hold its verified results.
+The engine is three binaries. `TsmBootstrap.exe` starts or resumes a run. `TsManager.exe` runs the steps. `TsCore.dll` holds the shared code: the XML parser, the condition evaluator, the variable store, and logging. MDT runs the engine in what the code calls standalone mode. Citations such as `TsCore!0x18019c384` name a Ghidra function address, and the pseudocode for it is in `TsCore/functions/0x18019c384.c` of the export.
+
+### Start and resume
+
+- MDT starts the engine with `TsmBootstrap.exe /env:SAStart` for a new run or `/env:SAContinue` to resume (`LiteTouch.wsf:835-847`). The other modes (`FullOS`, `Gina`, `WinPE`, `/configpath`) serve ConfigMgr media and PXE (`TsmBootstrap!0x140029e80`).
+- SAStart creates the variable store. It loads `variables.dat` and `TS.XML` from its own folder and stores the whole `TS.XML` in the variable `_SMSTSTaskSequence`. It then puts `_SMSTaskSequence` on the fixed volume with the most free space, deleting any existing folder of that name, and sets `_SMSTSStandAloneMode=true`. Last, it runs `TsManager.exe /standalone` as a child process and returns its exit code (`TsmBootstrap!0x14002cc68`, `TsmBootstrap!0x140061668`).
+- No minimum free space applies. On a blank disk in WinPE no fixed volume exists, and every state save fails until one does (inferred from `TsCore!0x1801b5b0c` and `TsCore!0x180132fdc`). The engine never keeps its state on the WinPE RAM disk.
+- SAContinue resumes from the `\_SMSTaskSequence\TSEnv.dat` with the newest last-access time on any fixed drive (`TsmBootstrap!0x14005b094`). `LiteTouch.wsf` takes the first fixed drive that has one instead, so the two can pick different copies.
+- TsmBootstrap holds the mutex `Global\TSMBootStrapMutex`, so only one run can start at a time. TsManager has no lock of its own (`TsmBootstrap!0x1400300c0`).
+- TsManager rebuilds its instruction table from `_SMSTSTaskSequence` every time it starts. The sequence is therefore frozen at the first launch.
+
+### Instruction table and failure handling
+
+- Each group compiles to a BeginGroup entry, its children, and an EndGroup entry. The BeginGroup entry stores the index after its EndGroup. Disabled groups and steps stay in the table with a flag, which is set only when `disable` is exactly `true` (`TsCore!0x18019d2b8`, `TsCore!0x18019dacc`).
+- The step parser reads `name`, `type`, `description`, `continueOnError`, `successCodeList`, `retryCount`, `disable`, `runIn`, `timeout`, and `<action>`. It never reads `startIn`, so the 46 `startIn` attributes in `Client.xml` have no effect (`TsCore!0x18019dacc`).
+- When a step fails and has `continueOnError`, the run continues. Otherwise the engine takes the enclosing group from a runtime stack. A group with `continueOnError` jumps past its EndGroup, and a group without it passes the failure up. With no group left, the run stops (`TsManager!0x140033090`, `TsManager!0x140032bb8`). The stack is saved as `_SMSTSInstructionStackString` and rebuilt on resume, without checking group conditions again (`TsManager!0x14002ab7c`).
+- If the engine's own work for a step fails, such as applying the step's variables or launching the command, the whole run stops and `continueOnError` is ignored (`TsManager!0x14002f6f4`).
+- A step with `runIn="WinPE"` that the engine reaches in the full OS, or `runIn="FullOS"` in WinPE, fails with error `0x80070032`. It is not skipped. Any other value, including `WinPEandFullOS`, places no limit (`TsManager!0x1400327cc`).
+- An exit code must match an entry in `successCodeList` exactly. The engine has no default, so an empty list fails every exit code, including 0 (`TsManager!0x140035ea4`, `TsManager!0x140036040`). The `0 3010` lists come from the templates.
+- Steps can have a `timeout` attribute in seconds (empty means no limit) and a `retryCount` attribute (default 0). The MDT templates set neither (`TsManager!0x14002c984`).
+- The engine sets no user token, so child processes run in TsManager's own account and environment (`TsManager!0x140033c10`).
+
+### Conditions
+
+- The engine parses conditions when it loads the sequence and evaluates each one when it reaches its group or step. A false group condition jumps past the group. A false step condition skips the step and leaves the `_SMSTSLastAction*` variables unchanged (`TsManager!0x140033664`, `TsManager!0x140033c10`).
+- There are ten expression types, matched case-sensitively: Variable, File, Folder, OS, Registry, WMI, Software, Computer, MakeModel, and Location. The `<condition>` element acts as an AND of its children. The operator nodes are `and`, `or`, and `not` (`TsCore!0x18019c384`).
+- Operators are matched without regard to case: Exists, NotExists, Equals, NotEquals, Less, LessEqual, Greater, GreaterEqual, Like, AnyVersion, and ThisVersion (`TsCore!0x1801ab0b0`).
+- A Variable condition compares as integers when both sides are digits with an optional leading `-`. Otherwise it compares strings without regard to case. Like uses `PathMatchSpecW` wildcards. Exists means "not empty", so an unset variable and an empty one look the same. Comparing against an empty Value is an error (`TsCore!0x1801a96c0`).
+- Every parameter, including the variable name and the WMI query, is `%VAR%`-expanded when the condition runs (`TsCore!0x1801a96c0`).
+- An empty AND is true, and so is an empty OR. A NOT with several children means "none of them is true" (`TsCore!0x1801a0dc0`, `TsCore!0x1801a55e8`, `TsCore!0x1801a53e4`).
+- A missing file, folder, registry key, or registry value makes the condition false. File versions are compared as four 16-bit fields, and dates are compared with the last-write time to the second (`TsCore!0x1801a2494`). Registry conditions accept only full hive names and only `REG_DWORD`, `REG_SZ`, and `REG_EXPAND_SZ` values (`TsCore!0x1801a6bec`).
+- A WMI condition is true when the query returns at least one row. A failed query is an error unless the expression has `ignoreQueryFailure="true"` (`TsCore!0x1801aa380`).
+- A Software condition checks an MSI ProductCode or UpgradeCode with `MsiGetProductInfoW` and `MsiEnumRelatedProductsW`. It compares no versions (`TsCore!0x1801a8800`).
+- MakeModel, Location, and Computer conditions use substring tests against the gathered facts. A gateway condition of `10.0.0.1` therefore also matches `10.0.0.10` (`TsCore!0x1801a4c28`, `TsCore!0x1801a4784`, `TsCore!0x1801a0fc4`).
+- A condition that fails to evaluate is not false. It fails the step the same way a failed command does, with `_SMSTSLastActionRetCode` set to the error code (`TsManager!0x140033c10`).
+
+### Variables
+
+- The variable store is two 32 MB named shared-memory sections. One holds global variables, and the other holds the current step's default variables. Each value is encrypted with AES-256 under a random key that is stored in `HKLM\Software\Microsoft\SMS` and readable by Administrators and SYSTEM. Nothing locks the store (`TsCore!0x180137e60`, `TsCore!0x180137180`).
+- `Microsoft.SMS.TSEnvironment` is an in-process COM object in `TsCore.dll`. Every script, and `TSEnv.exe "Name=Value"`, maps the sections and changes them directly. Nothing tells TsManager (`TsCore!0x1801f3738`, `TSEnv!0x140002794`).
+- A name is 1 to 256 letters, digits, `_`, or `-` after trimming, and lookups ignore case. Scripts cannot set a name that starts with `_`. The COM object's `Clear()` method still erases every variable, the engine's included (`TsCore!0x18012c52c`).
+- A lookup reads the global value first and uses the step's default only when the global value is empty. Values in `globalVarList` only fill variables that are still empty. A step's `defaultVarList` is applied before its condition is evaluated and cleared when the step ends (`TsCore!0x18012d248`, `TsManager!0x14002273c`, `TsManager!0x140033c10`).
+- `%VAR%` expansion recurses up to 10 levels, and `%%` stands for a literal `%`. An undefined name stays as written, and the result then goes through `ExpandEnvironmentStringsW`, so process environment variables fill the gaps. The expander scans inserted text again, so storing `%%A%%` in a variable named `A` makes expansion loop forever (`TsCore!0x18012cc00`). Scripts always receive expanded values (`TsCore!0x1801f34e4`).
+- The engine logs command lines before expansion. It has no list of sensitive names (`TsManager!0x14002c43c`).
+- The engine sets `_SMSTSCurrentActionName`, `_SMSTSNextInstructionPointer`, `_SMSTSInstructionTableSize`, `_SMSTSInstructionStackString`, `_SMSTSLastActionSucceeded`, `_SMSTSLastActionRetCode`, `_SMSTSLastActionRetryCount`, `_SMSTSLogPath`, `_SMSTSMDataPath`, `_SMSTSBootUEFI`, `_SMSTSInWinPE`, and `_SMSTSStandAloneMode`. A skipped step leaves the last-action variables unchanged.
+
+### State file
+
+- Only global variables are saved, to `%_SMSTSMDataPath%\TSEnv.dat`. The file is XML encrypted with AES-128 under a key derived from the SMBIOS UUID and a constant GUID, so anyone holding both the disk and the machine can read it (`TsCore!0x1801fc884`).
+- The engine writes the file in place with `CreateFileW(..., CREATE_ALWAYS)`. There is no temporary file, flush, or rename (`TsCore!0x1801fd080`).
+- The engine saves after each completed step, with the pointer already past that step. Nothing is written before a step starts, and skipped steps are not saved. After a power loss, the interrupted step runs again (`TsManager!0x14002f6f4`, `TsManager!0x140033c10`).
+- If a save fails, the engine logs a warning and moves on to the next step (`TsManager!0x14002f6f4`).
+
+### Reboots
+
+- A step requests a reboot by setting `SMSTSRebootRequested` to any non-empty value. Setting `SMSTSRetryRequested` as well makes the same step run again after the reboot. A retry request without a reboot request is a fatal error (`TsManager!0x14002d174`).
+- Exit code 3010 never causes a reboot.
+- Before a reboot, the engine creates the volatile registry key `HKLM\Software\Microsoft\SMS\Task Sequence\PendingReboot`, which Windows removes at restart. The engine refuses to resume while the key exists (`TsManager!0x14002f544`, `TsManager!0x1400215ac`).
+- In standalone mode, the engine does not reboot. It logs `Skipped RebootSystem()` and exits with `0x80070BC2` (`TsManager!0x140023876`), and `LiteTouch.wsf` does the reboot. `Smsboot.exe /target:WINPE` or `/target:HD` only sets `SMSTSRebootRequested` (`Smsboot!0x140003850`).
+- For a retry, the engine moves the pointer back without saving. Any variables the retrying step changed are lost unless a script saved them itself (`TsManager!0x14002f6f4`).
+- The handling of an outside shutdown during a step (exit code 1115 and the `retryCount` attribute) runs only when TsManager is the ConfigMgr service, never in MDT (`TsManager!0x1400215ac`).
+- ConfigMgr's own code for staging WinPE on disk, which copies `boot.wim` and creates a RAM disk BCD entry through WMI, is in `TsCore.dll` but MDT never reaches it (`TsCore!0x1800c1228`, `TsCore!0x1800d2010`).
+
+### Logging and power
+
+- `smsts.log` uses CMTrace lines. Each file holds 2 MiB by default, with 2 older files kept. `%WINDIR%\SMSTS.INI` can change `LogMaxSize`, `LogMaxHistory`, `LogLevel`, and `DebugLogging`. In WinPE the log is written to `%TEMP%\SMSTSLog` and copied to `%_SMSTSMDataPath%\Logs` after each step that succeeds. Each child process's output is captured into `smsts.log` (`TsCore!0x18016d438`, `TsCore!0x18016d1d8`).
+- TsManager holds a power request for the whole run, so the PC does not sleep (`TsManager!0x140020404`).
+
+### Firmware and disks
+
+- `TsCore.dll` detects UEFI in two ways. `IsUEFI` calls `GetFirmwareEnvironmentVariableA` without enabling `SeSystemEnvironmentPrivilege`, and its result becomes `_SMSTSBootUEFI` (`TsCore!0x1801c4ecc`). `Firmware::IsEfi` calls `GetFirmwareType` (`TsCore!0x18013baf0`). The first is the version that the 8456 hotfix fixed in `Microsoft.BDD.Utility.dll`, so `_SMSTSBootUEFI` can be wrong on BIOS PCs (inferred).
+- A disk is USB when `IOCTL_STORAGE_QUERY_PROPERTY` reports bus type 7 (`TsCore!0x1800f7a70`).
+- On MBR disks the active system partition must be NTFS. On UEFI the EFI partition must be FAT32 (`TsCore!0x1800d43dc`).
+- `TsCore.dll` runs `diskpart.exe /s <script>` and runs it once more after 30 seconds if it exits with code 4 (`TsCore!0x1800f842c`).
+- `TsCore.dll` uses WIMGAPI only to extract boot files and to capture images. MDT applies the OS with DISM in `LTIApply.wsf` (`TsCore!0x1800cc3a8`).
+- ConfigMgr's content download uses WinHTTP with `Range` resume, 3 attempts 15 seconds apart, and one SHA-256 hash per package. A hash mismatch deletes the whole package. The destination is wiped before each download, so a partial download never survives a restart (`TsCore!0x18014c25c`, `TsCore!0x180121668`). MDT never uses this code.
+
+## Deployment helper tools
+
+### BDDRun.exe
+
+- `bddrun.exe /bootstrap`, started by `winpeshl.ini`, runs only `wpeinit.exe` and waits for it. `LiteTouch.wsf` runs inside `wpeinit` as the `RunSynchronous` command in `X:\Unattend.xml` (inferred from WinPE behavior). BDDRun registers F8 as a global hotkey that opens `cmd.exe`. If `wpeinit` fails, BDDRun opens a `cmd.exe` and waits for it. Before it exits, it waits for every F8 console to close, which holds off the WinPE reboot (`BDDRun!0x140006f7c`, `BDDRun!0x1400077d4`).
+- `bddrun.exe <command>` runs the command with `CreateProcessW` and waits only for that process. If the launch fails, BDDRun returns the Windows error code as if it were the command's exit code (`BDDRun!0x140007630`).
+- `bddrun.exe /runas <command>` reads `SMSTSRunCommandLineUserName` and `SMSTSRunCommandLineUserPassword` and runs the command with `CreateProcessWithLogonW` (`BDDRun!0x140006f7c`).
+
+### Microsoft.BDD.PnpEnum.exe
+
+PnpEnum calls `SetupDiGetClassDevsW(NULL, NULL, NULL, DIGCF_PRESENT | DIGCF_ALLCLASSES)` and writes each present device's hardware IDs and compatible IDs to standard output in this form (`PnpEnum!0x1400064fc`):
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<devices>
+  <device>
+    <HardwareID><![CDATA[PCI\VEN_8086&DEV_15F3]]></HardwareID>
+    <CompatibleID><![CDATA[PCI\CC_0200]]></CompatibleID>
+  </device>
+</devices>
+```
+
+It reads no device class or problem code. It always exits with 0, even when enumeration fails.
+
+### Microsoft.BDD.Utility.dll
+
+- The type library declares 11 methods: `IsAdmin`, `Is64Bit`, `IsKnownToDNS`, `IsHypervisorRunning`, `SupportsNX`, `SupportsVT`, `Supports64Bit`, `KeepAlive`, `IsUEFI`, `GetErrorMessage`, and `HiddenPartitionsToDrives`. The object also contains `WaitForShell` code, but the type library leaves it out, so the call at `LiteTouch.wsf:822` fails silently.
+- The CPU methods read CPUID (`Utility!0x18000c588`):
+
+| Method | CPUID bit |
+| --- | --- |
+| `SupportsVT` | leaf 1, ECX bit 5 (VMX) on Intel; leaf 0x80000001, ECX bit 2 (SVM) otherwise |
+| `IsHypervisorRunning` | leaf 1, ECX bit 31 |
+| `SupportsNX` | leaf 0x80000001, EDX bit 20 |
+| `Is64Bit`, `Supports64Bit` | leaf 0x80000001, EDX bit 29 |
+
+- `KeepAlive` calls `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`.
+- `HiddenPartitionsToDrives` reads each disk's partition layout with `IOCTL_DISK_GET_DRIVE_LAYOUT_EX` and matches partitions to volumes with `IOCTL_STORAGE_GET_DEVICE_NUMBER` (`Utility!0x18000d2a8`).
+- The 8456 hotfix changes only `IsUEFI`. The 8450 build calls `GetFirmwareEnvironmentVariableW` without enabling `SeSystemEnvironmentPrivilege`, and the 8456 build enables the privilege first. A likely reason is that newer WinPE versions return `ERROR_PRIVILEGE_NOT_HELD` on BIOS PCs before they return `ERROR_INVALID_FUNCTION`, so the 8450 build reported BIOS PCs as UEFI (inferred).
 
 ## Driver import
 
@@ -177,7 +292,21 @@ winpe     yes
 | MDT keeps patching a serviced boot image and records failed items as present | Rebuild the boot image from the untouched base every time, keyed by a hash of the recipe, and fail the build when any step fails |
 | `efisys.bin` waits for a key press | The deployarr boot ISO uses the no-prompt EFI boot image |
 | Saved MDT steps have no ID | deployarr's stable `NodeId` is new, and an MDT importer must create IDs |
-| MDT conditions include file version, file and folder dates, installed MSI products, and OS version | deployarr's `Condition` gets the same types and the full operator set |
+| MDT conditions include file version, file and folder dates, installed MSI products, and a WMI failure flag | deployarr's `Condition` gets these types and the full operator set. Make, model, location, and computer checks become variable conditions on gathered facts, with exact matching instead of MDT's substring tests |
+| A condition that fails to evaluate fails the step in MDT | deployarr's evaluator returns an error, and the error goes through the step's `on_error` |
+| MDT writes its state file in place and ignores a failed save | The agent writes a temporary file, flushes it, and renames it. A failed save stops the run before the next step or reboot |
+| MDT saves nothing before a step, so an interrupted step runs again | The agent marks a step in flight before it starts. A typed action converges when run again, and a command fails unless its step allows a re-run |
+| A retry with a reboot loses the step's variable changes | The agent saves state before every reboot |
+| MDT marks a pending reboot with a volatile registry key | The agent does the same and refuses to resume while the marker exists |
+| An empty `successCodeList` fails every exit code | The compiler rejects an empty success list |
+| Exit code 3010 never reboots in MDT | deployarr reboots on 3010 and 1641 on purpose and documents the difference |
+| A `runIn` mismatch fails at run time | A step placed where its action cannot run is a compile error |
+| The engine ignores `startIn` | deployarr honors each command's working directory |
+| `%VAR%` expansion recurses, scans inserted text again, and can loop forever | `Template` substitutes once, from left to right |
+| Scripts reach variables through shared memory with no access control, and `Clear()` erases engine state | Steps reach variables through an agent channel that keeps names starting with `_` read-only and has no bulk clear |
+| The engine resumes from the state file with the newest access time on any drive | The agent keeps state at a fixed path and checks the deployment ID in it |
+| PnpEnum cannot tell a failed enumeration from a PC with no devices | The agent's device scan returns an error when enumeration fails |
+| `IsUEFI` in 8450 and in `TsCore.dll` misreports BIOS PCs | The agent calls `GetFirmwareType` |
 | Install Application overloads an empty GUID | deployarr's `AppSelection` has explicit variants for one application and for a list |
 | Every editor step gets `runIn="WinPEandFullOS"` | Each deployarr action type fixes where it can run |
 | Monitoring has no history, reopens finished records, and has no authentication | deployarr keeps per-step events, makes Succeeded and Failed final, and authenticates the agent API |

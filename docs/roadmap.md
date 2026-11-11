@@ -27,6 +27,8 @@ Scope:
 Check:
 - `cargo test --workspace` passes on Linux and Windows.
 - A test rebuilds the group, condition, and phase structure of MDT's `Client.xml` in the deployarr model and compiles it. This proves the model can express everything MDT's standard sequence uses.
+- Table tests cover the condition rules listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#conditions): integer versus string comparison, `Like` wildcards, `Exists` on an empty value, and missing files and registry values. Each place where deployarr differs from MDT on purpose has its own test.
+- The compiler rejects an empty success list, a `run_in` the action cannot honor, a WinPE `Restart` before the state moves to disk, and an empty `All`, `Any`, or `Not`.
 
 ### M1. Engine and agent in a running Windows
 
@@ -34,12 +36,15 @@ Scope:
 - `deployarr-engine`: the state file, journal, resume logic, and reboot outcomes.
 - `deployarr-agent` in service mode, running a task sequence from a local file.
 - The actions `RunCommand`, `RunPowerShell`, `SetVariable`, and `Restart`.
-- Variable, registry, file, and folder conditions.
+- Variable, registry, file, folder, installed-MSI, and WMI conditions.
+- The single-run mutex, the reboot marker, job objects with `max_runtime`, and the `var get` and `var set` channel for step processes.
 - CMTrace logs.
 
 Check:
 - A test crashes the engine at every step boundary of a 20-step sequence. Each resumed run ends in the same state as a run with no crash.
+- A test kills the agent in the middle of a state save. The next start reads either the old state or the new state.
 - In a Windows 11 VM, a sequence with three reboots finishes, and its log shows each step exactly once.
+- A step that exceeds `max_runtime` fails, and no process from its tree is still running.
 
 The PXE prototype from M4 runs in parallel with this milestone, because it is the largest unknown and depends on nothing else.
 
@@ -155,6 +160,8 @@ None of these are scheduled yet:
 - ARM64
 - Linux deployment
 - vendor driver catalogs from Dell, HP, and Lenovo
+- an importer for MDT task sequences (`ts.xml`) that applies the conversions listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#what-changes-in-deployarr)
+- a PowerShell module with MDT's `TSEnv:` and `TSEnvList:` drives, for porting MDT scripts
 - writing deployment status back to the order database
 
 ## Open questions

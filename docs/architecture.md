@@ -1,6 +1,6 @@
 # Architecture
 
-deployarr installs Windows on bare-metal PCs from one central server with no technician input. It copies the parts of Microsoft Deployment Toolkit (MDT) that work and fixes the faults listed in [MDT 8456 reference](research/mdt-8456.md). This page explains the design and why each choice was made. For the build order, see [Roadmap](roadmap.md).
+deployarr installs Windows on bare-metal PCs from one central server with no technician input. It copies the parts of Microsoft Deployment Toolkit (MDT) that work and fixes the faults listed in [MDT 8456 reference](research/mdt-8456.md) and [MDT 8450 binaries reference](research/mdt-8450-binaries.md). This page explains the design and why each choice was made. For the build order, see [Roadmap](roadmap.md).
 
 ## Requirements
 
@@ -86,36 +86,51 @@ pub struct Group {
 
 pub struct Step {
 	pub meta: NodeMeta,
-	pub run_in: RunIn,        // WinPe, FullOs, or Either
+	pub run_in: RunIn,        // WinPe, FullOs, or Either. Checked against the action at save
 	pub action: Action,
 }
 
 pub enum Action {
-	RunCommand { command: Template, working_dir: Option<Template>, success: ExitCodes, timeout: Duration },
-	RunPowerShell { script: ContentRef, args: Vec<Template>, success: ExitCodes, timeout: Duration },
+	RunCommand { command: Template, working_dir: Option<Template>, exit: ExitCodes, limits: StepLimits },
+	RunPowerShell { script: ContentRef, args: Vec<Template>, exit: ExitCodes, limits: StepLimits },
 	SetVariable { name: VarName, value: Template },
 	Restart { into: RestartTarget },
 	PartitionDisk { layout: DiskLayoutId, disk: DiskSelector },
 	ApplyOsImage { image: OsImageRef },
 	ApplyDrivers { selection: DriverSelection },
 	ApplyUnattend { template: UnattendTemplateId },
-	InstallApplications { apps: AppSelection },
+	InstallApplications { apps: AppSelection },   // One(AppId) or FromList(VarName)
 	VerifyDrivers { policy: MissingDriverPolicy },
+}
+
+pub struct ExitCodes {
+	pub success: Vec<i32>,    // never empty. Default [0]
+	pub reboot: Vec<i32>,     // success, then a reboot. Default [3010, 1641]
+}
+
+pub struct StepLimits {
+	pub max_runtime: Option<Duration>,
+	pub rerun_if_interrupted: bool,   // default false
 }
 
 pub enum Condition {
 	All(Vec<Condition>),
 	Any(Vec<Condition>),
 	Not(Box<Condition>),
-	Var { name: VarName, op: CompareOp, value: String },
-	Registry { key: Template, value: Option<String>, op: CompareOp, data: Option<String> },
-	FileExists(Template),
-	FolderExists(Template),
-	Wmi { namespace: String, query: String },   // full OS only
+	Var { name: VarName, op: CompareOp, value: Template },
+	Registry { key: Template, value: Option<String>, op: CompareOp, data: Option<RegData> },
+	File { path: Template, version: Option<(CompareOp, FileVersion)>, modified: Option<(CompareOp, DateTime)> },
+	Folder { path: Template, modified: Option<(CompareOp, DateTime)> },
+	InstalledMsi(MsiProduct),   // ProductCode or UpgradeCode. Full OS only
+	Wmi { namespace: String, query: Template, ignore_failure: bool },   // full OS only
 }
+
+pub enum CompareOp { Exists, NotExists, Equals, NotEquals, Less, LessEqual, Greater, GreaterEqual, Like }
 ```
 
 Each MDT step type that does real work becomes a typed `Action` variant with typed parameters. `RunCommand` and `RunPowerShell` cover everything else. MDT passes every step's settings as untyped variables and command lines, so a typo becomes a runtime failure. With typed actions, the editor and the server reject a bad step when you save it.
+
+The condition types match what MDT's engine evaluates. MDT also has make, model, location, and computer conditions, which compare by substring, so a gateway of `10.0.0.1` also matches `10.0.0.10`. deployarr expresses those as `Var` conditions on gathered facts, which compare exactly.
 
 ## Task sequence engine
 
@@ -142,7 +157,27 @@ pub enum OnError {
 }
 ```
 
-The compiler drops disabled nodes and works out `on_error` for each step. A failure then needs no group stack at run time. MDT's engine works the same way. It resumes from a saved instruction pointer, `_SMSTSNextInstructionPointer`, and checks a group's condition only when it reaches the group. deployarr copies that behavior, so a variable that a step sets in WinPE can enable a group that runs after a reboot. That is how MDT's phase groups work.
+The compiler drops disabled nodes and works out `on_error` for each step, so a failure needs no group stack at run time. MDT's engine keeps disabled entries in its table and tracks failures with a stack of open groups, which it must save and rebuild on every resume (`_SMSTSInstructionStackString`). Working out `on_error` ahead of time removes that state.
+
+Like MDT, deployarr checks a group's condition only when it reaches the group, and resumes from a saved instruction pointer. A variable that a step sets in WinPE can therefore enable a group that runs after a reboot. That is how MDT's phase groups work.
+
+The compiler also rejects these mistakes when you save, which MDT finds only at run time or never:
+
+- An empty success list. MDT's engine has no default, so an empty `successCodeList` fails every exit code, including 0.
+- A step whose `run_in` its action cannot honor, such as `ApplyOsImage` in the full OS. MDT fails such a step with error 50 when the engine reaches it.
+- A `Restart` in WinPE before the state has moved to disk. See [State on disk and resume](#state-on-disk-and-resume).
+- An empty `All`, `Any`, or `Not`. MDT treats an empty OR as true, which is rarely what the author meant.
+
+### Conditions
+
+- The agent evaluates a condition when it reaches the group or step. A false group condition skips the group. A false step condition skips the step and leaves `last` unchanged, as MDT does.
+- The agent expands `Template` fields in a condition when it evaluates it, not when the server compiles the sequence.
+- Evaluation returns `Result<bool, ConditionError>`. An error is not false. It fails the step and goes through the step's `on_error`, which is MDT's rule.
+- `Var` compares as integers when both sides are integers, and otherwise compares strings without regard to case, like MDT. `Like` matches `*` and `?` wildcards. `Exists` means the variable is set and not empty.
+- A missing file, folder, registry key, or registry value makes the condition false.
+- `Not` takes one child. MDT's `not` with several children means "none of them is true", so an MDT importer turns it into `Not(Any(children))`.
+
+[MDT 8450 binaries reference](research/mdt-8450-binaries.md#conditions) lists the exact behavior of MDT's evaluator.
 
 ### State on disk and resume
 
@@ -159,19 +194,29 @@ pub struct RunState {
 }
 ```
 
-- The agent writes the state file to a temporary path, flushes it, and renames it over the old file. A crash leaves either the old state or the new state, never a partial file.
-- Before the disk is partitioned, the state lives on `X:`, the WinPE RAM disk. After the partition step, the agent moves it to `W:\Deployarr\state` on the new Windows volume. MDT moves `MININT` the same way.
-- The agent sets `in_flight` before it starts a step and clears it when it records the result. If the agent starts and finds `in_flight` set, the step was interrupted by a crash or a power loss. Typed actions are written to converge when they run again. For example, `PartitionDisk` checks the current layout first. `RunCommand` and `RunPowerShell` are not assumed to be safe to repeat, so they fail by default, and a per-step setting allows a re-run.
-- A step can return `Reboot { rerun: false }` to reboot and continue with the next step, or `Reboot { rerun: true }` to run the same step again. These map to MDT's `SMSTSRebootRequested` and `SMSTSRetryRequested`. Exit codes 3010 and 1641 count as success with a reboot.
+- The agent writes the state file to a temporary path, flushes it, and renames it over the old file. A crash leaves either the old state or the new state, never a partial file. MDT's engine rewrites its state file in place.
+- If a save fails, the run stops before the next step or reboot. MDT's engine logs a warning and continues, so a later power loss resumes from older state.
+- Before the disk is partitioned, the state lives on `X:`, the WinPE RAM disk, and a reboot loses it. That is safe, because nothing on the disk has changed yet, and the deployment starts over. MDT's engine cannot save at all until a fixed volume exists. After the partition step, the agent moves the state to `W:\Deployarr\state` on the new Windows volume.
+- The state file holds the deployment ID, and the agent looks for it only at its fixed path. MDT's engine resumes from whichever `TSEnv.dat` on any fixed drive has the newest access time.
+- A named mutex keeps a second agent from running the same deployment. MDT's `TsmBootstrap.exe` does the same with `Global\TSMBootStrapMutex`.
+- The agent sets `in_flight` before it starts a step and clears it when it records the result. If the agent starts and finds `in_flight` set, the step was interrupted by a crash or a power loss. Typed actions are written to converge when they run again. For example, `PartitionDisk` checks the current layout first. `RunCommand` and `RunPowerShell` are not assumed to be safe to repeat, so they fail unless the step sets `rerun_if_interrupted`. MDT saves nothing before a step, so an interrupted step silently runs again. A sequence ported from MDT may need `rerun_if_interrupted` on some steps.
+- A step can return `Reboot { rerun: false }` to reboot and continue with the next step, or `Reboot { rerun: true }` to run the same step again. These map to MDT's `SMSTSRebootRequested` and `SMSTSRetryRequested`.
+- The exit codes in `ExitCodes.reboot`, 3010 and 1641 by default, mean success and then a reboot. This is a deliberate difference from MDT, whose engine never reboots because of an exit code.
+- The agent saves state before every reboot, including a re-run. MDT's engine skips that save for a re-run, so the step's variable changes are lost. After saving, the agent writes a marker that the reboot clears: a volatile registry key in Windows, or a file on `X:` in WinPE. It refuses to resume while the marker exists. MDT's engine uses a volatile key the same way.
+- The agent runs each command in a Windows job object. When `max_runtime` passes, it ends the whole process tree and fails the step. MDT's templates set no time limit, so a hung step waits forever.
 - The agent streams each step start, step result, and log line to the server. The server is the record of what happened, and the local journal covers network outages.
 
 The engine is a pure state machine over an `Executor` trait, so it is tested on Linux with a fake executor. The key test crashes the agent at every step boundary and checks that each resumed run ends in the same state as a run with no crash.
 
 ### Variables
 
-- Names are case-insensitive. A value is a scalar or a list. MDT's `Applications001`-style lists become real lists.
-- `%Name%` inside a `Template` substitutes a value. There is no `#expr#` evaluation. MDT runs `#expr#` through VBScript `Eval`, which executes anything. Conditions use the typed `Condition` model instead.
-- A variable can be marked secret. Secrets never reach a log line or an event. The CMTrace writer and the event stream both redact them.
+- A name is 1 to 256 letters, digits, `_`, or `-`, and names are case-insensitive. These are MDT's rules. Names that start with `_` belong to the agent, and steps can read them but not set them.
+- A value is a scalar or a list. MDT's `Applications001`-style lists become real lists.
+- A value that is already set beats a sequence default. MDT's `globalVarList` follows the same rule.
+- `%Name%` inside a `Template` substitutes a value, and `%%` stands for a literal `%`. Substitution makes one pass from left to right and never scans inserted text again. A name that is not a task sequence variable falls back to the process environment, as in MDT. A name that neither defines fails the step. MDT leaves such a name in the text, and its expander scans inserted text again, so one stored value can make it loop forever.
+- There is no `#expr#` evaluation. MDT runs `#expr#` through VBScript `Eval`, which executes anything. Conditions use the typed `Condition` model instead.
+- Step processes read and set variables through the agent, with the `deployarr-agent var get` and `var set` commands over a local channel that the agent opens for each step. There is no command that clears every variable. MDT scripts change a shared-memory store directly, and its `Clear()` method erases the engine's own state.
+- A variable can be marked secret. Secrets never reach a log line or an event. The CMTrace writer and the event stream both redact them. Logs show templates before substitution, as MDT's engine does.
 - Every variable records where its value came from: a gathered fact, a rule, a data source column, a prompt, or a step. The UI shows this trace for each deployment. MDT writes a similar trace into `ZTIGather.log`.
 
 ## Order lookup
@@ -232,12 +277,17 @@ An unknown PC stops at the prompt and does not touch its disk. After a deploymen
 - It uses Win32 APIs, not WMI, so base WinPE needs no optional components:
   - SMBIOS: `GetSystemFirmwareTable`
   - network adapters: `GetAdaptersAddresses`
-  - firmware type: `GetFirmwareType`, with MDT's `GetFirmwareEnvironmentVariableW` check as the fallback
-  - disks and bus type: `IOCTL_STORAGE_QUERY_PROPERTY`
-  - device hardware IDs: SetupAPI, which is what MDT's `Microsoft.BDD.PnpEnum.exe` does
-- `RunPowerShell` steps in WinPE need the WinPE PowerShell component. The boot image builder adds it only when a sequence uses PowerShell in WinPE.
+  - firmware type: `GetFirmwareType`. The fallback is MDT's `GetFirmwareEnvironmentVariableW` check, and only with `SeSystemEnvironmentPrivilege` enabled first. Without the privilege, newer WinPE versions make that check report BIOS PCs as UEFI, which is the bug the MDT 8456 hotfix fixed.
+  - disks and bus type: `IOCTL_STORAGE_QUERY_PROPERTY`. Bus type 7 is USB.
+  - device hardware IDs: SetupAPI with `DIGCF_PRESENT | DIGCF_ALLCLASSES`, which is what MDT's `Microsoft.BDD.PnpEnum.exe` does. Unlike PnpEnum, the agent reports an error when enumeration fails, so a failed scan never looks like a PC with no devices.
+  - CPU features: the `cpuid` instruction, for the same virtualization, NX, and 64-bit facts that MDT's `Microsoft.BDD.Utility.dll` reports.
+- `RunPowerShell` steps in WinPE need the WinPE PowerShell component, which only DISM can add. See [Boot image](#boot-image).
+- `RunPowerShell` runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>` and passes each argument separately. MDT's PowerShell host joins the arguments into one string and runs it as PowerShell code, which loses their quoting.
 - A CI check lists the agent's DLL imports and fails if one is missing from base WinPE.
-- In WinPE the agent is the shell. It shows a full-screen console screen with the current step, a progress bar, and the order-number and task-sequence prompts. A setting in the boot image enables a key that opens a command prompt, for debugging.
+- In WinPE the agent is the shell. It shows a full-screen console screen with the current step, a progress bar, and the order-number and task-sequence prompts.
+- Ending the WinPE shell reboots the PC, so the agent never exits on a fatal error. It shows the error and waits.
+- A setting in the boot image makes F8 open a command prompt, for debugging. The agent does not reboot WinPE while a prompt it opened is still running. MDT's `BDDRun.exe` works the same way.
+- The agent keeps the PC awake for the whole run with `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`, as MDT does.
 - HTTPS uses `rustls`. The agent trusts only the server CA certificate that is built into the boot image.
 - Logs use the CMTrace line format, so admins can read them with CMTrace. The final copy goes to `C:\Windows\Temp\Deployarr` and to the server.
 
@@ -260,7 +310,10 @@ The goal is a working driver for every device. MDT matches drivers only to devic
 
 ### Library
 
-- The `deployarr-inf` crate parses INF files and indexes each package by hardware ID. It also reads the architecture and minimum OS build from each `[Manufacturer]` decoration, such as `NTamd64.10.0...19041`.
+- The `deployarr-inf` crate parses INF files itself, including `%strings%` substitution, so import works on a Linux server. MDT parses INF files through Windows SetupAPI and takes class names from the server's registry. deployarr ships a table of the standard device class GUIDs instead.
+- The index keeps each ID with its kind (hardware or compatible), its architecture, and its minimum OS build, all taken from the `[Manufacturer]` decoration that lists it, such as `NTamd64.10.0...19041`. MDT flattens every ID into one list and loses all three, and its substring test files an ARM64 driver as x86.
+- A package is the folder tree that holds an INF. Import removes nested duplicates. MDT copies nested vendor folders more than once.
+- An INF that fails to parse is recorded as rejected, with the reason, and the rest of the import continues. One malformed INF stops an entire MDT import.
 - You can import a folder, a ZIP file, or a CAB file. Vendor EXE driver packs need to be extracted first. Drivers that only install through an EXE become applications.
 - Driver profiles group packages for a PC type. A profile can match on system make and model, on baseboard manufacturer and product, or on SMBIOS SKU. The baseboard fields matter for custom-built PCs, whose make and model are often placeholders.
 
@@ -274,11 +327,13 @@ The `ApplyDrivers` action has three modes:
 | `Profile` | Match devices only against the PC's profile | `DriverGroup` with PnP matching |
 | `ProfileAll` | Inject every package in the profile, whatever the hardware | `DriverInjectionMode=ALL` |
 
-In every mode, the server skips packages that are for the wrong architecture or that need a newer OS build than the image.
+In every mode, the server skips packages that are for the wrong architecture or that need a newer OS build than the image. It does not rank the packages that remain. Like MDT, it stages every matching package and lets Windows Plug and Play pick the best driver for each device.
+
+A per-model profile replaces the library-wide match for PCs it covers. In MDT, the stock Inject Drivers step uses the profile "All Drivers", which makes `DriverGroup` settings do nothing unless the profile is narrowed.
 
 ### Injection and verification
 
-1. WinPE gets the network and storage drivers it needs to reach the disk and the server, such as Intel VMD/RST, from the boot image. The agent loads them at start with `drvload`.
+1. WinPE gets the network and storage drivers it needs to reach the disk and the server, such as Intel VMD/RST, from the boot image. The default set is every driver of class Net, SCSIAdapter, or HDC, which is MDT's default. Display and System drivers are optional. The agent loads them at start with `drvload` and reports any that fail. MDT ignores WinPE driver failures.
 2. The agent downloads the selected packages and injects them one at a time with `dism /Image:W:\ /Add-Driver /Driver:<package> /Recurse`. A failing package is recorded and skipped. MDT injects all drivers in one DISM call, so one bad driver fails the deployment.
 3. Windows Setup installs the injected drivers while it detects devices.
 4. Late in the sequence, `VerifyDrivers` lists every device with a problem code through `CM_Get_DevNode_Status`. The agent sends each device's hardware IDs to the server. If the library has a matching package that was not injected, the agent installs it with `pnputil /add-driver <inf> /install`, then checks again. This catches devices that WinPE could not see. A policy can also try Windows Update drivers.
@@ -297,8 +352,8 @@ In every mode, the server skips packages that are for the wrong architecture or 
 
 - Two built-in layouts follow Microsoft's documented defaults:
   - UEFI: GPT with EFI (FAT32), MSR, Windows, and Recovery partitions
-  - BIOS: MBR with System, Windows, and Recovery partitions
-- The agent writes a `diskpart` script for the layout, runs it with `diskpart /s`, and then reads the partition table back to confirm the result. MDT pipes commands into `diskpart` and never checks them.
+  - BIOS: MBR with an active System partition (NTFS), Windows, and Recovery partitions. ConfigMgr's engine requires the active partition on an MBR disk to be NTFS.
+- The agent writes a `diskpart` script for the layout, runs it with `diskpart /s`, and then reads the partition table back to confirm the result. MDT pipes commands into `diskpart` and never checks them. The read-back uses `IOCTL_DISK_GET_DRIVE_LAYOUT_EX` and matches partitions to volumes with `IOCTL_STORAGE_GET_DEVICE_NUMBER`, as MDT's `HiddenPartitionsToDrives` does. The step log keeps the script and the output of `diskpart`.
 - Letters are fixed during the WinPE phase. `S:` is the system partition, `W:` is Windows, and `R:` is Recovery.
 - The target disk is chosen by rule. The default is the first internal, non-removable disk. The agent refuses USB disks and the disk it booted from.
 - Boot files are written with `bcdboot W:\Windows /s S: /f UEFI` or `/f BIOS`, explicitly. MDT omits `/s` and `/f` on UEFI.
@@ -313,8 +368,9 @@ In every mode, the server skips packages that are for the wrong architecture or 
   - 0 means success.
   - 3010 and 1641 mean success, then a reboot, then the next app.
   - Any other code fails the step unless the app lists it as a success code. MDT logs unexpected codes and marks the app as installed.
-- Dependencies install first. The server rejects dependency cycles when you save.
-- App lists can come from the task sequence, from a pre-staged record, or from an order row column.
+- Dependencies install first. The server rejects dependency cycles when you save. MDT's editor rejects only an app that depends on itself.
+- A bundle is an application with no command, only an ordered list of dependencies. MDT uses the same idea.
+- `InstallApplications` takes either one application or a variable that holds a list. App lists can come from the task sequence, from a pre-staged record, or from an order row column. MDT's Install Application step chooses between these by whether a GUID field is empty.
 
 ## Boot image
 
@@ -326,7 +382,9 @@ In every mode, the server skips packages that are for the wrong architecture or 
   - the server CA certificate
   - the WinPE driver set
 - The boot image holds no passwords or credentials. MDT's unattended setup needs share credentials in `Bootstrap.ini` inside the boot image.
-- Outputs are `boot.wim` for PXE, plus an ISO for USB sticks and remote-management virtual media. The ISO is built with `xorriso`, using the El Torito boot files from the imported Windows media.
+- wimlib can add files but cannot add WinPE optional components such as PowerShell. Those are servicing packages that only DISM installs, and MDT adds each one with `dism /Add-Package`, followed by its language package. On a Linux server, a sequence that runs PowerShell in WinPE therefore needs a base image already serviced with WinPE-WMI, WinPE-NetFx, WinPE-Scripting, and WinPE-PowerShell on a Windows machine. A server running on Windows can do that servicing itself. The importer records which components a base image contains, and the server rejects a sequence that needs one the image lacks.
+- The builder rebuilds the boot image from the untouched base every time, and keys each build by a hash of its recipe: the base, the files, and the drivers. Any failed step fails the build. MDT patches the previous image instead, ignores servicing failures, and records failed items as present, so it never retries them.
+- Outputs are `boot.wim` for PXE, plus an ISO for USB sticks and remote-management virtual media. The ISO is built with `xorriso`, using the El Torito boot files from the imported Windows media. It uses the no-prompt EFI boot image, `efisys_noprompt.bin`, so it starts without a key press. MDT's ISO uses `efisys.bin`, which waits for a key (inferred from ADK behavior).
 
 ## PXE
 
@@ -334,6 +392,7 @@ In every mode, the server skips packages that are for the wrong architecture or 
 - The BIOS path sends `pxeboot.n12` (no F12 prompt) or `pxeboot.com` (F12 prompt), which loads `bootmgr.exe`, the same BCD layout with `winload.exe`, and the same `boot.wim`.
 - The boot files come from the imported WinPE image.
 - The BCD stores are fixed templates, one per firmware type, with fixed paths such as `\boot\x64\boot.wim`. The server never edits a BCD file. It serves a different boot image at the same path. The templates are made once with `bcdedit`, and the repository keeps the `bcdedit` script that created them.
+- The templates use the same RAM disk elements as MDT's offline media and its `ZTIBCDUtility.vbs`. `{ramdiskoptions}` has `ramdisksdidevice boot` and `ramdisksdipath \boot\boot.sdi`. MDT stages WinPE on a local partition, so its script sets `ramdisksdidevice partition=<drive>` instead. The loader entry has `device` and `osdevice` set to `ramdisk=[boot]\boot\x64\boot.wim,{ramdiskoptions}`, `path \windows\system32\boot\winload.efi` (or `winload.exe` for BIOS), `systemroot \windows`, `detecthal yes`, and `winpe yes`.
 - DHCP works in two modes:
   - proxyDHCP, the default. The existing DHCP server keeps handing out addresses. deployarr answers only PXE clients, on UDP 67 and 4011, with the boot file for the client architecture from DHCP option 93.
   - DHCP options. For routed networks, the existing DHCP server or relay points PXE clients at deployarr.
@@ -351,6 +410,8 @@ In every mode, the server skips packages that are for the wrong architecture or 
 - The server is one `tokio` binary. It uses `axum` for HTTPS, `rustls` for TLS, `sqlx` with SQLite for its own data, and a content store directory for files. It runs as a Windows service through `windows-service`, or as a systemd unit on Linux.
 - The agent API covers sessions, the compiled plan, content manifests, events, logs, and the post-install device report.
 - The admin API serves the web UI. Live progress reaches the UI over server-sent events.
+- Each deployment gets its own ID from the server. Succeeded and Failed are final states that later events cannot change. MDT's monitoring service keeps one record per computer, sets a finished record back to Running on its next event, and keeps no history.
+- The agent queues events and sends them in the background with retries, plus a heartbeat on a timer. A slow or unreachable server never delays a step. MDT sends each event as a blocking call with a 60-second timeout, and its PowerShell steps send no events at all.
 - Installation creates a private CA and a server certificate. Each boot image carries the CA certificate.
 - Secrets are encrypted at rest with a server key. This covers data source passwords and per-PC local admin passwords. Each deployed PC gets its own random local admin password, which an admin can read in the UI. MDT uses one shared password.
 - Admin accounts are local at first, with argon2id password hashes. LDAP or OIDC can come later.
