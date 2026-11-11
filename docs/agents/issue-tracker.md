@@ -97,32 +97,40 @@ To find the holder, read every comment in order, starting with nobody holding th
 
 Read comments with `issue_read`, `method: get_comments`, and `perPage: 100`. If a page is full, read the next one.
 
+Never edit or delete a `Claimed by branch`, `Claim released by branch`, or `Claim withdrawn by branch` comment, and never edit another comment into one. The holder rule replays them in order, so an edit or a deletion can hand the ticket to a branch that is not working it.
+
 To claim a ticket:
 
 1. Read every comment. If a session holds the ticket, pick another one.
 2. Comment `Claimed by branch <branch>`.
 3. Read every comment again. If you do not hold the ticket now, another session got there first. Comment `Claim withdrawn by branch <branch>`, leave the assignee alone, and pick another ticket.
-4. Assign yourself. With MCP, call `get_me` for your login, then `issue_write` with `method: update` and `assignees`. With `gh`, run `gh issue edit <number> --add-assignee @me`.
+4. Read the issue again with `issue_read`, `method: get`. If it is closed, is no longer labeled `ready-for-agent`, or an issue in its `## Blocked by` section is open, it changed after you found it. Comment `Claim released by branch <branch>` and pick another ticket. Skip the label test for an issue that your prompt names.
+5. Assign yourself. With MCP, call `get_me` for your login, then `issue_write` with `method: update` and `assignees`. With `gh`, run `gh issue edit <number> --add-assignee @me`.
 
-Claiming is the first write of a session that works a ticket. The one exception is an `Owner input:` comment, which may come first. A session that triages an issue or breaks an epic into tickets does not claim it.
+Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone. A session that triages an issue or breaks an epic into tickets does not claim it.
 
-`tools/claim_model.py` checks every interleaving of these steps for two and three sessions, with crashes and the owner freeing stale claims. It finds no state where two sessions hold a ticket, and none where a ticket stays held after every session released it. The Tools workflow runs it on every pull request. Change the model in the same pull request as these steps.
+`tools/claim_model.py` checks every interleaving of these steps and of the release and hand-off steps below, for two and three sessions, with crashes, an owner who answers questions, and an owner who frees stale claims. It finds no state where two sessions hold a ticket, where a session works a ticket that is not open, `ready-for-agent`, and unblocked, or where a ticket stays held after every session released it. It assumes the claim comments are never edited or deleted, and it does not cover sessions that the owner names in a prompt. The Tools workflow runs it on every pull request. Change the model in the same pull request as these steps.
 
 ### Release a claim
 
-Release your claim when you stop work on a ticket without finishing it.
+Release your claim when you stop work on a ticket without finishing it. Take the ticket off the frontier first, then free it.
 
-1. Comment `Claim released by branch <branch>`. This frees the ticket.
-2. Remove yourself as assignee. With MCP, call `issue_write` with `method: update` and `assignees: []`, in the same call as any label change. With `gh`, run `gh issue edit <number> --remove-assignee @me`.
+1. Make any change that takes the ticket off the frontier: a new open issue in its `## Blocked by` section, a new state label, or a close.
+2. Remove yourself as assignee. With MCP, call `issue_write` with `method: update` and `assignees: []`, in the same call as a label change or a close. With `gh`, run `gh issue edit <number> --remove-assignee @me`.
+3. Comment `Claim released by branch <branch>`. This frees the ticket.
 
-A ticket that merges or closes needs no release.
+A ticket closed by a merged pull request needs no release. Whoever reopens an issue first reads its comments, frees any claim it still carries by commenting `Claim released by branch <branch>` for the holder, and then reopens it.
 
 ### Stale claims
 
-A session that ends without releasing its claim leaves the ticket held, and off the frontier. Only the owner can tell that the session is gone. The owner frees the ticket in one of two ways:
+A session that ends without releasing its claim leaves the ticket held, and off the frontier. Only the owner can tell that the session is gone. A held ticket can also be unassigned, when a session stopped between its claim comment and its assignment. To find stale claims, read the comments of the open `ready-for-agent` tickets, not only the assigned ones.
 
-- Comment `Claim released by branch <branch>` with the dead session's branch, then unassign the ticket.
+The owner frees a stale claim in one of two ways:
+
+- Unassign the ticket, then comment `Claim released by branch <branch>` with the gone session's branch.
 - Name the issue and that branch in a new session's prompt. That session posts the same comment and then claims the ticket as usual.
+
+Do not delete the gone session's claim comment. A deletion can hand the ticket to an earlier session that withdrew.
 
 ## Pull requests as a triage surface
 

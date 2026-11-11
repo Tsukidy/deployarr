@@ -48,7 +48,7 @@ These labels belong to this repository. The upstream skills do not know them.
 - An agent moves a ticket to `ready-for-human` only when the ticket's own work needs the lab, hardware, external access, or manual testing.
 - When the owner names an issue in an agent's prompt for it to work on, that agent works on it and keeps its label. A `ready-for-human` issue stays off the frontier if the session stops early. Triage and breaking an epic into tickets never claim the issue.
 - A ticket whose blocker was closed as not planned should not happen. The next session that takes it closes it as not planned with `wontfix`.
-- An issue that is reopened keeps its labels. Whoever reopens a `wontfix` issue swaps the label for `needs-triage` in the same call.
+- An issue that is reopened keeps its labels. Whoever reopens a `wontfix` issue swaps the label for `needs-triage` in the same call, and first frees any claim it still carries, as [Release a claim](issue-tracker.md#release-a-claim) says.
 
 ## Blocked issues
 

@@ -23,18 +23,29 @@ class HolderTest(unittest.TestCase):
 class ProtocolTest(unittest.TestCase):
     def test_documented_protocol_holds_every_property(self):
         total, failures = run_all()
-        self.assertGreater(total, 100000)
+        self.assertGreater(total, 400000)
         self.assertEqual(failures, [])
 
-    def test_check_catches_a_protocol_that_ignores_releases(self):
-        states, failure = Model(2, 2, owner=False, honor_release=False).check()
-        self.assertIsNotNone(failure)
-        self.assertIn("c", failure[0])
+    def assertCaught(self, props, **variant):
+        """The checker must find a violation of one of `props` once a safeguard is removed."""
+        states, failure = Model(2, 2, owner=False, **variant).check()
+        self.assertIsNotNone(failure, f"no violation found with {variant}")
+        self.assertTrue(set(props) & set(failure[0]), f"found {failure[0]}, expected one of {props}")
 
-    def test_check_catches_a_protocol_without_the_recheck(self):
-        states, failure = Model(2, 1, owner=False, recheck=False).check()
-        self.assertIsNotNone(failure)
-        self.assertIn("a", failure[0])
+    def test_catches_ignoring_releases(self):
+        self.assertCaught("bc", honor_release=False)
+
+    def test_catches_a_missing_comment_recheck(self):
+        self.assertCaught("a", recheck=False)
+
+    def test_catches_a_missing_issue_recheck(self):
+        self.assertCaught("d", verify=False)
+
+    def test_catches_releasing_before_the_relabel(self):
+        self.assertCaught("ad", relabel_first=False)
+
+    def test_catches_commenting_before_the_unassign(self):
+        self.assertCaught("e", unassign_first=False)
 
 
 if __name__ == "__main__":
