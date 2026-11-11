@@ -22,7 +22,7 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           sparse-checkout: tools/sync_blocked_by.py
           sparse-checkout-cone-mode: false
