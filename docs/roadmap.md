@@ -79,13 +79,15 @@ Check:
 ### M4. PXE
 
 Scope:
-- Prototype first. Serve `bootmgfw.efi`, a BCD template, `boot.sdi`, and `boot.wim` to an OVMF Secure Boot VM from a minimal TFTP server. Serve `pxeboot.n12` to a SeaBIOS VM. Try a 2011-signed and a 2023-signed boot manager. Record which DHCP options each one needs.
-- Decide whether to continue with this design or switch to the fallbacks in [Architecture](architecture.md#risks-to-settle-with-a-prototype-first).
-- Then build the proxyDHCP service, the TFTP server with block size and window size, boot file choice by client architecture, the stop-after-success rule, and the PXE settings page.
+- Prototype first. Answer the six questions in [Risks to settle with a prototype first](architecture.md#risks-to-settle-with-a-prototype-first) on an OVMF Secure Boot VM and a SeaBIOS VM, using a minimal proxyDHCP and TFTP server and packet captures. Try the single-stage chain (`bootmgfw.efi` and option 252) and ConfigMgr's two-stage chain (`wdsmgfw.efi` or `wdsnbp.com` with option 250, then the boot manager with option 252). Try boot programs signed with the 2011 and 2023 certificates.
+- Choose the single-stage or two-stage chain, or switch to the fallbacks in [Architecture](architecture.md#risks-to-settle-with-a-prototype-first), and record the choice and the captures in the architecture.
+- Then build the proxyDHCP service, the TFTP server, boot file choice by client architecture, the no-reply rule for PCs with no order or a finished deployment, and the PXE settings page.
 
 Check:
-- Both VM types PXE-boot WinPE from deployarr while a separate DHCP server hands out addresses.
-- The time to transfer `boot.wim` is measured and recorded with the image size and network speed.
+- Both VM types PXE-boot WinPE from deployarr with no key press while a separate DHCP server hands out addresses.
+- A UEFI VM with no order gets no reply and boots from its disk. A BIOS VM with no order gets `abortpxe.com`.
+- A TFTP test suite covers option-less requests, window size clamping, a retransmitted request, an ACK in the middle of a window, and a missing file.
+- The time to transfer `boot.wim` is measured and recorded with the image size, the network speed, and each block and window size tried.
 
 ### M5. Order lookup
 
@@ -160,6 +162,7 @@ None of these are scheduled yet:
 - an auto-logon session for installers that fail as LocalSystem
 - iPXE and wimboot over HTTP for BIOS or Secure Boot off
 - multicast
+- IPv6 PXE, with DHCPv6 option 59 and the Microsoft vendor options that ConfigMgr sends
 - ARM64
 - Linux deployment
 - vendor driver catalogs from Dell, HP, and Lenovo

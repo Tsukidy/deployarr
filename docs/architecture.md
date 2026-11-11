@@ -41,7 +41,7 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 
 ## Deployment flow
 
-1. The PC PXE-boots. The proxyDHCP service reads the client architecture (DHCP option 93) and offers the Microsoft-signed boot manager for that firmware type.
+1. The PC PXE-boots. The proxyDHCP service reads the client architecture (DHCP option 93) and sends Microsoft-signed boot programs for that firmware type, with DHCP option 252 naming the BCD. See [PXE](#pxe).
 2. The boot manager loads WinPE from the server over TFTP. WinPE starts `deployarr-agent` from `winpeshl.ini`.
 3. The agent initializes WinPE (`wpeinit`), loads the boot image's network and storage drivers with `drvload`, and connects to the server over HTTPS.
 4. The agent gathers facts and sends them to the server. Facts include the SMBIOS data (system, baseboard, and chassis serials, UUID, make, model, and SKU), MAC addresses, firmware type, Secure Boot state, TPM version, memory, processor cores, disks, and the hardware IDs of every device.
@@ -405,22 +405,62 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 
 ## PXE
 
-- The UEFI path keeps Secure Boot on. The server sends the Microsoft-signed `bootmgfw.efi`, a BCD store, `boot.sdi`, and `boot.wim` over TFTP. The boot manager loads WinPE into a RAM disk. WDS boots WinPE the same way, and deployarr does it without the WDS service.
-- The BIOS path sends `pxeboot.n12` (no F12 prompt) or `pxeboot.com` (F12 prompt), which loads `bootmgr.exe`, the same BCD layout with `winload.exe`, and the same `boot.wim`.
-- The boot files come from the imported WinPE image.
-- The BCD stores are fixed templates, one per firmware type, with fixed paths such as `\boot\x64\boot.wim`. The server never edits a BCD file. It serves a different boot image at the same path. The templates are made once with `bcdedit`, and the repository keeps the `bcdedit` script that created them.
-- The templates use the same RAM disk elements as MDT's offline media and its `ZTIBCDUtility.vbs`. `{ramdiskoptions}` has `ramdisksdidevice boot` and `ramdisksdipath \boot\boot.sdi`. MDT stages WinPE on a local partition, so its script sets `ramdisksdidevice partition=<drive>` instead. The loader entry has `device` and `osdevice` set to `ramdisk=[boot]\boot\x64\boot.wim,{ramdiskoptions}`, `path \windows\system32\boot\winload.efi` (or `winload.exe` for BIOS), `systemroot \windows`, `detecthal yes`, and `winpe yes`.
-- DHCP works in two modes:
-  - proxyDHCP, the default. The existing DHCP server keeps handing out addresses. deployarr answers only PXE clients, on UDP 67 and 4011, with the boot file for the client architecture from DHCP option 93.
-  - DHCP options. For routed networks, the existing DHCP server or relay points PXE clients at deployarr.
-- The TFTP server supports block size (RFC 2348), transfer size (RFC 2349), and window size (RFC 7440). WinPE images are 300 MB or larger, and plain TFTP is too slow for that. The BCD template sets the boot manager's `ramdisktftpblocksize` and `ramdisktftpwindowsize`.
-- deployarr cannot share UDP 67 or 69 with a Windows DHCP server or WDS on the same host. The installer checks for both.
+deployarr's PXE design follows ConfigMgr's PXE responder, `sccmpxe.exe`, which boots WinPE with its own DHCP and TFTP code and no WDS service. [ConfigMgr 2509 reference](research/configmgr-2509.md#pxe-responder) records how it works.
+
+### Boot chain
+
+- Secure Boot stays on, because every boot program is Microsoft-signed. The importer takes them from the boot image: `Windows\Boot\EFI\bootmgfw.efi`, and `wdsmgfw.efi`, `wdsnbp.com`, `pxeboot.n12`, `pxeboot.com`, `bootmgr.exe`, and `abortpxe.com` from `Windows\Boot\PXE`, plus `Windows\Boot\Fonts` and `boot.sdi`. deployarr never ships Microsoft files.
+- ConfigMgr never gives the firmware the boot manager directly. Its chain has two stages:
+  1. The firmware's request gets WDS's network boot program, `wdsmgfw.efi` on UEFI or `wdsnbp.com` on BIOS, plus DHCP option 250.
+  2. That program sends a second request that carries option 250. The reply holds the boot manager (`bootmgfw.efi` on UEFI, `pxeboot.n12` on BIOS, which loads `bootmgr.exe`) and option 252, the TFTP path of the BCD.
+  3. The boot manager reads the BCD and loads `boot.sdi` and `boot.wim` over TFTP into a RAM disk.
+- A single stage, with `bootmgfw.efi` and option 252 in the first reply, would be simpler, but no Microsoft product is known to do it. The prototype tests both chains. deployarr ships the single stage only if it boots every lab firmware with Secure Boot on. Otherwise it ships the two-stage chain.
+- Every BIOS PC sends option 93 = 0, whatever its CPU. In the two-stage chain, `wdsnbp.com` reports the real CPU in its second request. deployarr supports only x64, so the single stage would send the x64 BIOS files to every BIOS PC.
+- For zero touch, nothing waits for a key: `pxeboot.n12` on BIOS, and option 250 sub-option 11 = 2 for `wdsmgfw.efi` on UEFI. These are what ConfigMgr sends for a required deployment.
+- In WinPE, the agent reads the DHCP reply that booted it from `HKLM\SYSTEM\ControlSet001\Control\PXE\BootServerReply` and logs which server sent it. The boot image's config still names the server. DHCP and TFTP carry no secrets. ConfigMgr hides a password in that reply under keys that are hard-coded in its binaries, so anyone who captures the reply can recover it.
+
+### DHCP
+
+- proxyDHCP is the default. The existing DHCP server keeps handing out addresses, and deployarr answers only PXE clients. It binds UDP 67 and 4011 on each chosen interface address, so it knows which address to put in its replies. An admin chooses interfaces by MAC address. A setting skips port 67, so deployarr can run on a host that also runs a DHCP server.
+- deployarr answers a DISCOVER or a REQUEST that carries option 93 (client architecture) and option 97 (machine GUID), as ConfigMgr does. It ignores INFORM.
+- The OFFER sets `siaddr` to deployarr's address and carries options 53, 54, 97 (echoed), 60 (`PXEClient`), and 82 (echoed when present). It carries no boot file and no option 43. Only the ACK to a REQUEST carries the boot file, in the BOOTP `file` field, with option 250 or option 252.
+- Replies go to the request's source address and port. deployarr broadcasts only when the source is `0.0.0.0`, and it answers a relayed request by unicast to the relay. On routed networks, a DHCP relay (IP helper) forwards PXE clients to deployarr.
+- A PC with no order, or one whose deployment succeeded, gets no reply on UEFI, so the firmware moves on to the next boot device. On BIOS it gets `abortpxe.com`. ConfigMgr does the same.
+- deployarr cannot share UDP 67, 69, or 4011 with a Windows DHCP server or WDS on the same host. The installer checks for them.
+- IPv6 PXE is not in the first release. ConfigMgr's DHCPv6 reply carries option 59 with a `tftp://` URL and the BCD path in a Microsoft vendor option. It does not handle relayed DHCPv6.
+
+### BCD
+
+- The BCD stores are fixed templates, one per firmware type, with fixed paths such as `\boot\x64\boot.wim`. Option 252 names the template for the client's firmware. The server never edits a BCD file. It serves a different boot image at the same path. The templates are made once with `bcdedit`, and the repository keeps the `bcdedit` script that created them. ConfigMgr builds each BCD at run time through the BCD WMI provider, which exists only on Windows.
+- `{bootmgr}` has a description, a timeout, `displayorder` and `default` set to the loader, and `fontpath` set to the served fonts folder.
+- `{ramdiskoptions}` has `ramdisksdidevice boot` and `ramdisksdipath \boot\boot.sdi`, as in ConfigMgr's store and MDT's offline media.
+- The loader has `device` and `osdevice` set to `ramdisk=[boot]\boot\x64\boot.wim,{ramdiskoptions}`, `systemroot \windows`, `detecthal yes`, and `winpe yes`. It also has `path \windows\system32\boot\winload.efi` (or `winload.exe` for BIOS). ConfigMgr's loader has no `path`, and the prototype checks whether deployarr can drop it too.
+- `ramdisktftpblocksize` and `ramdisktftpwindowsize` are written only when an admin sets them. ConfigMgr leaves both out by default, so the boot manager picks its own values.
+
+### TFTP
+
+- The TFTP server negotiates `blksize` (RFC 2348) up to 32768, `tsize` (RFC 2349), and `windowsize` (RFC 7440) up to 32. It clamps each value before it builds the OACK. ConfigMgr echoes the requested window size and clamps it afterwards.
+- After an ACK for a block inside the window, it resends from the next block, as RFC 7440 says. ConfigMgr resends the whole window.
+- File sizes and counters are 64-bit. ConfigMgr's 32-bit sizes cannot serve a file of 2 GiB or more.
+- One session exists per client address, port, and file, so a retransmitted request does not start a second transfer. ConfigMgr starts one for each.
+- Each transfer has its own socket on the address that received the request. The retransmit timer is 5 seconds, with 5 retries, as in ConfigMgr. Both values are settings.
+- A request without options gets plain 512-byte blocks and no OACK. ConfigMgr's own WinPE TFTP client sends requests like that.
+- A missing file gets ERROR code 1 at once, so the boot manager's probes for files that do not exist fail fast.
+- Paths are normalized: `/` becomes `\`, leading `\` is removed, case is ignored, and `..` and `:` are rejected.
+- WinPE images are 300 MB or larger. ConfigMgr records no transfer speeds, so the lab measures `boot.wim` transfer time for each block and window size.
 
 ### Risks to settle with a prototype first
 
-- Whether `bootmgfw.efi` fetches its BCD from a TFTP server that is not WDS, and which DHCP options it needs for that (WDS uses option 252 for the BCD path). The whole PXE design depends on this, so it is the first thing the lab proves.
-- Microsoft's 2011 Secure Boot certificates expire during 2026, and Microsoft now signs boot managers with the Windows UEFI CA 2023. Firmware that revokes the old certificate boots only the newer boot manager. The prototype must boot both a 2011-signed and a 2023-signed boot manager, and the importer must report which one an image contains.
-- If the signed path fails, the fallbacks are UEFI HTTP boot, or the boot ISO through USB or remote-management virtual media. An iPXE and wimboot path over HTTP is faster, but it works only on BIOS or with Secure Boot off, so it stays optional.
+The lab answers these with packet captures before the PXE services are built:
+
+1. Does `bootmgfw.efi`, sent in the first reply with option 252, load its BCD? This decides between the single-stage and two-stage chains.
+2. What do `wdsmgfw.efi` and `wdsnbp.com` send in their second request (destination port, option 250 sub-options), and which files does the boot manager request over TFTP?
+3. Does a loader with no `path` element boot on both firmware types?
+4. Which block and window size does the boot manager use when the BCD sets none, and how long does `boot.wim` take at each setting?
+5. Does the firmware accept an OFFER with no option 43?
+6. Do boot programs signed with the Windows UEFI CA 2023 boot? Microsoft's 2011 Secure Boot certificates expire during 2026, and firmware that revokes them boots only 2023-signed programs. ConfigMgr 2509 has no handling for this. In the two-stage chain, `wdsmgfw.efi` needs a 2023 signature as well as `bootmgfw.efi`. The importer reports which certificate signed each boot file.
+
+If the signed chain fails, the fallbacks are UEFI HTTP boot, or the boot ISO through USB or remote-management virtual media. ConfigMgr has no UEFI HTTP boot to learn from. An iPXE and wimboot path over HTTP is faster, but it works only on BIOS or with Secure Boot off, so it stays optional.
 
 ## Server
 
@@ -473,6 +513,7 @@ These are planned for later and kept out of the first release on purpose:
 - BitLocker
 - user state migration and in-place upgrades
 - multicast
+- IPv6 PXE
 - ARM64
 - Linux deployment
 - vendor driver catalogs
