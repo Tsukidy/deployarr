@@ -1,0 +1,30 @@
+name: Bug
+description: Something deployarr does wrong.
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the task sequence, the PC model or VM, and the firmware type.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: The agent's CMTrace log lines and the server log around the failure. Remove secrets first.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit

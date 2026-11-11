@@ -1,0 +1,42 @@
+name: Task
+description: A scoped piece of work that one agent can finish in one pull request.
+body:
+  - type: markdown
+    attributes:
+      value: Write the task so that an agent with no other context can do it. Name real files, commands, and checks.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: What this task changes and why, in one or two sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: read-first
+    attributes:
+      label: Read first
+      description: The docs and code that matter, for example `docs/architecture.md#conditions`.
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: What to change, as a list.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Checks that someone can run and watch pass.
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: Related work that belongs in another issue.
+  - type: input
+    id: depends-on
+    attributes:
+      label: Depends on
+      description: Issues that must close first, for example `#12`.

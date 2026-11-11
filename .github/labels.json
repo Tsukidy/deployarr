@@ -1,0 +1,19 @@
+[
+  {"name": "epic", "color": "5319e7", "description": "A roadmap milestone. Its sub-issues are the tasks."},
+  {"name": "agent-ready", "color": "0e8a16", "description": "Scoped and ready for an agent to pick up"},
+  {"name": "in-progress", "color": "fbca04", "description": "An agent is working on it. The comments name the branch."},
+  {"name": "blocked", "color": "b60205", "description": "Waiting on something named in the comments"},
+  {"name": "needs-owner", "color": "d93f0b", "description": "Needs a decision or an action from the repository owner"},
+  {"name": "decision", "color": "c5def5", "description": "A product or design question for the owner"},
+  {"name": "needs-lab", "color": "006b75", "description": "Needs the VM lab or real hardware, which cloud sessions lack"},
+  {"name": "research", "color": "bfdadc", "description": "Analysis of a source, recorded under docs/research"},
+  {"name": "area:core", "color": "ededed", "description": "deployarr-core: task sequence model, compiler, conditions, variables"},
+  {"name": "area:engine", "color": "ededed", "description": "deployarr-engine: interpreter, state file, resume"},
+  {"name": "area:agent", "color": "ededed", "description": "deployarr-agent: WinPE shell and Windows service"},
+  {"name": "area:server", "color": "ededed", "description": "deployarr-server: API, storage, order lookup"},
+  {"name": "area:pxe", "color": "ededed", "description": "deployarr-pxe: proxyDHCP, TFTP, boot files"},
+  {"name": "area:drivers", "color": "ededed", "description": "Driver library, INF parsing, driver verification"},
+  {"name": "area:ui", "color": "ededed", "description": "deployarr-ui: the web UI"},
+  {"name": "area:docs", "color": "ededed", "description": "Docs in docs/ and the agent guides"},
+  {"name": "area:ci", "color": "ededed", "description": "CI, GitHub workflows, and repository tooling"}
+]
