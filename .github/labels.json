@@ -7,6 +7,7 @@
   {"name": "decision", "color": "c5def5", "description": "A product or design question for the owner"},
   {"name": "needs-lab", "color": "006b75", "description": "Needs the VM lab or real hardware, which cloud sessions lack"},
   {"name": "research", "color": "bfdadc", "description": "Analysis of a source, recorded under docs/research"},
+  {"name": "bug", "color": "d73a4a", "description": "Something deployarr does wrong"},
   {"name": "area:core", "color": "ededed", "description": "deployarr-core: task sequence model, compiler, conditions, variables"},
   {"name": "area:engine", "color": "ededed", "description": "deployarr-engine: interpreter, state file, resume"},
   {"name": "area:agent", "color": "ededed", "description": "deployarr-agent: WinPE shell and Windows service"},

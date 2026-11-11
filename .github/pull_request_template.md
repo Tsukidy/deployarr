@@ -10,4 +10,4 @@
 
 <!-- What you ran, and what passed. -->
 
-<!-- Link the issue so that merging closes it, for example: Closes #12 -->
+<!-- Link the issue so that merging closes it. Write: Closes #<number> -->

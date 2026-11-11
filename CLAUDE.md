@@ -13,9 +13,12 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 
 ## GitHub from a cloud session
 
-- Use the `mcp__github__*` tools for issues and pull requests: `issue_write` creates and updates issues, its `parent_issue_number` attaches a sub-issue, and `type` sets the issue type (Task, Bug, or Feature). In cloud sessions the `gh` command is only allowed for search.
+- Use the `mcp__github__*` tools for issues and pull requests. In cloud sessions the `gh` command is only allowed for search.
+- `issue_write` creates and updates issues. Its `type` sets the issue type, and this repository has Task, Bug, and Feature. Its `parent_issue_number` creates the issue as a sub-issue of another.
+- `issue_write` with `labels` replaces every label on the issue. Read the issue with `issue_read` first. Then send the full list: the labels it keeps, plus the one you add or minus the one you remove.
+- To attach an existing issue to an epic, call `sub_issue_write` with `method: add`, the epic's number as `issue_number`, and the child's `id` from `issue_read` as `sub_issue_id`. The `id` is not the issue number.
 - These tools cannot create labels or milestones or change repository settings. Labels come from `.github/labels.json` through the Labels workflow.
-- A push that deletes a branch is refused with HTTP 403. Leave branch deletion to GitHub, which deletes a pull request's branch when it is merged.
+- A push that deletes a branch is refused with HTTP 403, and auto mode blocks force-pushes. Leave branch deletion to GitHub, which deletes a pull request's branch when it is merged.
 
 # Reverse-engineering tools (REA)
 
