@@ -16,6 +16,8 @@ The repository holds design documents only. There is no code yet. The next miles
 | `docs/roadmap.md` | Milestones M0 to M9, the check that ends each one, and the open product questions |
 | `docs/research/mdt-8456.md` | How MDT 8456 scripts and templates implement each feature, with citations |
 | `docs/research/mdt-8450-binaries.md` | What MDT's compiled components do, from the 8450 installer |
+| `docs/research/configmgr-2509.md` | What ConfigMgr 2509 ships for OS deployment, and how its steps handle Windows 11 |
+| `tools/re/configmgr-osd/` | Scripts that rebuild the ConfigMgr research from the installer |
 
 ## Rules for changes
 
@@ -55,6 +57,7 @@ These apply once the M0 workspace exists. They restate invariants from `docs/arc
 | MDT 8450 installer (6.3.8450.1000) | `https://download.microsoft.com/download/0/7/b/07b3b260-f008-4b1c-8eaa-74bcc5c7d646/MicrosoftDeploymentToolkit_x64.msi` | `e73823db601b06e9c222ae816bbddd491ecb823a1f8cce0f73eec9de51c1690e` |
 | MDT 8456 hotfix KB4564442 (`Microsoft.BDD.Utility.dll` only) | `https://download.microsoft.com/download/3/0/6/306AC1B2-59BE-43B8-8C65-E141EF287A5E/KB4564442/MDT_KB4564442.exe` | `cd0bc2ec616ba5f8ddd626d02747b19c90efa1ba159303f2ff41ae693ec10b3f` |
 | MDT 8450 and 8456 scripts and templates | `Source/MDT.8450` and `Source/MDT.8456` in [keithga/DeployShared](https://github.com/keithga/DeployShared) | none |
+| ConfigMgr 2509 installer (`ConfigMgr_2509.exe`) | `https://go.microsoft.com/fwlink/?linkid=2350307&clcid=0x409&culture=en-us&country=us` | `4cb0380e2b1c43f1e0b2da266beddd1b975dd72537f8d8113c702eadf1e6e313` |
 
 The MDT 8456 installer is gone. Its download link returned HTTP 404 on 2026-11-11. The DeployShared copy of the 8450 scripts matches the 8450 installer's scripts file for file.
 
@@ -89,6 +92,20 @@ The MDT 8456 installer is gone. Its download link returned HTTP 404 on 2026-11-1
 	```
 
 5. Search the exported pseudocode with `grep`. Ghidra writes string literals inline, so searching for a log message or a variable name finds the functions that use it.
+
+### ConfigMgr 2509
+
+`tools/re/configmgr-osd/reproduce.sh` downloads the installer, checks its SHA-256, and unpacks it and every MSI and CAB inside it. It then writes the MDT search results, an inventory of `OSD/bin/x64`, and a catalog of every step's executable and variables. It needs `7z` (`apt-get install -y p7zip-full`), `msiextract`, and a Python with `pefile`:
+
+```bash
+python3 -m venv "$SCRATCH/venv" && "$SCRATCH/venv/bin/pip" install pefile dnfile dncil
+```
+
+```bash
+PYTHON="$SCRATCH/venv/bin/python" bash tools/re/configmgr-osd/reproduce.sh "$SCRATCH/configmgr"
+```
+
+For a later release, pass the new link and SHA-256 as the second and third arguments. `ildump.py` prints the CIL of console methods that load a matching string, which is how the default disk layouts were read. It needs `dnfile` and `dncil`.
 
 ### Pitfalls
 

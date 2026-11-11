@@ -6,7 +6,7 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 
 ## Environment
 
-- The MDT research needs `github.com`, `download.microsoft.com`, and the package registries (apt, npm, PyPI, crates.io, NuGet). If the environment's network is ever set to a limited list, those hosts must be on it.
+- The research needs `github.com`, `go.microsoft.com`, `download.microsoft.com`, `learn.microsoft.com`, and the package registries (apt, npm, PyPI, crates.io, NuGet). If the environment's network is ever set to a limited list, those hosts must be on it.
 - The environment's setup script installs REA and its tools, plus `msitools`, the .NET 8 SDK, and ILSpy (see below). The setup script lives in the environment settings on claude.ai, not in this repository.
 - Containers on this environment have had 4 CPUs. Check with `nproc`. A Workflow runs at most `nproc - 2` agents at a time, so 2 here. Prefer a few deep agents over many shallow ones, and remember that Ghidra exports compete for the same CPUs.
 - Write downloads, extracted installers, and decompiled output to the session scratchpad, never to the repository.
