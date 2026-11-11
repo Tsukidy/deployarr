@@ -44,10 +44,10 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 1. The PC PXE-boots. The proxyDHCP service reads the client architecture (DHCP option 93) and offers the Microsoft-signed boot manager for that firmware type.
 2. The boot manager loads WinPE from the server over TFTP. WinPE starts `deployarr-agent` from `winpeshl.ini`.
 3. The agent initializes WinPE (`wpeinit`), loads the boot image's network and storage drivers with `drvload`, and connects to the server over HTTPS.
-4. The agent gathers facts and sends them to the server. Facts include the SMBIOS data (system, baseboard, and chassis serials, UUID, make, model, and SKU), MAC addresses, firmware type, disks, and the hardware IDs of every device.
+4. The agent gathers facts and sends them to the server. Facts include the SMBIOS data (system, baseboard, and chassis serials, UUID, make, model, and SKU), MAC addresses, firmware type, Secure Boot state, TPM version, memory, processor cores, disks, and the hardware IDs of every device.
 5. The server runs the lookup chain (see [Order lookup](#order-lookup)). The result is a task sequence and a set of variables, or a request for the technician to type an order number or pick from the list.
 6. The server pins the task sequence version and sends the compiled program and variables to the agent.
-7. The agent runs the WinPE steps. A typical run partitions the disk, downloads and applies the OS image, injects drivers, writes the unattend file, runs `bcdboot`, and installs itself as a service in the offline image.
+7. The agent runs the WinPE steps. A typical run checks readiness, partitions the disk, downloads and applies the OS image, injects drivers, writes the unattend file, runs `bcdboot`, and installs itself as a service in the offline image.
 8. The PC reboots into Windows Setup. When Setup finishes, the agent service resumes the sequence at the next step.
 9. The agent installs applications, runs scripts, reboots as steps request, and checks that every device has a driver.
 10. The agent uploads its logs, removes itself, and runs the finish action (shut down, restart, or reseal).
@@ -101,6 +101,7 @@ pub enum Action {
 	ApplyUnattend { template: UnattendTemplateId },
 	InstallApplications { apps: AppSelection },   // One(AppId) or FromList(VarName)
 	VerifyDrivers { policy: MissingDriverPolicy },
+	CheckReadiness { checks: ReadinessChecks },   // Windows 11 minimums by default
 }
 
 pub struct ExitCodes {
@@ -281,6 +282,9 @@ An unknown PC stops at the prompt and does not touch its disk. After a deploymen
   - disks and bus type: `IOCTL_STORAGE_QUERY_PROPERTY`. Bus type 7 is USB.
   - device hardware IDs: SetupAPI with `DIGCF_PRESENT | DIGCF_ALLCLASSES`, which is what MDT's `Microsoft.BDD.PnpEnum.exe` does. Unlike PnpEnum, the agent reports an error when enumeration fails, so a failed scan never looks like a PC with no devices.
   - CPU features: the `cpuid` instruction, for the same virtualization, NX, and 64-bit facts that MDT's `Microsoft.BDD.Utility.dll` reports.
+  - memory and processor cores: `GetPhysicallyInstalledSystemMemory` and `GetLogicalProcessorInformationEx`.
+  - TPM version: `Tbsi_GetDeviceInfo` from `tbs.dll`. ConfigMgr reads the TPM through WMI `Win32_Tpm` instead. Whether base WinPE includes `tbs.dll` is not yet checked, so the agent loads it at run time and reports the TPM as unknown when it is missing.
+  - Secure Boot: the `UEFISecureBootEnabled` value under `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State`, which ConfigMgr also reads. When the value is missing, the agent reads the `SecureBoot` UEFI variable with `GetFirmwareEnvironmentVariableW`, with `SeSystemEnvironmentPrivilege` enabled. The fact has three values: on, off, and unknown. A failed read is unknown, never off. ConfigMgr keeps the same third value as `NA`.
 - `RunPowerShell` steps in WinPE need the WinPE PowerShell component, which only DISM can add. See [Boot image](#boot-image).
 - `RunPowerShell` runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>` and passes each argument separately. MDT's PowerShell host joins the arguments into one string and runs it as PowerShell code, which loses their quoting.
 - A CI check lists the agent's DLL imports and fails if one is missing from base WinPE.
@@ -303,6 +307,18 @@ MDT resumes in the new OS through auto-logon as Administrator with a logon count
 This removes the stored Administrator password and the logon count from the deployment. It also makes the PC deploy the same way whether or not anyone is in front of it.
 
 The trade-off is that steps run as LocalSystem in session 0, with no desktop. A few installers fail without a logged-on user. For those, a later milestone adds a per-step option that runs the step in an auto-logon session with a one-time password. The agent removes that password after the step.
+
+## Readiness check
+
+deployarr applies `install.wim` with DISM and never runs `setup.exe`, so Windows Setup never checks the hardware. The `CheckReadiness` action does that check instead. ConfigMgr has the same step, but its defaults are below the Windows 11 minimums and it has no Secure Boot check ([ConfigMgr 2509 reference](research/configmgr-2509.md#check-readiness)).
+
+- The step runs in WinPE before any disk step, so a PC that fails keeps its disk as it was.
+- Its defaults are Microsoft's Windows 11 minimums: 4 GB of memory, a 64 GB target disk, two or more processor cores, UEFI firmware, and TPM 2.0.
+- Each check either fails the step or logs a warning. The Secure Boot check warns by default, because Windows 11 requires firmware that can run Secure Boot, not Secure Boot turned on.
+- A task sequence can change a minimum, switch a check between fail and warn, or turn it off. A BIOS PC needs the UEFI check off, and a PC without TPM 2.0 needs the TPM check off.
+- A fact that the agent cannot read fails its check, and the log says that the value was unknown.
+- Each check sets read-only variables with its result, the required value, and the value found, as ConfigMgr's `_TS_CR` variables do. Conditions and the UI use them to show why a PC stopped.
+- The step does not check processor speed or Microsoft's list of supported processors.
 
 ## Drivers
 
@@ -351,8 +367,9 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 ## Disk layout and boot files
 
 - Two built-in layouts follow Microsoft's documented defaults:
-  - UEFI: GPT with EFI (FAT32), MSR, Windows, and Recovery partitions
+  - UEFI: GPT with EFI (FAT32, 300 MB), MSR (16 MB), Windows, and Recovery partitions. 300 MB meets Microsoft's EFI minimum for both 512-byte and 4K native sectors.
   - BIOS: MBR with an active System partition (NTFS), Windows, and Recovery partitions. ConfigMgr's engine requires the active partition on an MBR disk to be NTFS.
+- Recovery gets a fixed size, and Windows gets the rest of the disk. The server computes the size when it imports an image. It is the size of `\Windows\System32\Recovery\winre.wim` in that image, plus any WinRE customizations, plus 250 MB for servicing, as Microsoft documents. ConfigMgr's console instead gives Recovery about 1% of the disk ([ConfigMgr 2509 reference](research/configmgr-2509.md#default-disk-layouts)).
 - The agent writes a `diskpart` script for the layout, runs it with `diskpart /s`, and then reads the partition table back to confirm the result. MDT pipes commands into `diskpart` and never checks them. The read-back uses `IOCTL_DISK_GET_DRIVE_LAYOUT_EX` and matches partitions to volumes with `IOCTL_STORAGE_GET_DEVICE_NUMBER`, as MDT's `HiddenPartitionsToDrives` does. The step log keeps the script and the output of `diskpart`.
 - Letters are fixed during the WinPE phase. `S:` is the system partition, `W:` is Windows, and `R:` is Recovery.
 - The target disk is chosen by rule. The default is the first internal, non-removable disk. The agent refuses USB disks and the disk it booted from.
