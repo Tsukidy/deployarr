@@ -30,7 +30,7 @@ Pass the labels in the create call. The Triage label workflow adds `needs-triage
 ### Make an issue a sub-issue
 
 - At creation, pass the parent as `parent_issue_number` (MCP) or `--parent` (`gh` 2.94 or later).
-- For an existing issue with MCP, call `sub_issue_write` with `method: add`, the parent's number as `issue_number`, and the child's `id` from `issue_read` as `sub_issue_id`. The `id` is the database id, not the issue number.
+- For an existing issue with MCP, call `sub_issue_write` with `method: add`, the parent's number as `issue_number`, and the child's database `id` as `sub_issue_id`, as a number. Take the `id` from the result of an `issue_write` call on the child, which returns `{"id": ..., "url": ...}`. `issue_read` does not return it, and the `id` under `user` belongs to the author. The `id` is not the issue number.
 - For an existing issue with `gh` 2.94 or later, run `gh issue edit <parent> --add-sub-issue <child>`. With an older `gh`, get the child's database id with `gh api repos/Tsukidy/deployarr/issues/<child> --jq .id`, then run `gh api --method POST repos/Tsukidy/deployarr/issues/<parent>/sub_issues -F sub_issue_id=<id>`.
 
 ### Apply or remove labels
@@ -78,20 +78,24 @@ The frontier is the set of tickets an agent can start now. A ticket is on the fr
 - open
 - labeled `ready-for-agent`
 - not assigned to anyone
-- unblocked, because every issue in its `## Blocked by` section is closed
+- written with a `## Blocked by` section
+- unblocked, because every issue in that section is closed
 
 To find it, list the open `ready-for-agent` issues, drop the assigned ones, then read each remaining issue and check its blockers. Take the first one in its epic's sub-issue order.
 
+A `ready-for-agent` issue with no `## Blocked by` section did not finish triage. Skip it.
+
 ## Claim
 
-Claiming is the first write of a session, before any other work.
+Claiming is the first write of a session, before any other work. Agents in this repository share one GitHub login, so the assignee cannot tell two sessions apart. The claim comments do, by their order in the comment list. No step compares clocks.
 
-1. When you find the ticket on the frontier, it is unassigned. Note the time of that read.
-2. Assign the issue to yourself. With MCP, call `get_me` for your login, then `issue_write` with `method: update` and `assignees`. With `gh`, run `gh issue edit <number> --add-assignee @me`.
-3. Comment `Claimed by branch <branch>`.
-4. Read the comments again. Agents in this repository share one GitHub login, so the assignee cannot tell two sessions apart. Look for a `Claimed by branch` comment from another branch posted after the time you noted and before your own. If there is one, that session won. Edit your comment to `Claim withdrawn by branch <branch>` and pick another ticket. Leave the assignee as it is, because it marks the other session's claim.
+1. Read the issue's comments and count them. With MCP, use `issue_read` with `method: get_comments` and `perPage: 100`. If a page is full, read the next one.
+2. Read the issue again. If it is now assigned, another session got there first. Pick another ticket.
+3. Assign the issue to yourself. With MCP, call `get_me` for your login, then `issue_write` with `method: update` and `assignees`. With `gh`, run `gh issue edit <number> --add-assignee @me`.
+4. Comment `Claimed by branch <branch>`.
+5. Read the comments again. Look only at the comments after the count from step 1. If a `Claimed by branch` comment from another branch comes before yours, that session won. Comment `Claim withdrawn by branch <branch>` and pick another ticket. Leave the assignee as it is, because it marks the other session's claim.
 
-Claim comments from before the time you noted do not count. The issue was unassigned then, so those claims were already released.
+Claim comments from before step 1 do not count. The issue was unassigned at step 2, so those claims were already released.
 
 An open, unassigned issue is unclaimed.
 
@@ -99,8 +103,14 @@ An open, unassigned issue is unclaimed.
 
 Release your claim when you stop work on a ticket without finishing it.
 
-1. Edit your claim comment to `Claim released by branch <branch>`. With MCP, use `update_issue_comment` with the comment's id from `issue_read` `get_comments`. The MCP tools cannot delete comments.
-2. Remove yourself as assignee. With MCP, call `issue_write` with `method: update` and `assignees: []`. With `gh`, run `gh issue edit <number> --remove-assignee @me`.
+1. Remove yourself as assignee. With MCP, call `issue_write` with `method: update` and `assignees: []`. With `gh`, run `gh issue edit <number> --remove-assignee @me`.
+2. Comment `Claim released by branch <branch>`.
+
+Unassigning first is what returns the ticket to the frontier. A session that stops between the two steps still leaves a ticket that the next session can claim.
+
+### Stale claims
+
+A session that ends without releasing its claim leaves the ticket assigned and off the frontier. Only the owner can tell that the session is gone. The owner frees the ticket by unassigning it in GitHub, or by naming it in a new session's prompt. A session whose prompt names an assigned issue claims it without step 2.
 
 ## Pull requests as a triage surface
 

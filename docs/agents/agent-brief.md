@@ -1,6 +1,6 @@
 # Agent brief
 
-An agent brief is the specification an AFK agent works from. Triage posts one as a comment when it moves an issue to `ready-for-agent`. After that, the brief is the contract, and the issue body and discussion are context. A ticket that an agent writes is itself a brief, so its body follows the ticket layout at the end of this page.
+An agent brief is the specification an AFK agent works from. Triage posts one as a comment before it moves an issue to `ready-for-agent`. After that, the brief is the contract, and the issue body and discussion are context. A ticket that an agent writes is itself a brief, so its body follows the ticket layout at the end of this page.
 
 This page is adapted from `AGENT-BRIEF.md` and `to-tickets` in [mattpocock/skills](https://github.com/mattpocock/skills), which also has worked examples. See [Third-party notices](third-party-notices.md).
 

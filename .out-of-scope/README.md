@@ -27,7 +27,7 @@ Only when an enhancement is rejected as `wontfix`. A bug that is rejected, or a 
 
 Agents do not commit to `main`, so a page arrives through a pull request:
 
-1. Close the issue as not planned right away, with `wontfix`.
-2. Add or update the page on a branch, and open a pull request that says `Refs #<number>`. `Closes` would mark the issue completed.
-3. In the closing comment, give the page's path and link the pull request. A link to the branch breaks when GitHub deletes the branch after the merge.
-4. If the owner closes the pull request without merging it, reopen the issue for triage.
+1. Add or update the page on a branch, and open a pull request that says `Refs #<number>`. `Closes` would mark the issue completed.
+2. Post the closing comment on the issue. Give the page's path and link the pull request. A link to the branch breaks when GitHub deletes the branch after the merge.
+3. Close the issue as not planned, and swap its state label for `wontfix` in the same `issue_write` call. Do not wait for the pull request to merge.
+4. If the owner closes the pull request without merging it, reopen the issue and swap `wontfix` for `needs-triage` in the same call.
