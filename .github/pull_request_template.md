@@ -12,4 +12,4 @@
 
 **Blast radius:** <!-- one word, then what could break if this is wrong -->
 
-<!-- Link the issue so that merging closes it. Write: Closes #<number> -->
+<!-- Link the issue. Write Closes #<number> when merging completes it, or Refs #<number> when it does not, such as a page for a wontfix issue. -->

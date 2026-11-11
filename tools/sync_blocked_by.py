@@ -5,7 +5,9 @@ The GitHub MCP tools that cloud agents use cannot create GitHub's native issue
 dependencies, so agents list blockers in the issue body instead. The Blocked by
 workflow runs this script on every opened, edited, or reopened issue.
 
-An issue with no `## Blocked by` section is left unchanged.
+Only a heading named "Blocked by" starts the section. An issue with no such
+heading is left unchanged, so a prose line that mentions blockers cannot remove
+links.
 
 Usage: GH_REPO=owner/repo sync_blocked_by.py <issue number>
 """
@@ -16,7 +18,6 @@ import subprocess
 import sys
 
 HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(.*?)[ \t#]*$")
-BLOCKED_LINE = re.compile(r"^\s*\**blocked by\**\s*:(.*)$", re.IGNORECASE)
 REFERENCE = re.compile(r"(?<![\w/#&])#(\d+)\b")
 COMMENT = re.compile(r"<!--.*?-->", re.S)
 CODE_SPAN = re.compile(r"(`+).+?\1")
@@ -40,16 +41,8 @@ def blockers(body):
             if in_section and found is None:
                 found = set()
             continue
-        text = None
         if in_section:
-            text = line
-        else:
-            match = BLOCKED_LINE.match(line)
-            if match:
-                found = found if found is not None else set()
-                text = match.group(1)
-        if text is not None:
-            found.update(int(n) for n in REFERENCE.findall(CODE_SPAN.sub("", text)))
+            found.update(int(n) for n in REFERENCE.findall(CODE_SPAN.sub("", line)))
     return found
 
 

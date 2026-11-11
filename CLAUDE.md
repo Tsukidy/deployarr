@@ -15,7 +15,7 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 
 - Use the `mcp__github__*` tools for issues and pull requests. In cloud sessions the `gh` command is only allowed for search. `docs/agents/issue-tracker.md` maps each issue operation to its MCP call.
 - `issue_write` with `labels` replaces every label on the issue. Read the issue with `issue_read` first. Then send the full list: the labels it keeps, plus the one you add or minus the one you remove.
-- The MCP tools cannot create GitHub's native blocking links or delete comments. Write blockers in the ticket's `## Blocked by` section, and the Blocked by workflow creates the links.
+- The MCP tools cannot create GitHub's native blocking links or delete comments. Write blockers in the ticket's `## Blocked by` section, and the Blocked by workflow creates the links. To withdraw or release a claim, edit the claim comment with `update_issue_comment`.
 - These tools cannot create labels or milestones or change repository settings. Labels come from `.github/labels.json` through the Labels workflow.
 - A push that deletes a branch is refused with HTTP 403, and auto mode blocks force-pushes. Leave branch deletion to GitHub, which deletes a pull request's branch when it is merged.
 

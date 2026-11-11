@@ -36,13 +36,17 @@ These labels belong to this repository. The upstream skills do not know them.
 | `epic` | A roadmap milestone. Its sub-issues are the tickets. An epic carries no category or state label. |
 | `area:*` | The part of deployarr an issue touches. An issue can carry several, or none. |
 
-## Who applies each state
+## Who applies each label
 
 - The Triage label workflow adds `needs-triage` to a new issue that has no state label.
-- An agent that writes tickets labels each one `ready-for-agent` or `ready-for-human` itself. Its tickets are specified by construction, so they skip triage. The owner never has to add `ready-for-agent` by hand.
-- Triage moves an issue out of `needs-triage` to `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`. The maintainer can override any state at any time.
+- The issue forms add the category. An issue opened blank has none until triage adds it.
+- An agent that breaks work into tickets shows the owner the list first. Once the owner approves it, the agent labels each ticket with its category and `ready-for-agent` or `ready-for-human`. The tickets skip triage, and the owner never labels them by hand.
+- Work an agent finds outside its ticket gets its category and `needs-triage`, so the owner decides whether it happens.
+- Triage recommends a category and a state for an issue in `needs-triage`, waits for the owner, then applies both in one call. The maintainer can override any label at any time.
 - The Close needs-info workflow runs daily. Any comment made after `needs-info` goes on swaps it for `needs-triage`, so add the label after you ask your question. An issue with no activity for 14 days after the label goes on is closed as not planned.
-- An agent that gets stuck on a `ready-for-agent` issue moves it to `ready-for-human` and comments what it needs.
+- An agent that needs the owner's answer opens a `ready-for-human` question and lists it as a blocker of its ticket. The ticket keeps `ready-for-agent`. When the owner closes the question, the ticket is back on the frontier with no relabel.
+- An agent moves a ticket to `ready-for-human` only when the ticket's own work needs the lab, hardware, external access, or manual testing.
+- When the owner names a `ready-for-human` issue in an agent's prompt, that agent moves it to `ready-for-agent` as it claims it.
 
 ## Blocked issues
 

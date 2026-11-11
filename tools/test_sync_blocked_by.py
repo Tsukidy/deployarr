@@ -48,9 +48,10 @@ class BlockersTest(unittest.TestCase):
     def test_section_says_none(self):
         self.assertEqual(blockers("## Blocked by\n\nNone (can start immediately)."), set())
 
-    def test_inline_line(self):
-        self.assertEqual(blockers("Blocked by: #12, #15\n\nBody text #99"), {12, 15})
-        self.assertEqual(blockers("**Blocked by:** #2"), {2})
+    def test_inline_line_is_not_a_section(self):
+        self.assertIsNone(blockers("Blocked by: #12, #15\n\nBody text #99"))
+        self.assertIsNone(blockers("**Blocked by:** #2"))
+        self.assertIsNone(blockers("### What happened\n\nBlocked by: the ADK release"))
 
     def test_ignores_code_comments_and_other_repos(self):
         body = ("## Blocked by\n\n- #3\n- `#4`\n<!-- - #5 -->\n- other/repo#6\n- &#7;\n"
@@ -68,6 +69,11 @@ class SyncTest(unittest.TestCase):
         api = FakeGitHub({1: "", 2: "", 3: "", 10: "## Blocked by\n\n- #1\n- #2"}, links={10: {2, 3}})
         self.assertEqual(sync(api, 10), [])
         self.assertEqual(api.links[10], {1, 2})
+
+    def test_prose_line_keeps_links(self):
+        api = FakeGitHub({1: "", 10: "### What happened\n\nBlocked by: the ADK release"}, links={10: {1}})
+        self.assertEqual(sync(api, 10), [])
+        self.assertEqual(api.links[10], {1})
 
     def test_leaves_links_without_section(self):
         api = FakeGitHub({1: "", 10: "No section here, see #1"}, links={10: {1}})
