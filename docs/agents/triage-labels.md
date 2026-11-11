@@ -42,11 +42,12 @@ These labels belong to this repository. The upstream skills do not know them.
 - The issue forms add the category. An issue opened blank has none until triage adds it.
 - An agent that breaks work into tickets shows the owner the list first. Once the owner approves it, the agent labels each ticket with its category and `ready-for-agent` or `ready-for-human`. The tickets skip triage, and the owner never labels them by hand.
 - Work an agent finds outside its ticket gets its category and `needs-triage`, so the owner decides whether it happens.
-- Triage recommends a category and a state for an issue in `needs-triage` and waits for the owner. It posts its comments and edits first and applies both labels last, in one call. The maintainer can override any label at any time.
+- Triage recommends a category and a state for an issue in `needs-triage` and waits for the owner. It posts its comments and edits first and applies both labels last, in one call. The maintainer can override any label at any time. A `ready-for-agent` label applied by hand also needs a `## Blocked by` section at the end of the body, with `None (can start immediately).` when nothing blocks the issue. Without one, the frontier skips it.
 - The Close needs-info workflow runs daily. Any comment made after `needs-info` goes on swaps it for `needs-triage`, so add the label after you ask your question. An issue with no activity for 14 days after the label goes on is closed as not planned.
 - An agent that needs the owner's answer opens a `ready-for-human` question and lists it as a blocker of its ticket. The ticket keeps its label. When the owner answers and closes the question, the ticket is back on the frontier with no relabel.
 - An agent moves a ticket to `ready-for-human` only when the ticket's own work needs the lab, hardware, external access, or manual testing.
-- When the owner names an issue in an agent's prompt, that agent works on it and keeps its label. A `ready-for-human` issue stays off the frontier if the session stops early.
+- When the owner names an issue in an agent's prompt for it to work on, that agent works on it and keeps its label. A `ready-for-human` issue stays off the frontier if the session stops early. Triage and breaking an epic into tickets never claim the issue.
+- A ticket whose blocker was closed as not planned should not happen. The next session that takes it closes it as not planned with `wontfix`.
 - An issue that is reopened keeps its labels. Whoever reopens a `wontfix` issue swaps the label for `needs-triage` in the same call.
 
 ## Blocked issues

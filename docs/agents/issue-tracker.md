@@ -77,40 +77,52 @@ The frontier is the set of tickets an agent can start now. A ticket is on the fr
 
 - open
 - labeled `ready-for-agent`
-- not assigned to anyone
 - written with a `## Blocked by` section
 - unblocked, because every issue in that section is closed
+- held by no session, by the rule in [Claim](#claim)
 
-To find it, list the open `ready-for-agent` issues, drop the assigned ones, then read each remaining issue and check its blockers. Take the first one in its epic's sub-issue order.
+To find it, list the open `ready-for-agent` issues. Check the unassigned ones first, because an assigned issue is almost always held. For each candidate, read its body for blockers and its comments for a holder. Take the first free one in its epic's sub-issue order.
 
 A `ready-for-agent` issue with no `## Blocked by` section did not finish triage. Skip it.
 
 ## Claim
 
-Claiming is the first write of a session, before any other work. Agents in this repository share one GitHub login, so the assignee cannot tell two sessions apart. The claim comments do, by their order in the comment list. No step compares clocks.
+Claim comments decide which session holds a ticket. Agents in this repository share one GitHub login, so the assignee cannot tell sessions apart, and no step compares clocks. The assignee only shows in GitHub that the ticket is taken.
 
-1. Read the issue's comments and count them. With MCP, use `issue_read` with `method: get_comments` and `perPage: 100`. If a page is full, read the next one.
-2. Read the issue again. If it is now assigned, another session got there first. Pick another ticket.
-3. Assign the issue to yourself. With MCP, call `get_me` for your login, then `issue_write` with `method: update` and `assignees`. With `gh`, run `gh issue edit <number> --add-assignee @me`.
-4. Comment `Claimed by branch <branch>`.
-5. Read the comments again. Look only at the comments after the count from step 1. If a `Claimed by branch` comment from another branch comes before yours, that session won. Comment `Claim withdrawn by branch <branch>` and pick another ticket. Leave the assignee as it is, because it marks the other session's claim.
+To find the holder, read every comment in order, starting with nobody holding the ticket:
 
-Claim comments from before step 1 do not count. The issue was unassigned at step 2, so those claims were already released.
+- `Claimed by branch <branch>` gives the ticket to that branch, but only when nobody holds it.
+- `Claim released by branch <branch>` frees the ticket when that branch holds it.
+- Any other comment, including `Claim withdrawn by branch <branch>`, changes nothing.
 
-An open, unassigned issue is unclaimed.
+Read comments with `issue_read`, `method: get_comments`, and `perPage: 100`. If a page is full, read the next one.
+
+To claim a ticket:
+
+1. Read every comment. If a session holds the ticket, pick another one.
+2. Comment `Claimed by branch <branch>`.
+3. Read every comment again. If you do not hold the ticket now, another session got there first. Comment `Claim withdrawn by branch <branch>`, leave the assignee alone, and pick another ticket.
+4. Assign yourself. With MCP, call `get_me` for your login, then `issue_write` with `method: update` and `assignees`. With `gh`, run `gh issue edit <number> --add-assignee @me`.
+
+Claiming is the first write of a session that works a ticket. The one exception is an `Owner input:` comment, which may come first. A session that triages an issue or breaks an epic into tickets does not claim it.
+
+`tools/claim_model.py` checks every interleaving of these steps for two and three sessions, with crashes and the owner freeing stale claims. It finds no state where two sessions hold a ticket, and none where a ticket stays held after every session released it. The Tools workflow runs it on every pull request. Change the model in the same pull request as these steps.
 
 ### Release a claim
 
 Release your claim when you stop work on a ticket without finishing it.
 
-1. Remove yourself as assignee. With MCP, call `issue_write` with `method: update` and `assignees: []`. With `gh`, run `gh issue edit <number> --remove-assignee @me`.
-2. Comment `Claim released by branch <branch>`.
+1. Comment `Claim released by branch <branch>`. This frees the ticket.
+2. Remove yourself as assignee. With MCP, call `issue_write` with `method: update` and `assignees: []`, in the same call as any label change. With `gh`, run `gh issue edit <number> --remove-assignee @me`.
 
-Unassigning first is what returns the ticket to the frontier. A session that stops between the two steps still leaves a ticket that the next session can claim.
+A ticket that merges or closes needs no release.
 
 ### Stale claims
 
-A session that ends without releasing its claim leaves the ticket assigned and off the frontier. Only the owner can tell that the session is gone. The owner frees the ticket by unassigning it in GitHub, or by naming it in a new session's prompt. A session whose prompt names an assigned issue claims it without step 2.
+A session that ends without releasing its claim leaves the ticket held, and off the frontier. Only the owner can tell that the session is gone. The owner frees the ticket in one of two ways:
+
+- Comment `Claim released by branch <branch>` with the dead session's branch, then unassign the ticket.
+- Name the issue and that branch in a new session's prompt. That session posts the same comment and then claims the ticket as usual.
 
 ## Pull requests as a triage surface
 
