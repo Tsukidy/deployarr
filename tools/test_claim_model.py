@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from claim_model import CLAIM, RELEASE, WITHDRAW, Model, holder, run_all  # noqa: E402
+from claim_model import CLAIM, HELD_BY_GONE, RELEASE, WITHDRAW, Model, holder, run_all  # noqa: E402
 
 
 class HolderTest(unittest.TestCase):
@@ -23,7 +23,7 @@ class HolderTest(unittest.TestCase):
 class ProtocolTest(unittest.TestCase):
     def test_documented_protocol_holds_every_property(self):
         total, failures = run_all()
-        self.assertGreater(total, 400000)
+        self.assertGreater(total, 1000000)
         self.assertEqual(failures, [])
 
     def assertCaught(self, props, **variant):
@@ -46,6 +46,13 @@ class ProtocolTest(unittest.TestCase):
 
     def test_catches_commenting_before_the_unassign(self):
         self.assertCaught("e", unassign_first=False)
+
+    def test_catches_a_lost_claim_that_keeps_a_stale_assignee(self):
+        model = Model(2, 1, owner=False, log=HELD_BY_GONE, assigned=True, blocked=True, named=True,
+                      verify_unassign=False)
+        states, failure = model.check()
+        self.assertIsNotNone(failure)
+        self.assertIn("b", failure[0])
 
 
 if __name__ == "__main__":
