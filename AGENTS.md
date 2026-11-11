@@ -4,7 +4,7 @@ This file is for coding agents that work in this repository. Claude Code reads i
 
 ## Project
 
-deployarr is a planned self-hosted Windows deployment server written in Rust, modeled on Microsoft Deployment Toolkit (MDT). A PC network-boots, the server finds the PC's order in an SQL database, and the PC installs that order's Windows edition, drivers, and applications with no technician input.
+deployarr is a planned self-hosted Windows deployment server written in Rust, modeled on Microsoft Deployment Toolkit (MDT). A PC network-boots, the server finds what to install from a pre-staged record, an order in an optional SQL database, or a technician's pick from a list, and the PC installs that Windows edition, drivers, and applications with no further input.
 
 The repository holds design documents only. There is no code yet. The next milestone is M0 in `docs/roadmap.md`.
 

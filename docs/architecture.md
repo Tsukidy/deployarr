@@ -7,8 +7,9 @@ deployarr installs Windows on bare-metal PCs from one central server with no tec
 These come from the product owner and drive every decision below.
 
 - Zero-touch deployment, Windows first.
-- Order lookup in an SQL database. The order's OS identifier selects the task sequence. A manual list of task sequences is the fallback.
-- An order is tied to a PC in three ways, and all three must work: the order table holds the motherboard serial number, a technician scans or types the order number, or someone pre-stages the PC in the web UI.
+- Order lookup in an SQL database, as an optional feature with high priority. The order's OS identifier selects the task sequence. A manual list of task sequences is the fallback.
+- deployarr works with no order database. It then deploys from pre-staged records and the manual list.
+- A PC is matched in three ways, and all three must work: the order table holds the motherboard serial number, a technician scans or types the order number, or someone pre-stages the PC in the web UI. Pre-staging needs no order database.
 - The order database engine is not fixed. Support Microsoft SQL Server, PostgreSQL, and MySQL or MariaDB.
 - Task sequences that work like MDT's: ordered groups and steps, conditions, variables, scripts, commands, and reboots.
 - Every device has a working driver when the deployment finishes.
@@ -27,7 +28,7 @@ These come from the product owner and drive every decision below.
  |                                                                     |
  |  PXE: proxyDHCP (UDP 67, 4011), TFTP (UDP 69)                       |
  |  HTTPS API for agents and the web UI, content downloads             |
- |  rules engine -> order data sources (SQL Server, PostgreSQL, MySQL) |
+ |  rules engine -> optional order DBs (SQL Server, PostgreSQL, MySQL) |
  |  libraries: OS images, drivers, apps, task sequences, boot images   |
  |  storage: SQLite database + content store directory                 |
  +---------------------------------------------------------------------+
@@ -245,6 +246,12 @@ The default order is `PreStaged`, then `OrderByIdentity` on the baseboard serial
 
 A barcode scanner acts as a keyboard, so the order-number prompt in the WinPE screen accepts scanner input with no extra code.
 
+Data sources are optional. A server with none runs `PreStaged`, then `ManualList`, and opens no database connection besides its own SQLite file. Adding a data source makes `OrderByIdentity` and `PromptOrderNumber` available, and the default order above applies.
+
+An admin can reorder the chain or remove any resolver. When the chain is saved, the server rejects an empty chain and a resolver that names a missing data source or query.
+
+When no resolver returns a task sequence, the agent shows the PC's identity facts on a no-match screen and waits. It does not touch the disk.
+
 ### Data sources
 
 The order database is reached only from the server. The agent never holds database credentials. MDT puts them in `CustomSettings.ini` and writes the connection string, password included, to its log.
@@ -270,7 +277,7 @@ A zero-touch server can erase any PC that network-boots by mistake. deployarr er
 - a technician entering an order number
 - a technician picking a task sequence
 
-An unknown PC stops at the prompt and does not touch its disk. After a deployment succeeds, the server stops offering PXE boot to that PC's MAC address and SMBIOS UUID (DHCP option 97), until an admin re-arms it. This stops a PC that boots from the network first from reinstalling in a loop.
+An unknown PC stops at the order-number prompt, the manual list, or the no-match screen, whichever the chain reaches first, and does not touch its disk. After a deployment succeeds, the server stops offering PXE boot to that PC's MAC address and SMBIOS UUID (DHCP option 97), until an admin re-arms it. This stops a PC that boots from the network first from reinstalling in a loop.
 
 ## Agent
 
@@ -482,7 +489,7 @@ The UI is written in Leptos and compiled to WebAssembly, so it uses the same `de
 - OS images: import an ISO or WIM, then choose editions.
 - Drivers: import packages, browse by hardware ID, manage profiles, and view missing-driver reports.
 - Applications: upload files, set the command, the detection rule, and dependencies, and test detection.
-- Order lookup: data source connections with a test button, named queries, the OS-code map, and the lookup chain. A test box takes an order number or a serial number and shows the resolved task sequence and its trace.
+- Order lookup: the lookup chain, plus the optional data source connections with a test button, named queries, and the OS-code map. A test box takes an order number or a serial number and shows the resolved task sequence and its trace.
 - Machines: pre-staged PCs, with CSV import.
 - Boot images and PXE: build boot images, set the active image, and configure DHCP mode and interfaces.
 
