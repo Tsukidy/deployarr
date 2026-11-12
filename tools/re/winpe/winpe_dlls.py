@@ -19,6 +19,8 @@ from typing import NamedTuple
 BURN = "{http://schemas.microsoft.com/wix/2008/Burn}"
 AMD64_DIR = "Windows Preinstallation Environment\\amd64\\en-us"
 SCHEMA_VERSION = 6
+INSTALLER_NAME = re.compile(r"[A-Za-z0-9 ._()-]+")
+MSI_NAME = re.compile(r"[A-Za-z0-9._-]+")
 
 
 class ApiSet(NamedTuple):
@@ -40,6 +42,16 @@ class WimLocation(NamedTuple):
     file_key: str
     cabinet: str
     size: int
+
+
+class Payload(NamedTuple):
+    file_path: str
+    size: int
+    sha1: str
+
+
+def plain_name(name: str, pattern: re.Pattern[str]) -> bool:
+    return name not in (".", "..") and pattern.fullmatch(name) is not None
 
 
 def parse_apiset_section(section: bytes) -> ApiSetSchema:
@@ -116,6 +128,9 @@ def locate_amd64_wim(table_dir: Path) -> WimLocation:
     seq = int(row["Sequence"])
     media = [m for m in read_idt(table_dir / "Media.idt") if int(m["LastSequence"]) >= seq]
     cab = min(media, key=lambda m: int(m["LastSequence"]))["Cabinet"]
+    for name in (row["File"], cab):
+        if not plain_name(name, MSI_NAME):
+            raise ValueError(f"unexpected File key or Cabinet {name!r}")
     return WimLocation(row["File"], cab, int(row["FileSize"]))
 
 
@@ -192,13 +207,29 @@ def cmd_build(listing: Path, schema_dll: Path, out: Path, facts: list[str]) -> N
     (out / "summary.txt").write_text("".join(f"{k}: {v}\n" for k, v in summary), encoding="utf-8", newline="\n")
 
 
-def package_payloads(manifest: Path, package_id: str) -> list[ET.Element]:
+def parse_payload(p: ET.Element) -> Payload:
+    fp, size, sha1 = p.get("FilePath", ""), p.get("FileSize", ""), p.get("Hash", "")
+    folder, _, name = fp.partition("\\")
+    if folder != "Installers" or not plain_name(name, INSTALLER_NAME):
+        raise ValueError(f"unexpected payload FilePath {fp!r}")
+    if not re.fullmatch(r"[0-9]+", size):
+        raise ValueError(f"payload {fp} has FileSize {size!r}")
+    if not re.fullmatch(r"[0-9A-Fa-f]{40}", sha1):
+        raise ValueError(f"payload {fp} has Hash {sha1!r}")
+    return Payload(fp, int(size), sha1.lower())
+
+
+def package_payloads(manifest: Path, package_id: str) -> list[Payload]:
     root = ET.parse(manifest).getroot()
     pkg = next((p for p in root.iter(f"{BURN}MsiPackage") if p.get("Id") == package_id), None)
     if pkg is None:
         raise ValueError(f"no MsiPackage {package_id} in the manifest")
     refs = {r.get("Id") for r in pkg.iter(f"{BURN}PayloadRef")}
-    return [p for p in root.iter(f"{BURN}Payload") if p.get("Id") in refs]
+    payloads = [parse_payload(p) for p in root.iter(f"{BURN}Payload") if p.get("Id") in refs]
+    msis = [p for p in payloads if p.file_path.lower().endswith(".msi")]
+    if len(msis) != 1:
+        raise ValueError(f"expected one MSI payload in {package_id}, found {len(msis)}")
+    return payloads
 
 
 def main(argv: list[str]) -> None:
@@ -208,9 +239,8 @@ def main(argv: list[str]) -> None:
         print(reg.get("Version"))
     elif cmd == "payloads":
         for p in package_payloads(Path(args[0]), args[1]):
-            fp = p.get("FilePath", "")
-            url_path = urllib.parse.quote(fp.replace("\\", "/"))
-            print("\t".join((fp, p.get("FileSize", ""), p.get("Hash", "").lower(), url_path)))
+            url_path = urllib.parse.quote(p.file_path.replace("\\", "/"))
+            print("\t".join((p.file_path, str(p.size), p.sha1, url_path)))
     elif cmd == "locate":
         print("\t".join(map(str, locate_amd64_wim(Path(args[0])))))
     elif cmd == "schema-path":
