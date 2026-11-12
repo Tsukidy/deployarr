@@ -108,6 +108,25 @@ class ReplyTest(unittest.TestCase):
         self.assertEqual(reply.codes, [53, 54, 97, 60])
         self.assertEqual(reply.file, bytes(128))
 
+    def test_request_options_54_and_60_are_not_read(self):
+        request = reference.dhcp_request(REQUEST, 7)
+        self.assertEqual(request.count(b"\x3c\x20PXEClient:Arch:00007:UNDI:003016"), 1)
+        request = request.replace(b"\x3c\x20PXEClient:Arch:00007:UNDI:003016", b"\x3c\x08MSFT 5.0")
+        request = request[:-1] + b"\x36\x04\xc0\x00\x02\x63\xff"
+        parsed = dhcp.parse(request)
+        self.assertEqual((parsed.option(54), parsed.option(60)), (bytes((192, 0, 2, 99)), b"MSFT 5.0"))
+        reply = reply_to(request)
+        self.assertEqual(reply.option(53), bytes((ACK,)))
+        self.assertEqual(reply.option(54), bytes((192, 0, 2, 10)))
+
+    def test_sname_is_zeroed_and_hops_are_echoed(self):
+        request = bytearray(reference.dhcp_request(DISCOVER, 7))
+        request[3] = 3
+        request[44:52] = b"lab-host"
+        raw = dhcp.encode(answer(bytes(request)).packet)
+        self.assertEqual(raw[3], 3)
+        self.assertEqual(raw[44:108], bytes(64))
+
     def test_offer_is_padded_to_the_bootp_minimum(self):
         raw = dhcp.encode(answer(reference.dhcp_request(DISCOVER, 7)).packet)
         self.assertEqual(len(raw), 300)
@@ -169,6 +188,9 @@ class NoReplyTest(unittest.TestCase):
             "no option 97": (reference.dhcp_request(REQUEST, 7, None), IgnoreReason.NO_OPTION_97),
             "ia32 uefi": (reference.dhcp_request(DISCOVER, 6), IgnoreReason.UNSUPPORTED_ARCH),
             "arm64 uefi": (reference.dhcp_request(REQUEST, 11), IgnoreReason.UNSUPPORTED_ARCH),
+            "arch 0x0107": (reference.dhcp_request(DISCOVER, 0x0107), IgnoreReason.UNSUPPORTED_ARCH),
+            "option 93 of 1 byte": (reference.dhcp_request(DISCOVER, None)[:-1] + b"\x5d\x01\x07\xff",
+                                    IgnoreReason.NO_OPTION_93),
         }
         for name, (request, reason) in cases.items():
             with self.subTest(name):
@@ -230,6 +252,10 @@ class ParseTest(unittest.TestCase):
             dhcp.parse(request)
         with self.assertRaisesRegex(dhcp.MalformedPacket, "option 97"):
             dhcp.parse(reference.dhcp_request()[:240] + b"\x61")
+
+    def test_first_value_of_a_repeated_option_wins(self):
+        packet = dhcp.parse(reference.dhcp_request(DISCOVER, 7)[:-1] + b"\x5d\x02\x00\x00\xff")
+        self.assertEqual(packet.option(93), b"\x00\x07")
 
     def test_pad_is_skipped_and_end_stops_the_options(self):
         head = reference.dhcp_request()[:240]

@@ -10,12 +10,14 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
 from ipaddress import IPv4Address
 from pathlib import Path
 
+import events
 import pxe_prototype
 import reference
 import tftp
@@ -283,6 +285,19 @@ class TftpTest(ServerCase):
         finished, = self.wait_for("transfer-finished")
         self.assertEqual(finished["outcome"], "complete")
 
+    def test_replies_come_from_the_server_address(self):
+        pxe = PxeServer(Config(
+            server_ip=IPv4Address("127.0.0.2"), root=self.root, chain=Chain.SINGLE, dhcp_bind="127.0.0.2",
+            dhcp_ports=(0,), tftp_port=0, log_stream=self.log))
+        pxe.start()
+        self.addCleanup(pxe.stop)
+        self.assertEqual(pxe.tftp_address[0], "127.0.0.2")
+        sock = self.client()
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        self.assertEqual(sock.recvfrom(65535)[1][0], "127.0.0.2")
+        sock.sendto(reference.dhcp_request(DISCOVER, 7), ("127.0.0.2", pxe.dhcp_ports[0]))
+        self.assertEqual(sock.recvfrom(65535)[1], ("127.0.0.2", pxe.dhcp_ports[0]))
+
     def test_silent_client_times_out(self):
         pxe = self.start()
         sock = self.client()
@@ -355,6 +370,28 @@ class DhcpTest(ServerCase):
         self.assertIsNone(ack.option(97))
         self.assertEqual(self.events("started")[0]["answer_without_guid"], "true")
         self.assertNotIn("guid", self.events("dhcp-received")[0])
+
+    def test_reply_is_logged_with_its_port_and_xid(self):
+        pxe = self.start()
+        self.exchange(pxe.dhcp_ports[1], reference.dhcp_request(
+            REQUEST, 7, xid=0xABCD, option_250=b"\x0b\x01\x02"))
+        received, = self.events("dhcp-received")
+        self.assertEqual((received["port"], received["xid"], received["options"]),
+                         (str(pxe.dhcp_ports[1]), "0000abcd", "55,57,94,60"))
+        sent, = self.wait_for("dhcp-sent")
+        self.assertEqual((sent["port"], sent["xid"]), (str(pxe.dhcp_ports[1]), "0000abcd"))
+        self.assertRegex(sent["destination"], r"^127\.0\.0\.1:\d+$")
+
+    def test_reply_that_cannot_be_sent_is_logged_as_a_failure(self):
+        pxe = self.start()
+        sock = self.client()
+        sock.connect(("127.0.0.1", pxe.dhcp_ports[0]))
+        with mock.patch.object(socket.socket, "sendto", side_effect=OSError(101, "Network is unreachable")):
+            sock.send(reference.dhcp_request(DISCOVER, 7))
+            failed, = self.wait_for("send-failed")
+        self.assertEqual(failed["destination"], "127.0.0.1:%d" % sock.getsockname()[1])
+        self.assertEqual(failed["error"], "[Errno 101] Network is unreachable")
+        self.assertEqual(self.events("dhcp-sent"), [])
 
     def test_two_stage_conversation_ends_with_the_boot_manager(self):
         pxe = self.start("two-stage")
@@ -431,6 +468,35 @@ class LogTest(ServerCase):
             "timeout": "0.200000", "retries": "2", "block_wrap_first": "0", "block_log": "true",
             "answer_without_guid": "false"})
 
+    def test_started_line_shows_the_chain_and_the_limits(self):
+        pxe = PxeServer(Config(
+            server_ip=IPv4Address("127.0.0.1"), root=self.root, chain=Chain.TWO_STAGE, dhcp_bind="127.0.0.1",
+            dhcp_ports=(0,), tftp_port=0, log_stream=self.log,
+            limits=Limits(max_windowsize=8, timeout=1.5, retries=3, block_wrap_first=1)))
+        pxe.start()
+        self.addCleanup(pxe.stop)
+        started, = self.events("started")
+        self.assertEqual([started[key] for key in ("chain", "max_windowsize", "timeout", "retries", "block_wrap_first")],
+                         ["two-stage", "8", "1.500000", "3", "1"])
+
+    def test_transfer_time_and_terms_are_logged(self):
+        pxe = self.start()
+        sock = self.client()
+        sock.sendto(reference.tftp_request("small.bin", {"windowsize": "4"}), pxe.tftp_address)
+        oack, transfer_address = sock.recvfrom(65535)
+        self.assertEqual(oack, b"\x00\x06windowsize\x004\x00")
+        time.sleep(0.15)
+        sock.sendto(reference.tftp_ack(0), transfer_address)
+        for _ in range(3):
+            sock.recvfrom(65535)
+        sock.sendto(reference.tftp_ack(3), transfer_address)
+        finished, = self.wait_for("transfer-finished")
+        self.assertEqual((finished["windowsize"], finished["blksize"], finished["blocks_sent"]), ("4", "512", "3"))
+        self.assertGreaterEqual(float(finished["seconds"]), 0.15)
+        self.assertLess(float(finished["seconds"]), 1.0)
+        self.assertEqual([fields["bytes"] for fields in self.events("tftp-sent") if fields["kind"] == "DATA"],
+                         ["512", "512", "276"])
+
     def test_transfer_is_logged_packet_by_packet(self):
         pxe = self.start()
         reference.tftp_get(pxe.tftp_address, "Small.bin", {"blksize": "1024", "tsize": "0"})
@@ -464,6 +530,24 @@ class LogTest(ServerCase):
         self.assertEqual(kinds, [("tftp-received", "RRQ"), ("tftp-received", "RRQ"),
                                  ("tftp-sent", "ERROR"), ("tftp-sent", "OACK")])
         self.assertEqual(self.events("started")[0]["block_log"], "false")
+
+    def test_client_error_is_logged_when_block_lines_are_left_out(self):
+        pxe = self.start(log_blocks=False)
+        sock = self.client()
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        _, transfer_address = sock.recvfrom(65535)
+        sock.sendto(b"\x00\x05\x00\x03Disk full\x00", transfer_address)
+        self.wait_for("transfer-finished")
+        self.assertEqual([(fields["kind"], fields.get("message")) for fields in self.events("tftp-received")],
+                         [("RRQ", None), ("ERROR", "Disk full")])
+
+    def test_line_layout(self):
+        self.assertEqual(
+            events.format_line(events.TftpSent("192.0.2.7:1024", "ERROR", code=1, message="")),
+            'tftp-sent client=192.0.2.7:1024 kind=ERROR code=1 message=""')
+        self.assertEqual(
+            events.format_line(events.DhcpIgnored(67, "0.0.0.0:68", "other-interface", "ifindex=3")),
+            'dhcp-ignored port=67 source=0.0.0.0:68 reason=other-interface detail="ifindex=3"')
 
     def test_file_name_from_the_network_stays_on_one_line(self):
         pxe = self.start()
@@ -512,6 +596,11 @@ class CommandLineTest(unittest.TestCase):
             "unknown chain": (self.required[:5] + ["three-stage"] + self.required[6:], "invalid choice"),
             "bad address": (["--server-ip", "lab-host"] + self.required[2:], "--server-ip"),
             "missing root": (self.required[:3] + [str(self.root / "none")] + self.required[4:], "is not a directory"),
+            "root is a file": (self.required[:3] + [__file__] + self.required[4:], "is not a directory"),
+            "port 65536": (self.required + ["--tftp-port", "65536"], "'65536' is not a UDP port"),
+            "port in other digits": (self.required + ["--tftp-port", "\u0666\u0669"], "is not a UDP port"),
+            "log file in a missing folder": (self.required + ["--log-file", str(self.root / "none" / "run.log")],
+                                             "No such file or directory"),
             "bad port": (self.required + ["--dhcp-ports", "67,70000"], "'70000' is not a UDP port"),
             "repeated port": (self.required + ["--dhcp-ports", "67,4011,67"], "port 67 is listed twice"),
             "no address": (["--server-ip", "0.0.0.0"] + self.required[2:], "0.0.0.0 is not a host address"),
@@ -546,18 +635,39 @@ class CommandLineTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("no interface named no-such-if0", stderr.getvalue())
 
-    def test_runs_until_interrupted(self):
-        process = subprocess.Popen(
-            [sys.executable, str(HERE / "pxe_prototype.py"), *self.required,
-             "--dhcp-ports", "0", "--tftp-port", "0"],
-            stderr=subprocess.PIPE, text=True)
-        self.addCleanup(process.stderr.close)
-        self.addCleanup(process.kill)
-        started = log_fields(process.stderr.readline())
-        self.assertEqual((started["event"], started["chain"]), ("started", "single"))
-        process.send_signal(signal.SIGINT)
-        self.assertEqual(process.wait(timeout=5), 0)
-        self.assertEqual(process.stderr.read(), "")
+    def test_highest_port_is_accepted(self):
+        config = pxe_prototype.parse_args(self.required + ["--tftp-port", "65535", "--dhcp-ports", "65535"])
+        self.assertEqual((config.tftp_port, config.dhcp_ports), (65535, (65535,)))
+
+    def test_runs_until_interrupted_or_terminated(self):
+        for signal_number in (signal.SIGINT, signal.SIGTERM):
+            with self.subTest(signal=signal_number.name):
+                process = subprocess.Popen(
+                    [sys.executable, str(HERE / "pxe_prototype.py"), *self.required,
+                     "--dhcp-ports", "0", "--tftp-port", "0"],
+                    stderr=subprocess.PIPE, text=True)
+                self.addCleanup(process.stderr.close)
+                self.addCleanup(process.kill)
+                # A server that never logs must fail the test, not hang it.
+                watchdog = threading.Timer(10.0, process.kill)
+                watchdog.start()
+                self.addCleanup(watchdog.cancel)
+                started = log_fields(process.stderr.readline())
+                self.assertEqual((started["event"], started["chain"]), ("started", "single"))
+                process.send_signal(signal_number)
+                self.assertEqual(process.wait(timeout=5), 0)
+                self.assertEqual(process.stderr.read(), "")
+
+    def test_log_file_keeps_the_lines_of_earlier_runs(self):
+        log_file = self.root / "run.log"
+        for lines in (1, 2):
+            config = pxe_prototype.parse_args(
+                self.required + ["--dhcp-ports", "0", "--tftp-port", "0", "--log-file", str(log_file)])
+            with PxeServer(config):
+                self.assertEqual(len(log_file.read_text().splitlines()), lines)
+            config.log_stream.close()
+        self.assertEqual([log_fields(line)["event"] for line in log_file.read_text().splitlines()],
+                         ["started", "started"])
 
 
 if __name__ == "__main__":

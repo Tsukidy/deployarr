@@ -44,6 +44,7 @@ class ParseTest(unittest.TestCase):
             "short": b"\x00\x01",
             "no mode": b"\x00\x01file\x00",
             "no final NUL": b"\x00\x01file\x00octet",
+            "bytes after the mode": b"\x00\x01file\x00octet\x00x",
             "option without a value": b"\x00\x01file\x00octet\x00blksize\x00",
             "data from a client": b"\x00\x03\x00\x01abc",
             "oack from a client": b"\x00\x06blksize\x00512\x00",
@@ -75,7 +76,8 @@ class NegotiateTest(unittest.TestCase):
 
     def test_refused_values(self):
         for options in ((("blksize", "7"),), (("blksize", "big"),), (("blksize", "-512"),),
-                        (("windowsize", "0"),), (("windowsize", ""),), (("windowsize", "4.5"),)):
+                        (("windowsize", "0"),), (("windowsize", ""),), (("windowsize", "4.5"),),
+                        (("blksize", "\u0663\u0660\u0660"),)):
             with self.subTest(options=options):
                 with self.assertRaises(TftpError) as raised:
                     tftp.negotiate(options, 5000, Limits())
@@ -99,6 +101,10 @@ class NegotiateTest(unittest.TestCase):
     def test_option_names_ignore_case(self):
         terms = tftp.negotiate((("BLKSIZE", "1024"), ("TSize", "0")), 77, Limits())
         self.assertEqual(terms, Negotiated(1024, 1, (("BLKSIZE", "1024"), ("TSize", "77"))))
+
+    def test_first_value_of_a_repeated_option_wins(self):
+        terms = tftp.negotiate((("blksize", "1024"), ("BLKSIZE", "2048")), 77, Limits())
+        self.assertEqual(terms, Negotiated(1024, 1, (("blksize", "1024"),)))
 
     def test_unknown_options_are_dropped(self):
         terms = tftp.negotiate((("timeout", "3"), ("blksize", "1024"), ("msftwindow", "31416")),
@@ -140,6 +146,11 @@ class ResolveTest(unittest.TestCase):
         self.assertEqual(tftp.resolve(self.root, r"boot\name.txt").read_bytes(), b"lower")
         self.assertEqual(tftp.resolve(self.root, r"boot\NAME.TXT").read_bytes(), b"upper")
 
+    def test_other_spelling_gets_the_first_name_in_sorted_order(self):
+        (self.root / "Boot" / "Name.Txt").write_bytes(b"mixed")
+        self.assertEqual(sorted(["name.txt", "NAME.TXT", "Name.Txt"])[0], "NAME.TXT")
+        self.assertEqual(tftp.resolve(self.root, r"boot\nAmE.tXt").read_bytes(), b"upper")
+
     def test_escapes_are_access_violations(self):
         for filename in (r"..\secret", r"boot\..\boot\name.txt", r"boot\x64\..", "../etc/passwd",
                          r"c:\boot\name.txt", r"boot\name.txt:stream", "boot\\name.txt\x00.efi"):
@@ -178,6 +189,16 @@ class TransferTest(unittest.TestCase):
         self.assertEqual(len(chunk(8, 512, 4000)), 416)
         self.assertEqual(t.on_ack(8, 100.3), [])
         self.assertEqual((t.phase, t.blocks_sent, t.retransmits, t.bytes_acked), (Phase.DONE, 8, 0, 4000))
+
+    def test_window_ends_at_the_last_block(self):
+        t = transfer(1300, windowsize=4)
+        self.assertEqual(t.start(100.0), [data(1, CONTENT[:512]), data(2, CONTENT[512:1024]),
+                                          data(3, CONTENT[1024:1300])])
+        self.assertEqual(t.blocks_sent, 3)
+        t = transfer(2500, windowsize=4)
+        self.assertEqual(len(t.start(100.0)), 4)
+        self.assertEqual(t.on_ack(3, 100.1), [data(4, CONTENT[1536:2048]), data(5, CONTENT[2048:2500])])
+        self.assertEqual((t.blocks_sent, t.retransmits), (6, 1))
 
     def test_size_on_a_block_boundary_ends_with_an_empty_block(self):
         t = transfer(1024)
@@ -266,6 +287,21 @@ class TransferTest(unittest.TestCase):
             with self.subTest(windowsize=windowsize, acks_per_gap=acks_per_gap):
                 self.assertEqual(self.blocks_sent_when_block_2_is_lost_once(windowsize, acks_per_gap), blocks_sent)
 
+    def test_repeated_ack_with_a_window_of_2_resends_it(self):
+        t = transfer(8000, windowsize=2)
+        t.start(100.0)
+        window = [data(3, chunk(3, 512, 8000)), data(4, chunk(4, 512, 8000))]
+        self.assertEqual(t.on_ack(2, 100.1), window)
+        self.assertEqual(t.on_ack(2, 100.2), window)
+
+    def test_repeated_ack_without_a_window_does_not_move_the_deadline(self):
+        t = transfer(8000)
+        t.start(100.0)
+        t.on_ack(1, 101.0)
+        t.on_ack(1, 104.0)
+        self.assertEqual(t.on_timeout(105.9), [])
+        self.assertEqual(t.on_timeout(106.0), [data(2, chunk(2, 512, 8000))])
+
     def test_ack_for_a_block_not_sent_is_ignored(self):
         t = transfer(8000, windowsize=4)
         t.start(100.0)
@@ -307,6 +343,25 @@ class TransferTest(unittest.TestCase):
             self.assertEqual(t.on_timeout(now), oack)
         self.assertEqual(t.on_timeout(130.0), [])
         self.assertEqual((t.phase, t.outcome, t.retransmits), (Phase.FAILED, Outcome.TIMEOUT, 5))
+
+    def test_resent_oack_sets_a_new_deadline(self):
+        t = transfer(8000, oack=(("tsize", "8000"),))
+        t.start(100.0)
+        self.assertEqual(len(t.on_timeout(105.5)), 1)
+        self.assertEqual(t.on_timeout(110.4), [])
+        self.assertEqual(len(t.on_timeout(110.5)), 1)
+
+    def test_ack_0_gives_back_every_retry(self):
+        t = transfer(8000, oack=(("tsize", "8000"),), limits=Limits(retries=2))
+        t.start(100.0)
+        t.on_timeout(105.0)
+        t.on_timeout(110.0)
+        first = t.on_ack(0, 111.0)
+        self.assertEqual(t.on_timeout(116.0), first)
+        self.assertEqual(t.on_timeout(121.0), first)
+        self.assertEqual(t.phase, Phase.SENDING)
+        self.assertEqual(t.on_timeout(126.0), [])
+        self.assertEqual(t.outcome, Outcome.TIMEOUT)
 
     def test_new_ack_gives_back_every_retry(self):
         t = transfer(8000)
@@ -369,6 +424,17 @@ class TransferTest(unittest.TestCase):
         wire = self.wire_numbers_around_the_wrap(Limits(block_wrap_first=1))
         self.assertEqual([wire[block] for block in (65534, 65535, 65536, 65537, 65539)],
                          [65534, 65535, 1, 2, 4])
+
+    def test_block_numbers_wrap_to_1_a_second_time(self):
+        t = Transfer(lambda block: b"12345678", 8 * 140000, Negotiated(8, 32, ()), Limits(block_wrap_first=1), 0.0)
+        wire = {}
+        window = t.start(0.0)
+        while window and len(wire) < 131080:
+            for packet in window:
+                wire[len(wire) + 1] = int.from_bytes(packet[2:4], "big")
+            window = t.on_ack(int.from_bytes(window[-1][2:4], "big"), 0.0)
+        self.assertEqual([wire[block] for block in (65535, 65536, 131070, 131071, 131072)],
+                         [65535, 1, 65535, 1, 2])
 
 
 if __name__ == "__main__":
