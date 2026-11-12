@@ -6,9 +6,8 @@ Creates the fixed UEFI and BIOS BCD stores that deployarr serves over TFTP.
 Runs only on Windows, because bcdedit does. Writes uefi.bcd and bios.bcd to
 OutputDir. Before it creates a store, it deletes the files bcdedit writes for
 that store: the store itself and its .LOG, .LOG1, and .LOG2 files. It leaves
-every other file in OutputDir alone. The GUIDs are fixed, so a rerun gives the
-same stores. See docs/architecture.md#bcd for the elements and the reason for
-each.
+every other file in OutputDir alone. The GUIDs are fixed, so a rerun gives
+stores with the same elements. See docs/architecture.md#bcd for the elements.
 
 .PARAMETER OutputDir
 Folder for the two stores. The script creates it.
@@ -17,12 +16,13 @@ Folder for the two stores. The script creates it.
 Leaves the loader's path element out, as ConfigMgr's store does.
 
 .PARAMETER RamdiskTftpBlockSize
-Sets ramdisktftpblocksize, from 512 to 32768. The limits match the server's
-TFTP limits in docs/architecture.md#tftp. The element is omitted when not given.
+Sets ramdisktftpblocksize, from 512 to 32768. 32768 is the server's largest
+TFTP block size in docs/architecture.md#tftp. The element is omitted when not
+given.
 
 .PARAMETER RamdiskTftpWindowSize
-Sets ramdisktftpwindowsize, from 1 to 32. The limits match the server's TFTP
-limits in docs/architecture.md#tftp. The element is omitted when not given.
+Sets ramdisktftpwindowsize, from 1 to 32. 32 is the server's largest TFTP
+window size in docs/architecture.md#tftp. The element is omitted when not given.
 #>
 [CmdletBinding()]
 param(

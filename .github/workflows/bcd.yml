@@ -55,7 +55,6 @@ jobs:
       - name: Check every element and the rerun
         shell: pwsh
         run: |
-          # Expected values come from docs/architecture.md#bcd, not from the script.
           $bootmgrGuid = '{9dea862c-5cdd-4e70-acc1-f32b344d4795}'
           $ramdiskGuid = '{ae5534e0-a924-466c-b836-758539a3ee3a}'
           $ramdiskDevice = 'ramdisk=\[boot\]\\boot\\x64\\boot\.wim,(\{ramdiskoptions\}|' + [regex]::Escape($ramdiskGuid) + ')'
