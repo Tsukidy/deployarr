@@ -69,6 +69,11 @@ class LabNetworkTest(unittest.TestCase):
         ip("-n", HOST, "route", "add", "default", "via", "10.78.0.254", "dev", UPLINK)
         for link in ("lo", PC_LINK):
             ip("-n", PC, "link", "set", link, "up")
+        # A new namespace takes the host's IPv4 settings, and Ubuntu turns on
+        # reverse path filtering. The PC has no route back to the server, so
+        # its kernel would drop the broadcast OFFER. OVMF and iPXE take it.
+        ip("netns", "exec", PC, "sysctl", "-qw", "net.ipv4.conf.all.rp_filter=0",
+           f"net.ipv4.conf.{PC_LINK}.rp_filter=0")
         folder = tempfile.TemporaryDirectory()
         cls.addClassCleanup(folder.cleanup)
         cls.root = Path(folder.name)
