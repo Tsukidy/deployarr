@@ -7,7 +7,7 @@
 - Linux, with Python 3.10 or later. The tool uses only the standard library.
 - Root, because it binds UDP ports 67, 69, and 4011.
 - A DHCP server on the lab network that hands out addresses. The prototype never does.
-- A PXE client that sends its GUID in option 97. PXE firmware does. The iPXE ROMs that QEMU and libvirt give a BIOS guest do not, even when the guest has an SMBIOS UUID. This was measured with ipxe-qemu 1.21.1 and the `pxe-e1000.rom` and `efi-e1000.rom` images. The prototype logs such a request as `dhcp-ignored` with `reason=no-option-97`. To boot such a guest, add `--answer-without-guid`. The replies then carry no option 97, and the `started` line says `answer_without_guid=true`. OVMF's own network stack sends option 97 and needs no flag.
+- A PXE client that sends its GUID in option 97. The iPXE ROMs that QEMU and libvirt give a BIOS guest do not, even when the guest has an SMBIOS UUID. This was measured with ipxe-qemu 1.21.1 and the `pxe-e1000.rom` and `efi-e1000.rom` images. The prototype logs such a request as `dhcp-ignored` with `reason=no-option-97`. To boot such a guest, add `--answer-without-guid`. The replies then carry no option 97, and the `started` line says `answer_without_guid=true`. OVMF's own network stack sends option 97 and needs no flag.
 
 ## Fill the TFTP root
 
