@@ -25,6 +25,7 @@ import wds250
 _OPTIONS_WITH_A_LOG_FIELD = (53, 93, 97, 250)
 # struct in_pktinfo: ipi_ifindex, ipi_spec_dst, ipi_addr.
 _IN_PKTINFO = struct.Struct("@i4s4s")
+_ERROR_OPCODE = struct.pack("!H", tftp.Opcode.ERROR)
 
 
 @dataclass(frozen=True)
@@ -169,7 +170,12 @@ class PxeServer:
                 for key, _ in selector.select():
                     if key.data is None:
                         return
-                    key.data(key.fileobj)
+                    try:
+                        key.data(key.fileobj)
+                    except Exception as error:
+                        # This thread answers every DHCP packet and TFTP
+                        # request, so one bad datagram must not end it.
+                        self._log(events.InternalError("dispatcher", repr(error)))
 
     def _on_dhcp(self, sock: socket.socket) -> None:
         port = sock.getsockname()[1]
@@ -241,6 +247,8 @@ class PxeServer:
             del self._sessions[key]
         try:
             request = self._read_request(datagram, client)
+            if request is None:
+                return
             path = tftp.resolve(self._root, request.filename)
             session = (client[0], client[1], path)
             if session in self._sessions:
@@ -254,7 +262,7 @@ class PxeServer:
             try:
                 size = handle.seek(0, 2)
                 negotiated = tftp.negotiate(request.options, size, self._config.limits)
-            except tftp.TftpError:
+            except Exception:
                 handle.close()
                 raise
         except tftp.TftpError as error:
@@ -266,15 +274,21 @@ class PxeServer:
         self._sessions[session] = thread
         thread.start()
 
-    def _read_request(self, datagram: bytes, client: tuple[str, int]) -> tftp.Request:
+    def _read_request(self, datagram: bytes, client: tuple[str, int]) -> tftp.Request | None:
+        """The read request in a datagram to the listener. None for an ERROR
+        packet, which gets no answer (RFC 1350 section 2)."""
         try:
             request = tftp.parse(datagram)
         except tftp.TftpError:
             self._log(events.TftpReceived(_address(client), "malformed"))
             raise
-        if not isinstance(request, tftp.Request):
-            self._log(events.TftpReceived(_address(client), "ACK" if isinstance(request, tftp.Ack) else "ERROR"))
-            raise tftp.TftpError(4, "Illegal TFTP operation")
+        match request:
+            case tftp.ClientError(code=code, message=message):
+                self._log(events.TftpReceived(_address(client), "ERROR", code=code, message=message))
+                return None
+            case tftp.Ack(block=block):
+                self._log(events.TftpReceived(_address(client), "ACK", block=block))
+                raise tftp.TftpError(4, "Illegal TFTP operation")
         self._log(events.TftpReceived(
             _address(client), request.opcode.name, file=request.filename, mode=request.mode,
             options=_options_text(request.options)))
@@ -305,40 +319,46 @@ class PxeServer:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock, handle:
             sock.bind((str(self._config.server_ip), 0))
             transfer = tftp.Transfer(read_block, size, negotiated, self._config.limits, time.monotonic())
-            send(transfer.start(time.monotonic()))
-            while transfer.active:
-                now = time.monotonic()
-                send(transfer.on_timeout(now))
-                if not transfer.active:
-                    break
-                readable = select.select([sock, self._stopping], [], [], max(transfer.deadline - now, 0.0))[0]
-                if self._stopping in readable:
-                    transfer.stop()
-                    break
-                if not readable:
-                    continue
-                datagram, source = sock.recvfrom(65535)
-                if source != client:
-                    self._log(events.TftpIgnored(_address(source), "unknown-transfer-id"))
-                    self._refuse(sock, source, tftp.TftpError(5, "Unknown transfer ID"))
-                    continue
-                try:
-                    packet = tftp.parse(datagram)
-                except tftp.TftpError as error:
-                    self._log(events.TftpReceived(name, "malformed"))
-                    self._refuse(sock, client, error)
-                    continue
-                match packet:
-                    case tftp.Ack(block=block):
-                        if log_blocks:
-                            self._log(events.TftpReceived(name, "ACK", block=block))
-                        send(transfer.on_ack(block, time.monotonic()))
-                    case tftp.ClientError(code=code, message=message):
-                        self._log(events.TftpReceived(name, "ERROR", code=code, message=message))
-                        transfer.on_error(code, message)
-                    case tftp.Request():
-                        self._log(events.TftpReceived(name, packet.opcode.name, file=packet.filename))
-                        self._refuse(sock, client, tftp.TftpError(4, "Illegal TFTP operation"))
+            try:
+                send(transfer.start(time.monotonic()))
+                while transfer.active:
+                    now = time.monotonic()
+                    send(transfer.on_timeout(now))
+                    if not transfer.active:
+                        break
+                    readable = select.select([sock, self._stopping], [], [], max(transfer.deadline - now, 0.0))[0]
+                    if self._stopping in readable:
+                        transfer.stop()
+                        break
+                    if not readable:
+                        continue
+                    datagram, source = sock.recvfrom(65535)
+                    if source != client:
+                        self._log(events.TftpIgnored(_address(source), "unknown-transfer-id"))
+                        if datagram[:2] != _ERROR_OPCODE:
+                            self._refuse(sock, source, tftp.TftpError(5, "Unknown transfer ID"))
+                        continue
+                    # An ERROR ends a transfer (RFC 1350 section 2), and one
+                    # corrupt packet is no reason to end a boot. So a packet
+                    # the client should not send gets no ERROR.
+                    try:
+                        packet = tftp.parse(datagram)
+                    except tftp.TftpError:
+                        self._log(events.TftpIgnored(name, "malformed"))
+                        continue
+                    match packet:
+                        case tftp.Ack(block=block):
+                            if log_blocks:
+                                self._log(events.TftpReceived(name, "ACK", block=block))
+                            send(transfer.on_ack(block, time.monotonic()))
+                        case tftp.ClientError(code=code, message=message):
+                            self._log(events.TftpReceived(name, "ERROR", code=code, message=message))
+                            transfer.on_error(code, message)
+                        case tftp.Request():
+                            self._log(events.TftpIgnored(name, "request-on-transfer-port"))
+            except Exception as error:
+                self._log(events.InternalError(threading.current_thread().name, repr(error)))
+                transfer.abort()
             seconds = time.monotonic() - received
         error = transfer.client_error
         self._log(events.TransferFinished(

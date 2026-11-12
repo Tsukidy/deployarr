@@ -22,6 +22,8 @@ The prototype serves files from one folder. It ignores case and accepts `/` or `
 
 The first three rows are fixed in `BOOT_TABLE` in `policy.py`. `--bcd-uefi` and `--bcd-bios` change the BCD paths.
 
+The prototype sends every file as raw bytes, whatever transfer mode the request names. Boot programs ask for `octet`. The `tftp` command asks for `netascii` unless you pass `-m binary`, and it then changes line endings in the file it saves. So check a file by hand with `tftp -m binary`.
+
 Never commit these files. They are Microsoft files, and the repository does not hold them.
 
 ## Share port 67 with dnsmasq
@@ -94,8 +96,9 @@ Each line is one event: a UTC time in milliseconds, the event name, then `key=va
 | `dhcp-sent` | The OFFER or ACK, with the firmware type, the chain step, the boot file, and option 250 or option 252 |
 | `dhcp-ignored` | A packet that got no reply, with the reason, such as `lease-request`, `no-option-97`, or `other-interface` |
 | `tftp-received`, `tftp-sent` | Every TFTP packet. `--no-block-log` leaves out the DATA and ACK lines |
-| `tftp-ignored` | A repeated request for a transfer that is running, or a packet from an unknown port |
-| `transfer-finished` | One line per transfer, with the outcome `complete`, `timeout`, `client-error`, or `stopped` |
+| `tftp-ignored` | A packet that got no answer: a repeated request for a transfer that is running, a packet from an unknown port, or a packet that the client of a running transfer should not send |
+| `transfer-finished` | One line per transfer, with the outcome `complete`, `timeout`, `client-error`, `stopped`, or `error` |
+| `internal-error` | A bug in the prototype. The server keeps running, and the transfer that hit it ends with the outcome `error`. |
 
 The names of the option 250 sub-options in the log are inferred from WDS header names.
 

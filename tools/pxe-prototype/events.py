@@ -113,6 +113,14 @@ class SendFailed:
 
 
 @dataclass(frozen=True)
+class InternalError:
+    """A bug in the prototype. `where` is the thread that hit it."""
+    name: ClassVar[str] = "internal-error"
+    where: str
+    error: str
+
+
+@dataclass(frozen=True)
 class TransferFinished:
     """`seconds` runs from the arrival of the RRQ to the last ACK or the failure."""
     name: ClassVar[str] = "transfer-finished"
@@ -132,7 +140,7 @@ class TransferFinished:
 
 
 Event = (Started | DhcpReceived | DhcpIgnored | DhcpSent | TftpReceived | TftpSent
-         | TftpIgnored | SendFailed | TransferFinished)
+         | TftpIgnored | SendFailed | InternalError | TransferFinished)
 
 _NEEDS_QUOTES = re.compile(r'[\s"=]')
 _NOT_PRINTABLE = re.compile(r"[^\x20-\x7e]")

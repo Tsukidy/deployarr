@@ -111,9 +111,14 @@ class Negotiated:
 
 
 def _number(name: str, value: str, minimum: int) -> int:
-    if not (value.isascii() and value.isdigit()) or int(value) < minimum:
-        raise TftpError(8, f"Unacceptable {name} {value!a}"[:80])
-    return int(value)
+    refusal = TftpError(8, f"Unacceptable {name} {value!a}"[:80])
+    if not (value.isascii() and value.isdigit()):
+        raise refusal
+    # int() refuses more than 4300 digits. Ten digits are past every limit.
+    number = int(value.lstrip("0")[:10] or "0")
+    if number < minimum:
+        raise refusal
+    return number
 
 
 def negotiate(options: tuple[tuple[str, str], ...], file_size: int, limits: Limits) -> Negotiated:
@@ -124,7 +129,9 @@ def negotiate(options: tuple[tuple[str, str], ...], file_size: int, limits: Limi
     windowsize = 1
     oack: dict[str, tuple[str, str]] = {}
     for name, value in options:
-        known = name.lower()
+        # A name such as "bl\u212asize" lowercases to "blksize", and an OACK
+        # is ASCII.
+        known = name.lower() if name.isascii() else ""
         if known in oack:
             continue
         if known == "blksize":
@@ -178,6 +185,7 @@ class Outcome(Enum):
     TIMEOUT = "timeout"
     CLIENT_ERROR = "client-error"
     STOPPED = "stopped"
+    ERROR = "error"
 
 
 class Transfer:
@@ -282,6 +290,11 @@ class Transfer:
         """The server is shutting down."""
         if self.active:
             self._finish(Phase.FAILED, Outcome.STOPPED)
+
+    def abort(self) -> None:
+        """The server failed while it served this transfer."""
+        if self.active:
+            self._finish(Phase.FAILED, Outcome.ERROR)
 
     def _finish(self, phase: Phase, outcome: Outcome) -> None:
         self.phase = phase

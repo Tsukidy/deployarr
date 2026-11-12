@@ -10,11 +10,13 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from ipaddress import IPv4Address
 from pathlib import Path
 
 import pxe_prototype
 import reference
+import tftp
 from policy import Chain
 from server import Config, PxeServer
 from tftp import Limits
@@ -119,6 +121,8 @@ class TftpTest(ServerCase):
             "write request": (reference.tftp_request("small.bin", opcode=2), 2),
             "blksize 7": (reference.tftp_request("small.bin", {"blksize": "7"}), 8),
             "not a request": (reference.tftp_ack(1), 4),
+            "malformed": (b"\x00\x01small.bin\x00", 4),
+            "4301 digits": (reference.tftp_request("small.bin", {"blksize": "0" * 4301}), 8),
         }
         for name, (packet, code) in cases.items():
             with self.subTest(name):
@@ -146,6 +150,71 @@ class TftpTest(ServerCase):
         self.assertEqual(received, SMALL)
         finished, = self.wait_for("transfer-finished")
         self.assertEqual((finished["outcome"], finished["retransmits"]), ("complete", "0"))
+
+    def test_error_packet_gets_no_reply(self):
+        pxe = self.start()
+        sock, stranger = self.client(timeout=0.1), self.client(timeout=0.1)
+        sock.sendto(b"\x00\x05\x00\x04Illegal TFTP operation\x00", pxe.tftp_address)
+        with self.assertRaises(TimeoutError):
+            sock.recvfrom(65535)
+        received, = self.events("tftp-received")
+        self.assertEqual((received["kind"], received["code"], received["message"]),
+                         ("ERROR", "4", "Illegal TFTP operation"))
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        _, transfer_address = sock.recvfrom(65535)
+        stranger.sendto(b"\x00\x05\x00\x05Unknown transfer ID\x00", transfer_address)
+        with self.assertRaises(TimeoutError):
+            stranger.recvfrom(65535)
+        self.assertEqual(self.wait_for("tftp-ignored")[0]["reason"], "unknown-transfer-id")
+        self.assertEqual(self.events("tftp-sent")[0]["kind"], "DATA")
+        self.assertEqual([fields["kind"] for fields in self.events("tftp-sent") if fields["kind"] == "ERROR"], [])
+
+    def test_bad_packet_from_the_client_is_ignored_and_the_transfer_goes_on(self):
+        pxe = self.start()
+        sock = self.client(timeout=0.1)
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        first, transfer_address = sock.recvfrom(65535)
+        for packet in (b"\x00\x04\x00", b"\x00\x09\x00\x00", b"\x00\x03\x00\x01abc",
+                       reference.tftp_request("small.bin")):
+            sock.sendto(packet, transfer_address)
+        with self.assertRaises(TimeoutError):
+            sock.recvfrom(65535)
+        self.assertEqual([fields["reason"] for fields in self.wait_for("tftp-ignored", 4)],
+                         ["malformed", "malformed", "malformed", "request-on-transfer-port"])
+        sock.settimeout(5.0)
+        self.assertEqual(sock.recvfrom(65535)[0], first)
+        received = first[4:]
+        for block in (1, 2):
+            sock.sendto(reference.tftp_ack(block), transfer_address)
+            received += sock.recvfrom(65535)[0][4:]
+        sock.sendto(reference.tftp_ack(3), transfer_address)
+        self.assertEqual(received, SMALL)
+        finished, = self.wait_for("transfer-finished")
+        self.assertEqual((finished["outcome"], finished["retransmits"]), ("complete", "1"))
+
+    def test_unexpected_failure_in_one_request_does_not_stop_the_server(self):
+        pxe = self.start()
+        with mock.patch.object(tftp, "negotiate", side_effect=RuntimeError("boom")):
+            sock = self.client(timeout=0.1)
+            sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+            failure, = self.wait_for("internal-error")
+        self.assertEqual((failure["where"], failure["error"]), ("dispatcher", "RuntimeError('boom')"))
+        self.assertEqual(reference.tftp_get(pxe.tftp_address, "small.bin").data, SMALL)
+        offer = self.exchange(pxe.dhcp_ports[0], reference.dhcp_request(DISCOVER, 7))
+        self.assertEqual(offer.option(53), bytes((OFFER,)))
+
+    def test_unexpected_failure_in_a_transfer_is_logged_as_its_outcome(self):
+        pxe = self.start()
+        sock = self.client()
+        with mock.patch.object(tftp.Transfer, "on_ack", side_effect=RuntimeError("boom")):
+            sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+            _, transfer_address = sock.recvfrom(65535)
+            sock.sendto(reference.tftp_ack(1), transfer_address)
+            finished, = self.wait_for("transfer-finished")
+        self.assertEqual((finished["outcome"], finished["blocks_sent"]), ("error", "1"))
+        failure, = self.events("internal-error")
+        self.assertEqual((failure["where"], failure["error"]),
+                         (f"transfer-127.0.0.1:{sock.getsockname()[1]}", "RuntimeError('boom')"))
 
     def test_repeated_request_does_not_start_a_second_transfer(self):
         pxe = self.start()

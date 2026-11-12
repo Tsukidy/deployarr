@@ -81,6 +81,17 @@ class NegotiateTest(unittest.TestCase):
                     tftp.negotiate(options, 5000, Limits())
                 self.assertEqual(raised.exception.code, 8)
 
+    def test_value_of_any_length_is_clamped(self):
+        terms = tftp.negotiate((("blksize", "0" * 5000 + "1024"), ("windowsize", "9" * 4301)), 5000, Limits())
+        self.assertEqual(terms, Negotiated(1024, 32, (("blksize", "1024"), ("windowsize", "32"))))
+        terms = tftp.negotiate((("blksize", "12345678901"),), 5000, Limits())
+        self.assertEqual(terms, Negotiated(32768, 1, (("blksize", "32768"),)))
+
+    def test_option_name_that_is_not_ascii_is_unknown(self):
+        kelvin = "bl\u212asize"
+        self.assertEqual(kelvin.lower(), "blksize")
+        self.assertEqual(tftp.negotiate(((kelvin, "1024"),), 77, Limits()), Negotiated(512, 1, ()))
+
     def test_tsize_is_answered_with_the_file_size(self):
         terms = tftp.negotiate((("tsize", "0"),), 5_000_000_000, Limits())
         self.assertEqual(terms, Negotiated(512, 1, (("tsize", "5000000000"),)))
@@ -322,6 +333,14 @@ class TransferTest(unittest.TestCase):
         self.assertEqual((t.phase, t.outcome), (Phase.FAILED, Outcome.CLIENT_ERROR))
         self.assertEqual(t.client_error, tftp.ClientError(3, "Disk full"))
         self.assertEqual(t.on_ack(1, 100.1), [])
+        self.assertEqual(t.on_timeout(200.0), [])
+
+    def test_abort_fails_the_transfer(self):
+        t = transfer(8000)
+        t.start(100.0)
+        t.abort()
+        self.assertEqual((t.phase, t.outcome), (Phase.FAILED, Outcome.ERROR))
+        self.assertEqual(Outcome.ERROR.value, "error")
         self.assertEqual(t.on_timeout(200.0), [])
 
     def wire_numbers_around_the_wrap(self, limits):
