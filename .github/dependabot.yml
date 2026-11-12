@@ -6,3 +6,9 @@ updates:
       interval: weekly
     labels:
       - area:ci
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - area:ci
