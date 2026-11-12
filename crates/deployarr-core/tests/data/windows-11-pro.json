@@ -1,0 +1,442 @@
+{
+	"schema_version": 1,
+	"id": "W11-PRO-STD",
+	"version": 7,
+	"name": "Windows 11 Pro, standard build",
+	"default_vars": [
+		{
+			"name": "OSDComputerName",
+			"value": "PC-%SerialNumber%"
+		},
+		{
+			"name": "Applications",
+			"value": ""
+		}
+	],
+	"root": {
+		"meta": {
+			"id": "6f1d2c3a-0000-4000-8000-000000000001",
+			"name": "Windows 11 Pro, standard build",
+			"enabled": true,
+			"continue_on_error": false,
+			"condition": null
+		},
+		"children": [
+			{
+				"group": {
+					"meta": {
+						"id": "6f1d2c3a-0000-4000-8000-00000000000a",
+						"name": "Install Windows",
+						"enabled": true,
+						"continue_on_error": false,
+						"condition": null
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000002",
+									"name": "Check the hardware",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "win_pe",
+								"action": {
+									"check_readiness": {
+										"checks": {
+											"memory": {
+												"min_mib": 8192,
+												"mode": "fail"
+											},
+											"disk": {
+												"min_gb": 120,
+												"mode": "warn"
+											},
+											"processor": {
+												"min_cores": 2,
+												"mode": "fail"
+											},
+											"uefi": "fail",
+											"tpm_2_0": "off",
+											"secure_boot": "warn"
+										}
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000003",
+									"name": "Name the PC after its asset tag",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "AssetTag",
+											"op": "exists",
+											"value": ""
+										}
+									}
+								},
+								"run_in": "either",
+								"action": {
+									"set_variable": {
+										"name": "OSDComputerName",
+										"value": "PC-%AssetTag%"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000004",
+									"name": "Partition the disk",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "IsUEFI",
+											"op": "equals",
+											"value": "true"
+										}
+									}
+								},
+								"run_in": "win_pe",
+								"action": {
+									"partition_disk": {
+										"layout": "uefi-gpt",
+										"disk": "first_internal"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000005",
+									"name": "Apply Windows 11 Pro",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "win_pe",
+								"action": {
+									"apply_os_image": {
+										"image": "win11-24h2-pro-x64"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000006",
+									"name": "Apply drivers",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "win_pe",
+								"action": {
+									"apply_drivers": {
+										"selection": "profile"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000007",
+									"name": "Apply the answer file",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "win_pe",
+								"action": {
+									"apply_unattend": {
+										"template": "standard"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000008",
+									"name": "Copy the site wallpaper",
+									"enabled": true,
+									"continue_on_error": true,
+									"condition": {
+										"file": {
+											"path": "W:\\Windows\\explorer.exe",
+											"version": {
+												"op": "greater_equal",
+												"value": "10.0.26100.0"
+											},
+											"modified": {
+												"op": "greater",
+												"value": "2024-10-01T00:00:00Z"
+											}
+										}
+									}
+								},
+								"run_in": "win_pe",
+								"action": {
+									"run_command": {
+										"command": "cmd /c copy \"%DeployRoot%\\wallpaper.jpg\" W:\\Windows\\Web\\Wallpaper\\site.jpg",
+										"working_dir": "X:\\",
+										"exit": {
+											"success": [
+												0,
+												1
+											],
+											"reboot": []
+										},
+										"limits": {
+											"max_runtime_secs": 300,
+											"rerun_if_interrupted": true
+										}
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000009",
+									"name": "Restart into Windows",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "win_pe",
+								"action": {
+									"restart": {
+										"into": "installed_os"
+									}
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"group": {
+					"meta": {
+						"id": "6f1d2c3a-0000-4000-8000-000000000011",
+						"name": "Finish in Windows",
+						"enabled": true,
+						"continue_on_error": false,
+						"condition": {
+							"all": [
+								{
+									"any": [
+										{
+											"registry": {
+												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+												"value": "CurrentBuildNumber",
+												"op": "greater_equal",
+												"data": 26100
+											}
+										},
+										{
+											"registry": {
+												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+												"value": "EditionID",
+												"op": "like",
+												"data": "Pro*"
+											}
+										},
+										{
+											"registry": {
+												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Deployarr",
+												"value": null,
+												"op": "exists",
+												"data": null
+											}
+										}
+									]
+								},
+								{
+									"folder": {
+										"path": "C:\\Deployarr",
+										"modified": null
+									}
+								},
+								{
+									"folder": {
+										"path": "C:\\Windows\\Panther",
+										"modified": {
+											"op": "less",
+											"value": "2030-01-01T00:00:00+01:00"
+										}
+									}
+								}
+							]
+						}
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-00000000000b",
+									"name": "Verify drivers",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "full_os",
+								"action": {
+									"verify_drivers": {
+										"policy": "warn"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-00000000000c",
+									"name": "Install the ordered applications",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "full_os",
+								"action": {
+									"install_applications": {
+										"apps": {
+											"from_list": "Applications"
+										}
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-00000000000d",
+									"name": "Install 7-Zip",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"not": {
+											"installed_msi": {
+												"product_code": "23170f69-40c1-2702-2408-000001000000"
+											}
+										}
+									}
+								},
+								"run_in": "full_os",
+								"action": {
+									"install_applications": {
+										"apps": {
+											"one": "7zip-24.08"
+										}
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-00000000000e",
+									"name": "Set the power plan on laptops",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"wmi": {
+											"namespace": "root\\cimv2",
+											"query": "SELECT * FROM Win32_Battery",
+											"ignore_failure": true
+										}
+									}
+								},
+								"run_in": "full_os",
+								"action": {
+									"run_powershell": {
+										"script": "scripts/set-power-plan.ps1",
+										"args": [
+											"-Plan",
+											"%PowerPlan%"
+										],
+										"exit": {
+											"success": [
+												0
+											],
+											"reboot": [
+												3010,
+												1641
+											]
+										},
+										"limits": {
+											"max_runtime_secs": null,
+											"rerun_if_interrupted": false
+										}
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-00000000000f",
+									"name": "Activate Windows",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "full_os",
+								"action": {
+									"activate_windows": {
+										"online": true
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000010",
+									"name": "Remove the old VPN client",
+									"enabled": false,
+									"continue_on_error": false,
+									"condition": {
+										"installed_msi": {
+											"upgrade_code": "8f4b1c2d-7a3e-4d5f-9b6a-1c2d3e4f5a6b"
+										}
+									}
+								},
+								"run_in": "full_os",
+								"action": {
+									"run_command": {
+										"command": "msiexec /x {8f4b1c2d-7a3e-4d5f-9b6a-1c2d3e4f5a6b} /qn",
+										"working_dir": null,
+										"exit": {
+											"success": [
+												0
+											],
+											"reboot": [
+												3010,
+												1641
+											]
+										},
+										"limits": {
+											"max_runtime_secs": null,
+											"rerun_if_interrupted": false
+										}
+									}
+								}
+							}
+						}
+					]
+				}
+			}
+		]
+	}
+}

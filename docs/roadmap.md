@@ -38,14 +38,14 @@ Scope:
 - `deployarr-agent` in service mode, running a task sequence from a local file.
 - The actions `RunCommand`, `RunPowerShell`, `SetVariable`, and `Restart`.
 - Variable, registry, file, folder, installed-MSI, and WMI conditions.
-- The single-run mutex, the reboot marker, job objects with `max_runtime`, and the `var get` and `var set` channel for step processes.
+- The single-run mutex, the reboot marker, job objects with `max_runtime_secs`, and the `var get` and `var set` channel for step processes.
 - CMTrace logs.
 
 Check:
 - A test crashes the engine at every step boundary of a 20-step sequence. Each resumed run ends in the same state as a run with no crash.
 - A test kills the agent in the middle of a state save. The next start reads either the old state or the new state.
 - In a Windows 11 VM, a sequence with three reboots finishes, and its log shows each step exactly once.
-- A step that exceeds `max_runtime` fails, and no process from its tree is still running.
+- A step that exceeds `max_runtime_secs` fails, and no process from its tree is still running.
 
 The PXE prototype from M4 runs in parallel with this milestone, because it is the largest unknown and depends on nothing else.
 
