@@ -9,13 +9,7 @@ compile_error!(
 );
 
 #[cfg(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc"))]
-fn main() {
-    #[link(name = "comctl32")]
-    unsafe extern "system" {
-        fn InitCommonControls();
-    }
-    unsafe { InitCommonControls() };
-}
+fn main() {}
 
 #[cfg(not(all(target_arch = "x86_64", target_os = "windows", target_env = "msvc")))]
 fn main() {
