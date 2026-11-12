@@ -1,12 +1,13 @@
 # Architecture
 
-deployarr installs Windows on bare-metal PCs from one central server with no technician input. It copies the parts of Microsoft Deployment Toolkit (MDT) that work and fixes the faults listed in [MDT 8456 reference](research/mdt-8456.md) and [MDT 8450 binaries reference](research/mdt-8450-binaries.md). This page explains the design and why each choice was made. For the build order, see [Roadmap](roadmap.md).
+deployarr installs Windows on bare-metal PCs from one central server. A technician types only the Windows product key, plus the order number when lookup cannot find the PC. It copies the parts of Microsoft Deployment Toolkit (MDT) that work and fixes the faults listed in [MDT 8456 reference](research/mdt-8456.md) and [MDT 8450 binaries reference](research/mdt-8450-binaries.md). This page explains the design and why each choice was made. For the build order, see [Roadmap](roadmap.md).
 
 ## Requirements
 
 These come from the product owner and drive every decision below.
 
-- Zero-touch deployment, Windows first.
+- Zero-touch deployment, Windows first, except for the product key.
+- Each PC has a Windows product key on a sticker. A technician types it during the deployment, on the same screen as the order number when lookup asks for one.
 - Order lookup in an SQL database. The order's OS identifier selects the task sequence. A manual list of task sequences is the fallback.
 - deployarr only reads the order database. It never writes to it, not even deployment status.
 - An order is tied to a PC in three ways, and all three must work: the order table holds the motherboard serial number, a technician scans or types the order number, or someone pre-stages the PC in the web UI.
@@ -49,7 +50,7 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 2. The boot manager loads WinPE from the server over TFTP. WinPE starts `deployarr-agent` from `winpeshl.ini`.
 3. The agent initializes WinPE (`wpeinit`), loads the boot image's network and storage drivers with `drvload`, and connects to the server over HTTPS.
 4. The agent gathers facts and sends them to the server. Facts include the SMBIOS data (system, baseboard, and chassis serials, UUID, make, model, and SKU), MAC addresses, firmware type, Secure Boot state, TPM version, memory, processor cores, disks, and the hardware IDs of every device.
-5. The server runs the lookup chain (see [Order lookup](#order-lookup)). The result is a task sequence and a set of variables, or a request for the technician to type an order number or pick from the list.
+5. The server runs the lookup chain (see [Order lookup](#order-lookup)). The result is a task sequence and a set of variables, or a request for the technician to type an order number or pick from the list. If the task sequence activates Windows, the agent then asks for the product key. See [Activation](#activation).
 6. The server pins the task sequence version and sends the compiled program and variables to the agent.
 7. The agent runs the WinPE steps. A typical run checks readiness, partitions the disk, downloads and applies the OS image, injects drivers, writes the unattend file, runs `bcdboot`, and installs itself as a service in the offline image.
 8. The PC reboots into Windows Setup. When Setup finishes, or reaches audit mode, the agent service resumes the sequence at the next step.
@@ -106,6 +107,7 @@ pub enum Action {
 	InstallApplications { apps: AppSelection },   // One(AppId) or FromList(VarName)
 	VerifyDrivers { policy: MissingDriverPolicy },
 	CheckReadiness { checks: ReadinessChecks },   // Windows 11 minimums by default
+	ActivateWindows { online: bool },   // full OS only. Installs the product key typed in WinPE
 }
 
 pub struct ExitCodes {
@@ -292,7 +294,7 @@ An unknown PC stops at the prompt and does not touch its disk. After a deploymen
 - `RunPowerShell` steps in WinPE need the WinPE PowerShell component, which only DISM can add. See [Boot image](#boot-image).
 - `RunPowerShell` runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>` and passes each argument separately. MDT's PowerShell host joins the arguments into one string and runs it as PowerShell code, which loses their quoting.
 - A CI check lists the agent's DLL imports and fails if one is missing from base WinPE.
-- In WinPE the agent is the shell. It shows a full-screen console screen with the current step, a progress bar, and the order-number and task-sequence prompts.
+- In WinPE the agent is the shell. It shows a full-screen console screen with the current step, a progress bar, and the order-number, task-sequence, and product-key prompts.
 - Ending the WinPE shell reboots the PC, so the agent never exits on a fatal error. It shows the error and waits.
 - A setting in the boot image makes F8 open a command prompt, for debugging. The agent does not reboot WinPE while a prompt it opened is still running. MDT's `BDDRun.exe` works the same way.
 - The agent keeps the PC awake for the whole run with `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`, as MDT does.
@@ -325,6 +327,19 @@ Both states share these rules:
 - Before the finish action, the agent deletes the cached answer files in `%WINDIR%\Panther`. Microsoft says to delete the cached answer file before a PC goes to a customer ([Windows Setup automation overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)), and deployarr's answer file can hold passwords.
 - In `CustomerOobe`, the agent reports success, uploads its logs, and removes its service before it runs `sysprep`, because the shutdown ends its run. The customer's first boot starts no deployarr code.
 - `CustomerOobe` leaves no account or password that deployarr created. The M3 lab confirms it.
+
+## Activation
+
+Each PC has a Windows product key on a sticker, and a technician types it during the deployment.
+
+- A task sequence that contains an `ActivateWindows` step needs a key. The agent asks for it in WinPE right after lookup, before the disk changes. When lookup used the order-number prompt, the key prompt follows on the same screen, so the technician types both in one visit.
+- The agent checks only the format: 25 letters and digits in five groups of five. A format check cannot tell a mistyped key from a real one.
+- The typed key is the secret variable `ProductKey`, so it never reaches a log line or an event. The server stores it encrypted with the other secrets and shows it to admins next to the deployment.
+- The key does not go into the unattend file. An invalid key in the `ProductKey` setting of `Microsoft-Windows-Shell-Setup` makes Windows Setup fail ([ProductKey](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-productkey)), so one typo would stop the PC in Setup.
+- `ActivateWindows` runs in the full OS instead. It installs the key with `slmgr /ipk`, which returns an error when the key is not valid for the installed operating system ([Slmgr.vbs options](https://learn.microsoft.com/en-us/windows-server/get-started/activation-slmgr-vbs-options)). With `online` set, it then runs `slmgr /ato` to activate online.
+- In `ReadyToUse`, the step then runs `slmgr /cpky` to remove the key from the registry. Microsoft calls this the best practice for retail installations that deploy keys. The step skips `/cpky` in `CustomerOobe`, because Microsoft says that some servicing operations need the key in the registry during OOBE (same page).
+- A rejected key fails the step, and the UI shows the error with the deployment. Put the step early in the full-OS phase, so a mistyped key shows up minutes after the first reboot.
+- Microsoft's rule on whether a system builder or the customer activates a PC is not yet checked. The `online` flag lets each task sequence follow that rule.
 
 ## Readiness check
 

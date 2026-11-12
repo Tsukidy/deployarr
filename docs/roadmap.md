@@ -69,10 +69,12 @@ Scope:
 - The readiness check, with Microsoft's Windows 11 minimums as defaults.
 - Disk layouts for UEFI and BIOS, image download and apply, `bcdboot`, WinRE, and the unattend file.
 - The offline service install, the handoff to the new OS, the finish action for both end states, and cleanup.
+- The product key prompt and the `ActivateWindows` step.
 
 Check:
 - A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record.
-- One real PC does the same.
+- One real PC does the same, with the product key from its sticker typed at the prompt. Windows on that PC holds the key.
+- On a VM, a key in the right format that Windows rejects fails the `ActivateWindows` step, and the deployment shows the error.
 - The UEFI VM runs once with each end state. With `ReadyToUse`, it boots to the sign-in screen with no OOBE. With `CustomerOobe`, it shuts down, shows OOBE on its next boot, and has no account that deployarr created. Neither leaves a cached answer file in `%WINDIR%\Panther`.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
 - On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. If base WinPE lacks `tbs.dll` or the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
@@ -178,4 +180,3 @@ None of these are scheduled yet:
 These do not block M0 to M2. Each one needs an answer before the milestone named in it.
 
 2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8.
-3. How are PCs activated? Options are a firmware key, KMS or MAK, or OEM key injection. Needed before M3.
