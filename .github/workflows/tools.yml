@@ -12,7 +12,27 @@ jobs:
   test:
     name: Tools
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Test the repository tools
         run: python3 -m unittest discover -s tools -p 'test_*.py'
+      - name: Test the PXE prototype
+        working-directory: tools/pxe-prototype
+        run: python3 -m unittest
+      - name: Test the PXE prototype on a lab-like network
+        working-directory: tools/pxe-prototype
+        run: sudo python3 -m unittest -v test_lab
+
+  pxe-prototype-oldest-python:
+    name: PXE prototype on Python 3.10
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Test the PXE prototype
+        working-directory: tools/pxe-prototype
+        run: python -m unittest
