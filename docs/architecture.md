@@ -62,7 +62,7 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 
 ## Core data shapes
 
-The task sequence model lives in `deployarr-core`, a pure crate with no I/O. The server, the agent, and the web UI all use it. These sketches show the shape, not final code.
+The task sequence model lives in `deployarr-core`, a `no_std` crate with no I/O. See [Crate layout](#crate-layout). The server, the agent, and the web UI all use it. These sketches show the shape, not final code.
 
 ```rust
 pub struct TaskSequence {
@@ -188,6 +188,7 @@ pub enum RegData { String(String), Integer(i64) }   // compared by the `Var` rul
 - `Comparison<T>` has named `op` and `value` fields. An earlier sketch had the tuple `(CompareOp, T)`. serde writes a tuple as a JSON array, so a parse error would point at `version[1]`. With named fields it points at `version.value`.
 - `FileVersion` is written as `a.b.c.d` and orders by its four fields.
 - `Timestamp` is written in RFC 3339, such as `2026-01-31T08:00:00Z`. An earlier sketch had `DateTime` and named no format. RFC 3339 requires a UTC offset, so every value names one instant.
+- The core crate parses a `Timestamp` with the `time` crate and writes the text itself, because `time`'s formatter needs `std`. It writes the same text that `time` writes. A fraction of a second loses its trailing zeros, and a zero offset is `Z`.
 - `MsiProduct` is written as a GUID without braces. `RegData` is written as a bare JSON string or integer.
 
 ### JSON format
@@ -628,7 +629,8 @@ The screens are these:
 ```
 crates/
 	deployarr-core     task sequence model, compiler, conditions, variables, templates,
-	                   identity rules, API types. No I/O. Builds for Linux, Windows, and wasm32.
+	                   identity rules, API types. No I/O. no_std with alloc. Builds for
+	                   Linux, Windows, wasm32, and x86_64-unknown-none.
 	deployarr-engine   interpreter, state file, journal, and resume logic over an Executor trait
 	deployarr-inf      INF parser and hardware ID index
 	deployarr-smbios   SMBIOS table parser
@@ -638,6 +640,8 @@ crates/
 	deployarr-ui       Leptos web UI
 xtask/               boot image builds, lab automation, packaging
 ```
+
+`deployarr-core` is `no_std` with `alloc`, so library code that names `std` does not compile. That rules out files, sockets, processes, environment variables, threads, and the clock. It also forbids unsafe code, so it cannot call the operating system through an `extern` block. Its unit tests may use `std`, which the crate root grants them with `cfg_attr(not(test), no_std)`. Every dependency must build without `std`, so the manifest turns off default features that pull it in. CI builds the crate for `x86_64-unknown-none`, a target that ships no `std`. That build fails when library code or a dependency needs `std`, and when the crate root loses its `no_std` attribute. The `wasm32-unknown-unknown` build alone cannot catch I/O, because `std` on that target compiles file and socket calls and fails them only at run time.
 
 `deployarr-inf` and `deployarr-smbios` are separate crates because they are pure parsers tested against real files on Linux. The agent targets `x86_64-pc-windows-msvc` with the static C runtime. On other targets it builds a stub that exits with an error, so `cargo build --workspace` works on Linux.
 

@@ -5,8 +5,8 @@ macro_rules! validated_string {
     ) => {
         $(#[$meta])*
         #[derive(Debug, Clone, serde::Deserialize)]
-        #[serde(try_from = "String")]
-        pub struct $name(String);
+        #[serde(try_from = "alloc::string::String")]
+        pub struct $name(alloc::string::String);
 
         impl $name {
             pub fn as_str(&self) -> &str {
@@ -14,25 +14,25 @@ macro_rules! validated_string {
             }
         }
 
-        impl TryFrom<String> for $name {
+        impl TryFrom<alloc::string::String> for $name {
             type Error = $error;
 
-            fn try_from(text: String) -> Result<Self, Self::Error> {
+            fn try_from(text: alloc::string::String) -> Result<Self, Self::Error> {
                 $validate(&text)?;
                 Ok(Self(text))
             }
         }
 
-        impl std::str::FromStr for $name {
+        impl core::str::FromStr for $name {
             type Err = $error;
 
             fn from_str(text: &str) -> Result<Self, Self::Err> {
-                Self::try_from(text.to_owned())
+                Self::try_from(alloc::borrow::ToOwned::to_owned(text))
             }
         }
 
-        impl std::fmt::Display for $name {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        impl core::fmt::Display for $name {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 f.write_str(&self.0)
             }
         }

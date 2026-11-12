@@ -1,4 +1,7 @@
-use std::fmt;
+use alloc::borrow::ToOwned;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
@@ -56,7 +59,7 @@ impl fmt::Display for ParseError {
     }
 }
 
-impl std::error::Error for ParseError {}
+impl core::error::Error for ParseError {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -179,7 +182,7 @@ impl fmt::Display for TaskSequenceIdError {
     }
 }
 
-impl std::error::Error for TaskSequenceIdError {}
+impl core::error::Error for TaskSequenceIdError {}
 
 /// A node's stable ID. It survives a rename or a move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

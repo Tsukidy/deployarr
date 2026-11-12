@@ -19,10 +19,12 @@ jobs:
           - name: Linux
             os: ubuntu-latest
             wasm: true
+            no_std: true
             agent: false
           - name: Windows
             os: windows-latest
             wasm: false
+            no_std: false
             agent: true
     steps:
       - uses: actions/checkout@v7
@@ -40,6 +42,14 @@ jobs:
       - name: Build deployarr-core for wasm32
         if: matrix.wasm
         run: cargo build -p deployarr-core --target wasm32-unknown-unknown
+      # x86_64-unknown-none ships no std, so this build fails when deployarr-core
+      # or one of its dependencies needs std, or when the crate root loses no_std.
+      - name: Add the x86_64-unknown-none target
+        if: matrix.no_std
+        run: rustup target add x86_64-unknown-none
+      - name: Build deployarr-core without std
+        if: matrix.no_std
+        run: cargo build -p deployarr-core --target x86_64-unknown-none
       - name: Build deployarr-agent in release mode
         if: matrix.agent
         run: cargo build --release -p deployarr-agent

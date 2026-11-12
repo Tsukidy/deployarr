@@ -1,10 +1,14 @@
-use std::fmt;
-use std::str::FromStr;
+use alloc::boxed::Box;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use core::fmt;
+use core::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::rfc3339;
 use crate::template::Template;
 use crate::variable::VarName;
 
@@ -139,11 +143,28 @@ impl fmt::Display for FileVersionError {
     }
 }
 
-impl std::error::Error for FileVersionError {}
+impl core::error::Error for FileVersionError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct Timestamp(#[serde(with = "time::serde::rfc3339")] pub OffsetDateTime);
+/// A moment with a UTC offset, written in RFC 3339, such as `2026-01-31T08:00:00Z`.
+///
+/// The JSON text is the text that `time`'s `Rfc3339` format writes. Writing
+/// fails for a year outside 0 to 9999, an offset of 24 hours or more, or an
+/// offset that is not a whole number of minutes. Parsing never yields one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Timestamp(pub OffsetDateTime);
+
+impl Serialize for Timestamp {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let text = rfc3339::format(self.0).map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&text)
+    }
+}
+
+impl<'de> Deserialize<'de> for Timestamp {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        rfc3339::deserialize(deserializer).map(Self)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
