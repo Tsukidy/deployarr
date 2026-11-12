@@ -155,7 +155,7 @@ Check:
 - Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
 - The UEFI VM, which runs Pro, joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
-- An order row that sets a `Domain` profile for the Home image stops the BIOS VM, which runs Home, before its disk changes, and the deployment names the edition and the profile.
+- The BIOS VM, which runs Home, has no pre-staged record, so lookup reaches its order row by baseboard serial. The row sets a `Domain` profile. The deployment stops before the disk changes, and its error names the edition ID and the profile.
 - A human checks Entra ID join and Autopilot registration on Pro against a test tenant, because the lab has no tenant. Home supports neither (see [Directory join](architecture.md#directory-join)).
 
 ### M9. Hardening and release
