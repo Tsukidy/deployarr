@@ -1,0 +1,11 @@
+[package]
+name = "probe-sqlx-postgres"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[workspace]

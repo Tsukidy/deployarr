@@ -1,0 +1,14 @@
+[package]
+name = "probe-wasi-pg-client"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasi-pg-client = "0.2"
+wasip3 = "0.8"
+
+[workspace]

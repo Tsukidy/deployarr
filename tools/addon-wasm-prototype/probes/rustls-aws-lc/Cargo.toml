@@ -1,0 +1,10 @@
+[package]
+name = "probe-rustls-aws-lc"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std", "tls12"] }
+
+[workspace]
