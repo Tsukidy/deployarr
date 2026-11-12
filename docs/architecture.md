@@ -574,7 +574,7 @@ crates/
 xtask/               boot image builds, lab automation, packaging
 ```
 
-`deployarr-inf` and `deployarr-smbios` are separate crates because they are pure parsers tested against real files on Linux. The agent itself only builds for Windows.
+`deployarr-inf` and `deployarr-smbios` are separate crates because they are pure parsers tested against real files on Linux. The agent targets `x86_64-pc-windows-msvc` with the static C runtime. On other targets it builds a stub that exits with an error, so `cargo build --workspace` works on Linux.
 
 ## Not in the first release
 

@@ -2,7 +2,7 @@
 
 deployarr is a self-hosted Windows deployment server written in Rust. A PC network-boots, the server finds what to install from a pre-staged record, an order in your SQL database, or a technician's pick from a list, and the PC installs that Windows edition, drivers, and applications. The only other input is the Windows product key from the PC's sticker, which a technician types in WinPE. The SQL database is optional. Its design follows Microsoft Deployment Toolkit (MDT), which Microsoft no longer distributes.
 
-The project is in planning. There is no code yet.
+The project is in planning. The repository holds the design docs and an empty Cargo workspace. There is no feature code yet.
 
 - [Architecture](docs/architecture.md) explains the components and the reason for each design decision.
 - [Roadmap](docs/roadmap.md) lists the milestones and the check that ends each one.
