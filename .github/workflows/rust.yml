@@ -19,9 +19,11 @@ jobs:
           - name: Linux
             os: ubuntu-latest
             wasm: true
+            agent: false
           - name: Windows
             os: windows-latest
             wasm: false
+            agent: true
     steps:
       - uses: actions/checkout@v7
       - name: Install the toolchain from rust-toolchain.toml
@@ -38,3 +40,9 @@ jobs:
       - name: Build deployarr-core for wasm32
         if: matrix.wasm
         run: cargo build -p deployarr-core --target wasm32-unknown-unknown
+      - name: Build deployarr-agent in release mode
+        if: matrix.agent
+        run: cargo build --release -p deployarr-agent
+      - name: Check the agent's imports against base WinPE
+        if: matrix.agent
+        run: cargo xtask winpe-imports target/release/deployarr-agent.exe
