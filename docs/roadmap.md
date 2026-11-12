@@ -13,6 +13,7 @@ From milestone 1 on, every check runs in a lab that `xtask lab` drives. The lab 
 - virtio disk and network devices test the driver path, because Windows 11 has no inbox drivers for them. They must come from the deployarr driver library and the WinPE driver set.
 - `-smbios type=2,serial=...` gives each VM a known baseboard serial for order lookup tests.
 - From milestone 3 on, each milestone also deploys at least one real PC of the kind you build.
+- From milestone 8 on, a Windows Server evaluation VM is the lab's domain controller, for the domain join check.
 
 ## Milestones
 
@@ -141,10 +142,13 @@ Scope:
 - The tree editor, the step palette, a typed form for each action, and the condition builder.
 - Version history with a diff view, and templates.
 - The monitoring dashboard.
+- Join profiles for a workgroup, a domain, Entra ID bulk enrollment, and Autopilot registration.
 
 Check:
 - Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
+- A lab VM joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
+- A human checks Entra ID join and Autopilot registration against the owner's tenant, because the lab has no tenant.
 
 ### M9. Hardening and release
 
@@ -160,7 +164,6 @@ Check:
 
 None of these are scheduled yet:
 
-- domain join, Entra ID join, and Autopilot hash upload
 - a Windows Update step
 - BitLocker
 - an auto-logon session for installers that fail as LocalSystem
@@ -174,9 +177,3 @@ None of these are scheduled yet:
 - an importer for MDT task sequences (`ts.xml`) that applies the conversions listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#what-changes-in-deployarr)
 - a PowerShell module with MDT's `TSEnv:` and `TSEnvList:` drives, for porting MDT scripts
 - a desktop program for the server, built with Tauri, that shows the web UI in its own window
-
-## Open questions
-
-These do not block M0 to M2. Each one needs an answer before the milestone named in it.
-
-2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8.

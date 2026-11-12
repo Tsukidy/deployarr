@@ -16,6 +16,7 @@ These come from the product owner and drive every decision below.
 - Every device has a working driver when the deployment finishes.
 - Configurable applications, with a simple UI to manage drivers and software.
 - A finished PC ends in one of two states, picked for each deployment. A PC that is ready to use skips OOBE and has a local admin account. A PC that is ready for the customer deploys in audit mode and then runs `sysprep /oobe /shutdown`, so the customer sees OOBE on first boot.
+- PCs stay in a workgroup by default. Domain join, Entra ID join, and Autopilot are options.
 - Admins configure and run deployarr through a web UI. After the first release, a desktop program on the server shows the same UI in its own window.
 - Install from an ISO or a WIM.
 - A WinPE-based preinstall environment.
@@ -341,6 +342,29 @@ Each PC has a Windows product key on a sticker, and a technician types it during
 - A rejected key fails the step, and the UI shows the error with the deployment. Put the step early in the full-OS phase, so a mistyped key shows up minutes after the first reboot.
 - Microsoft's rule on whether a system builder or the customer activates a PC is not yet checked. The `online` flag lets each task sequence follow that rule.
 
+## Directory join
+
+A PC stays in a workgroup by default. Domain join, Entra ID join, and Autopilot are options in the first release. An admin defines join profiles on the server, and the `JoinProfile` variable names the profile a deployment uses. As with `EndState`, a task sequence sets the default, and an order column or a pre-staged record can override it. With no setting, the PC uses the built-in `Workgroup` profile.
+
+```rust
+pub enum JoinProfile {
+	Workgroup { name: String },   // "WORKGROUP" unless an admin changes it
+	Domain { domain: String, ou: Option<String>, account: String, password: SecretRef },
+	EntraId { package: ContentRef, made_on: Date },   // bulk enrollment package from Windows Configuration Designer
+	Autopilot { upload: AutopilotUpload },   // CsvExport, or Graph through a tenant connection
+}
+```
+
+- `Workgroup` and `Domain` go into the unattend file, in the specialize pass of the `Microsoft-Windows-UnattendedJoin` component. `JoinWorkgroup` names the workgroup. `JoinDomain`, `Credentials`, and `MachineObjectOU` name the domain, the join account, and the full LDAP path of the OU ([UnattendedJoin](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-unattendedjoin)). The PC must reach a domain controller during the specialize pass.
+- The join account's password is a secret. The server stores it encrypted, and the agent deletes the cached answer files before the finish action (see [End state](#end-state)).
+- `EntraId` uses bulk enrollment. An admin makes the provisioning package with Windows Configuration Designer and uploads it. The package joins the PC to the Entra tenant and enrolls it in Intune ([Bulk enrollment](https://learn.microsoft.com/en-us/intune/intune-service/enrollment/windows-bulk-enroll)).
+- In WinPE, the agent adds the package to the applied image with `DISM /Image=W:\ /Add-ProvisioningPackage`, which works on an applied image ([DISM provisioning package options](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/dism-provisioning-package-command-line-options)). Windows applies a package that is embedded in the image during the OOBE pass ([How provisioning works](https://learn.microsoft.com/en-us/windows/configuration/provisioning-packages/provisioning-how-it-works)). The M8 lab checks that a `ReadyToUse` PC, which skips the OOBE screens, applies it too. If it does not, the agent runs `Install-ProvisioningPackage` in the full OS instead (inferred).
+- The token in a bulk enrollment package is valid for 90 days (Bulk enrollment page). The admin enters the date the package was made, and the UI warns before the 90 days pass.
+- `Autopilot` only customizes OOBE ([Autopilot FAQ](https://learn.microsoft.com/en-us/autopilot/faq)), so it needs `EndState` set to `CustomerOobe`. The server rejects any other pair before the disk changes.
+- Capturing the hardware hash requires a booted Windows ([Manually register devices](https://learn.microsoft.com/en-us/autopilot/add-devices)), so the agent collects the hash in audit mode, before `sysprep`, and sends it to the server. The M8 lab picks the collection method.
+- With `CsvExport`, an admin downloads the hashes as a CSV file and imports it into Intune, which takes up to 500 rows per file (same page). With `Graph`, the server registers each hash through `importedWindowsAutopilotDeviceIdentities`, which needs the `DeviceManagementServiceConfig.ReadWrite.All` permission ([Create importedWindowsAutopilotDeviceIdentity](https://learn.microsoft.com/en-us/graph/api/intune-enrollment-importedwindowsautopilotdeviceidentity-create?view=graph-rest-1.0)). The tenant connection's credentials are secrets.
+- Microsoft calls manual hash registration "primarily for testing and evaluation scenarios" (same page). A builder that sells into many customer tenants may need partner registration instead. That path is not yet checked.
+
 ## Readiness check
 
 deployarr applies `install.wim` with DISM and never runs `setup.exe`, so Windows Setup never checks the hardware. The `CheckReadiness` action does that check instead. ConfigMgr has the same step, but its defaults are below the Windows 11 minimums and it has no Secure Boot check ([ConfigMgr 2509 reference](research/configmgr-2509.md#check-readiness)).
@@ -547,7 +571,6 @@ xtask/               boot image builds, lab automation, packaging
 
 These are planned for later and kept out of the first release on purpose:
 
-- domain, Entra ID, or Autopilot join
 - Windows Update during deployment
 - BitLocker
 - user state migration and in-place upgrades

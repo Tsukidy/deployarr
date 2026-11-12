@@ -13,7 +13,7 @@ The repository holds design documents only. There is no code yet. The next miles
 | Path | Holds |
 | --- | --- |
 | `docs/architecture.md` | The design and the reason for each decision. It is the source of truth for design. |
-| `docs/roadmap.md` | Milestones M0 to M9, the check that ends each one, and the open product questions |
+| `docs/roadmap.md` | Milestones M0 to M9, the check that ends each one, and any open product questions |
 | `docs/research/mdt-8456.md` | How MDT 8456 scripts and templates implement each feature, with citations |
 | `docs/research/mdt-8450-binaries.md` | What MDT's compiled components do, from the 8450 installer |
 | `docs/research/configmgr-2509.md` | What ConfigMgr 2509 ships for OS deployment, how its steps handle Windows 11, and how its PXE responder boots WinPE without WDS |
