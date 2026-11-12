@@ -78,7 +78,7 @@ Check:
 - On a VM, a key in the right format that Windows rejects fails the `ActivateWindows` step, and the deployment shows the error.
 - The UEFI VM runs once with each end state. With `ReadyToUse`, it boots to the sign-in screen with no OOBE. With `CustomerOobe`, it shuts down, shows OOBE on its next boot, and has no account that deployarr created. Neither leaves a cached answer file in `%WINDIR%\Panther`.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
-- On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. If base WinPE lacks `tbs.dll` or the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
+- On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. It reports the TPM version that the PC has, and its log names the device ID that matched. If base WinPE lacks the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
 
 ### M4. PXE
 
