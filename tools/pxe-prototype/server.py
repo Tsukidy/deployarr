@@ -25,6 +25,8 @@ import wds250
 _OPTIONS_WITH_A_LOG_FIELD = (53, 93, 97, 250)
 # struct in_pktinfo: ipi_ifindex, ipi_spec_dst, ipi_addr.
 _IN_PKTINFO = struct.Struct("@i4s4s")
+# Python names this socket option from 3.12 on. Linux defines it as 8.
+_IP_PKTINFO = getattr(socket, "IP_PKTINFO", 8 if sys.platform == "linux" else None)
 _ERROR_OPCODE = struct.pack("!H", tftp.Opcode.ERROR)
 # A client can end a transfer and ask again from the same port at once. The
 # packet that ends the transfer and the new request reach two threads in no
@@ -105,7 +107,7 @@ class PxeServer:
 
     @staticmethod
     def _interface_index(interface: str) -> int:
-        if not hasattr(socket, "IP_PKTINFO"):
+        if _IP_PKTINFO is None:
             raise BindError("an interface needs IP_PKTINFO, which this platform lacks")
         try:
             return socket.if_nametoindex(interface)
@@ -121,7 +123,7 @@ class PxeServer:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         if self._ifindex is not None:
-            sock.setsockopt(socket.IPPROTO_IP, socket.IP_PKTINFO, 1)
+            sock.setsockopt(socket.IPPROTO_IP, _IP_PKTINFO, 1)
         return self._bind((self._config.dhcp_bind, port), sock)
 
     @staticmethod
@@ -190,7 +192,7 @@ class PxeServer:
         else:
             datagram, ancillary, _, source = sock.recvmsg(65535, socket.CMSG_SPACE(_IN_PKTINFO.size))
             arrived = [_IN_PKTINFO.unpack(data)[0] for level, kind, data in ancillary
-                       if (level, kind) == (socket.IPPROTO_IP, socket.IP_PKTINFO)]
+                       if (level, kind) == (socket.IPPROTO_IP, _IP_PKTINFO)]
             if arrived != [self._ifindex]:
                 self._log(events.DhcpIgnored(
                     port, _address(source), policy.IgnoreReason.OTHER_INTERFACE.value,
@@ -236,7 +238,7 @@ class PxeServer:
                 sock.sendto(datagram, destination)
             else:
                 pktinfo = _IN_PKTINFO.pack(ifindex, bytes(4), bytes(4))
-                sock.sendmsg([datagram], [(socket.IPPROTO_IP, socket.IP_PKTINFO, pktinfo)], 0, destination)
+                sock.sendmsg([datagram], [(socket.IPPROTO_IP, _IP_PKTINFO, pktinfo)], 0, destination)
         except OSError as error:
             self._log(events.SendFailed(_address(destination), str(error)))
             return False
@@ -331,14 +333,19 @@ class PxeServer:
         try:
             with handle, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
                 sock.bind((str(self._config.server_ip), 0))
+                # select.select fails on a descriptor number of 1024 or more,
+                # which about 500 transfers at once reach.
+                waiter = select.poll()
+                waiter.register(sock, select.POLLIN)
+                waiter.register(self._stopping, select.POLLIN)
                 send(transfer.start(time.monotonic()))
                 while transfer.active:
                     now = time.monotonic()
                     send(transfer.on_timeout(now))
                     if not transfer.active:
                         break
-                    readable = select.select([sock, self._stopping], [], [], max(transfer.deadline - now, 0.0))[0]
-                    if self._stopping in readable:
+                    readable = [fd for fd, _ in waiter.poll(max(transfer.deadline - now, 0.0) * 1000)]
+                    if self._stopping.fileno() in readable:
                         transfer.stop()
                         break
                     if not readable:

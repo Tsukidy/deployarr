@@ -2,7 +2,9 @@
 Run with: python3 -m unittest"""
 import contextlib
 import io
+import os
 import re
+import resource
 import signal
 import socket
 import subprocess
@@ -266,6 +268,21 @@ class TftpTest(ServerCase):
         self.assertEqual(other_address.recvfrom(65535)[0], b"\x00\x03\x00\x01" + SMALL[:512])
         self.assertEqual(self.events("tftp-ignored"), [])
 
+    def test_transfer_works_when_descriptor_numbers_pass_1024(self):
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if hard != resource.RLIM_INFINITY and hard < 1200:
+            self.skipTest("the descriptor limit is below 1200")
+        if soft != resource.RLIM_INFINITY and soft < 1200:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (1200, hard))
+            self.addCleanup(resource.setrlimit, resource.RLIMIT_NOFILE, (soft, hard))
+        for _ in range(1030):
+            self.addCleanup(os.close, os.open(os.devnull, os.O_RDONLY))
+        pxe = self.start()
+        got = reference.tftp_get(pxe.tftp_address, "small.bin", timeout=1.0)
+        self.assertEqual(got.data, SMALL)
+        finished, = self.wait_for("transfer-finished")
+        self.assertEqual(finished["outcome"], "complete")
+
     def test_silent_client_times_out(self):
         pxe = self.start()
         sock = self.client()
@@ -375,14 +392,14 @@ class DhcpTest(ServerCase):
              "option_250": None, "option_252": r"boot\uefi.bcd"},
         ])
 
-    @unittest.skipUnless(hasattr(socket, "IP_PKTINFO"), "needs IP_PKTINFO")
+    @unittest.skipUnless(sys.platform == "linux", "needs IP_PKTINFO")
     def test_discover_that_arrives_on_the_configured_interface_is_answered(self):
         pxe = self.start(interface="lo")
         offer = self.exchange(pxe.dhcp_ports[0], reference.dhcp_request(DISCOVER, 7))
         self.assertEqual(offer.option(53), bytes((OFFER,)))
         self.assertEqual(self.events("started")[0]["interface"], "lo")
 
-    @unittest.skipUnless(OTHER_INTERFACES and hasattr(socket, "IP_PKTINFO"), "needs a second interface")
+    @unittest.skipUnless(OTHER_INTERFACES and sys.platform == "linux", "needs a second interface")
     def test_discover_that_arrives_on_another_interface_is_ignored(self):
         pxe = self.start(interface=OTHER_INTERFACES[0])
         sock = self.client(timeout=0.1)
