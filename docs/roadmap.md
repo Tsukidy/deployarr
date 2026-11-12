@@ -168,7 +168,6 @@ None of these are scheduled yet:
 - vendor driver catalogs from Dell, HP, and Lenovo
 - an importer for MDT task sequences (`ts.xml`) that applies the conversions listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#what-changes-in-deployarr)
 - a PowerShell module with MDT's `TSEnv:` and `TSEnvList:` drives, for porting MDT scripts
-- writing deployment status back to the order database
 
 ## Open questions
 
@@ -178,5 +177,4 @@ These do not block M0 to M2. Each one needs an answer before the milestone named
 2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8.
 3. How are PCs activated? Options are a firmware key, KMS or MAK, or OEM key injection. Needed before M3.
 4. How many PCs deploy at once, and across how many subnets? Needed before M4, to size TFTP and decide between proxyDHCP and DHCP options.
-5. Should finished deployments write status back to the order database? Needed before M5, if yes.
 6. How do admins sign in: local accounts, Active Directory, or OIDC? Needed before M9.

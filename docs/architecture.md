@@ -8,6 +8,7 @@ These come from the product owner and drive every decision below.
 
 - Zero-touch deployment, Windows first.
 - Order lookup in an SQL database. The order's OS identifier selects the task sequence. A manual list of task sequences is the fallback.
+- deployarr only reads the order database. It never writes to it, not even deployment status.
 - An order is tied to a PC in three ways, and all three must work: the order table holds the motherboard serial number, a technician scans or types the order number, or someone pre-stages the PC in the web UI.
 - The order database engine is not fixed. Support Microsoft SQL Server, PostgreSQL, and MySQL or MariaDB.
 - Task sequences that work like MDT's: ordered groups and steps, conditions, variables, scripts, commands, and reboots.
@@ -260,7 +261,7 @@ pub trait DataSource {
 - PostgreSQL and MySQL use `sqlx`. Recent `sqlx` releases dropped SQL Server support, which is why SQL Server has its own driver.
 - An admin writes each query with named parameters, such as `SELECT os_code, order_no FROM orders WHERE board_serial = :board_serial`. The server rewrites the names into each engine's placeholder syntax and always binds values. Values are never pasted into the SQL text.
 - A lookup error or an empty result moves to the next resolver and appears in the trace. MDT logs the error and continues as if nothing happened.
-- The setup guide recommends a read-only database account.
+- The order database is read-only to deployarr. The setup guide requires a database account that can only read. On PostgreSQL and MySQL, the server also runs each named query in a read-only transaction, so a query that tries to write fails even when the account allows it. SQL Server has no read-only transaction, so there the account is the only guard.
 
 ### Wipe safety
 
@@ -517,6 +518,5 @@ These are planned for later and kept out of the first release on purpose:
 - ARM64
 - Linux deployment
 - vendor driver catalogs
-- writing status back to the order database
 
 The [Roadmap](roadmap.md) lists them.
