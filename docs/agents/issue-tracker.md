@@ -81,7 +81,9 @@ The frontier is the set of tickets an agent can start now. A ticket is on the fr
 - unblocked, because every issue in that section is closed
 - held by no session, by the rule in [Claim](#claim)
 
-To find it, list the open `ready-for-agent` issues. Check the unassigned ones first, because an assigned issue is almost always held. For each candidate, read its body for blockers and its comments for a holder. Take the first free one in its epic's sub-issue order.
+To find it, list the open `ready-for-agent` issues. Check the unassigned ones first, because an assigned issue is almost always held. For each candidate, read its body for blockers and its comments for a holder. Take the first free one in its epic's sub-issue order. Take tickets that have no epic in issue number order.
+
+When your prompt names a label, such as `bookkeeping`, the frontier holds only the tickets that carry it.
 
 A `ready-for-agent` issue with no `## Blocked by` section did not finish triage. Skip it.
 

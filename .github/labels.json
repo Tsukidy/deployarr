@@ -15,5 +15,6 @@
   {"name": "area:drivers", "color": "ededed", "description": "Driver library, INF parsing, driver verification"},
   {"name": "area:ui", "color": "ededed", "description": "deployarr-ui: the web UI"},
   {"name": "area:docs", "color": "ededed", "description": "Docs in docs/ and the agent guides"},
-  {"name": "area:ci", "color": "ededed", "description": "CI, GitHub workflows, and repository tooling"}
+  {"name": "area:ci", "color": "ededed", "description": "CI, GitHub workflows, and repository tooling"},
+  {"name": "bookkeeping", "color": "c5def5", "description": "Upkeep of the docs and agent guides, kept apart from milestone work"}
 ]
