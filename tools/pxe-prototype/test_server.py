@@ -19,7 +19,7 @@ from policy import Chain
 from server import Config, PxeServer
 from tftp import Limits
 
-DISCOVER, OFFER, REQUEST, ACK, INFORM = 1, 2, 3, 5, 8
+DISCOVER, OFFER, REQUEST, DECLINE, ACK, INFORM = 1, 2, 3, 4, 5, 8
 HERE = Path(__file__).parent
 BOOTMGFW = bytes(range(256)) * 20 + b"tail"
 SMALL = b"s" * 1300
@@ -217,6 +217,23 @@ class DhcpTest(ServerCase):
                          {(str(pxe.dhcp_ports[0]), "not-discover-or-request"),
                           (str(pxe.dhcp_ports[1]), "malformed")})
 
+    def test_packet_types_are_logged_by_name(self):
+        pxe = self.start()
+        sock = self.client()
+        for message_type in (DECLINE, 6, 7, INFORM, 9):
+            sock.sendto(reference.dhcp_request(message_type, 7), ("127.0.0.1", pxe.dhcp_ports[0]))
+        self.wait_for("dhcp-ignored", 5)
+        self.assertEqual([fields["type"] for fields in self.events("dhcp-received")],
+                         ["DECLINE", "NAK", "RELEASE", "INFORM", "9"])
+
+    def test_request_without_a_guid_is_answered_when_the_config_says_so(self):
+        pxe = self.start(answer_without_guid=True)
+        ack = self.exchange(pxe.dhcp_ports[1], reference.dhcp_request(REQUEST, 0, None))
+        self.assertEqual(ack.file.rstrip(b"\x00"), rb"boot\x64\wdsnbp.com")
+        self.assertIsNone(ack.option(97))
+        self.assertEqual(self.events("started")[0]["answer_without_guid"], "true")
+        self.assertNotIn("guid", self.events("dhcp-received")[0])
+
     def test_two_stage_conversation_ends_with_the_boot_manager(self):
         pxe = self.start("two-stage")
         port_67, port_4011 = pxe.dhcp_ports
@@ -289,7 +306,8 @@ class LogTest(ServerCase):
             "dhcp_bind": "127.0.0.1", "dhcp_ports": f"{pxe.dhcp_ports[0]},{pxe.dhcp_ports[1]}",
             "tftp": f"127.0.0.1:{pxe.tftp_address[1]}", "bcd_uefi": r"boot\uefi.bcd",
             "bcd_bios": r"boot\bios.bcd", "max_blksize": "32768", "max_windowsize": "32",
-            "timeout": "0.200000", "retries": "2", "block_wrap_first": "0", "block_log": "true"})
+            "timeout": "0.200000", "retries": "2", "block_wrap_first": "0", "block_log": "true",
+            "answer_without_guid": "false"})
 
     def test_transfer_is_logged_packet_by_packet(self):
         pxe = self.start()
@@ -348,6 +366,7 @@ class CommandLineTest(unittest.TestCase):
         self.assertEqual((config.dhcp_ports, config.tftp_port, config.dhcp_bind), ((67, 4011), 69, "0.0.0.0"))
         self.assertEqual((config.layout.bcd_uefi, config.layout.bcd_bios), (r"boot\uefi.bcd", r"boot\bios.bcd"))
         self.assertEqual((config.log_blocks, config.log_stream), (True, sys.stderr))
+        self.assertIs(config.answer_without_guid, False)
 
     def test_every_flag(self):
         log_file = self.root / "run.log"
@@ -355,12 +374,13 @@ class CommandLineTest(unittest.TestCase):
             "--server-ip", "192.0.2.10", "--root", str(self.root), "--chain", "two-stage",
             "--interface", "br-lab", "--dhcp-ports", "4011", "--tftp-port", "6969",
             "--bcd-uefi", r"lab\a.bcd", "--bcd-bios", r"lab\b.bcd", "--no-block-log",
-            "--log-file", str(log_file)])
+            "--answer-without-guid", "--log-file", str(log_file)])
         self.addCleanup(config.log_stream.close)
         self.assertEqual((config.server_ip, config.chain), (IPv4Address("192.0.2.10"), Chain.TWO_STAGE))
         self.assertEqual((config.interface, config.dhcp_ports, config.tftp_port), ("br-lab", (4011,), 6969))
         self.assertEqual((config.layout.bcd_uefi, config.layout.bcd_bios), (r"lab\a.bcd", r"lab\b.bcd"))
         self.assertIs(config.log_blocks, False)
+        self.assertIs(config.answer_without_guid, True)
         self.assertEqual(config.log_stream.name, str(log_file))
 
     def test_bad_arguments_exit_with_a_message(self):

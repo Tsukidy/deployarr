@@ -39,6 +39,7 @@ class Config:
     tftp_port: int = 69
     limits: tftp.Limits = tftp.Limits()
     log_blocks: bool = True
+    answer_without_guid: bool = False
     log_stream: TextIO = sys.stderr
 
 
@@ -74,7 +75,7 @@ class PxeServer:
 
     def __init__(self, config: Config):
         self._config = config
-        self._policy = policy.Policy(config.server_ip, config.chain, config.layout)
+        self._policy = policy.Policy(config.server_ip, config.chain, config.layout, config.answer_without_guid)
         self._root = config.root.resolve()
         self._log = events.Sink(config.log_stream)
         # `stop` writes to one end. Every thread waits on the other end next
@@ -142,7 +143,7 @@ class PxeServer:
             bcd_bios=config.layout.bcd_bios, max_blksize=tftp.MAX_BLKSIZE,
             max_windowsize=config.limits.max_windowsize, timeout=config.limits.timeout,
             retries=config.limits.retries, block_wrap_first=config.limits.block_wrap_first,
-            block_log=config.log_blocks))
+            block_log=config.log_blocks, answer_without_guid=config.answer_without_guid))
         self._dispatcher.start()
 
     def stop(self) -> None:
@@ -197,7 +198,7 @@ class PxeServer:
             guid=None if guid is None else guid.hex(),
             option_250=None if option_250 is None else wds250.describe(option_250),
             options=tuple(code for code, _ in request.options if code not in _OPTIONS_WITH_A_LOG_FIELD)))
-        result = policy.respond(request, self._policy)
+        result = policy.respond(request, self._policy, port)
         if isinstance(result, policy.NoReply):
             self._log(events.DhcpIgnored(port, _address(source), result.reason.value))
             return

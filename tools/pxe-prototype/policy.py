@@ -10,7 +10,7 @@ from enum import Enum
 from ipaddress import IPv4Address
 
 import wds250
-from dhcp import BOOTREPLY, BOOTREQUEST, DhcpPacket, MessageType
+from dhcp import BOOTREPLY, BOOTREQUEST, SERVER_PORT, DhcpPacket, MessageType
 
 FILE_FIELD = 128
 SNAME_FIELD = 64
@@ -37,6 +37,7 @@ class Step(Enum):
 class IgnoreReason(Enum):
     NOT_A_REQUEST = "not-a-request"
     NOT_DISCOVER_OR_REQUEST = "not-discover-or-request"
+    LEASE_REQUEST = "lease-request"
     NO_OPTION_93 = "no-option-93"
     NO_OPTION_97 = "no-option-97"
     UNSUPPORTED_ARCH = "unsupported-arch"
@@ -109,6 +110,7 @@ class Policy:
     server_ip: IPv4Address
     chain: Chain
     layout: Layout = Layout()
+    answer_without_guid: bool = False
 
 
 @dataclass(frozen=True)
@@ -124,10 +126,10 @@ class NoReply:
     reason: IgnoreReason
 
 
-def respond(request: DhcpPacket, policy: Policy) -> Reply | NoReply:
-    """The reply to one request. A DISCOVER gets an OFFER, and a REQUEST
-    gets an ACK with a boot file. Options 54 and 60 of the request are
-    never read, as in ConfigMgr."""
+def respond(request: DhcpPacket, policy: Policy, port: int) -> Reply | NoReply:
+    """The reply to one request that arrived on UDP `port`. A DISCOVER gets
+    an OFFER, and a REQUEST gets an ACK with a boot file. Options 54 and 60
+    of the request are never read, as in ConfigMgr."""
     if request.op != BOOTREQUEST:
         return NoReply(IgnoreReason.NOT_A_REQUEST)
     kind = request.option(53)
@@ -136,13 +138,19 @@ def respond(request: DhcpPacket, policy: Policy) -> Reply | NoReply:
     arch = request.option(93)
     if arch is None or len(arch) < 2:
         return NoReply(IgnoreReason.NO_OPTION_93)
-    if request.option(97) is None:
+    if request.option(97) is None and not policy.answer_without_guid:
         return NoReply(IgnoreReason.NO_OPTION_97)
     firmware = _FIRMWARE_BY_ARCH.get(int.from_bytes(arch[:2], "big"))
     if firmware is None:
         return NoReply(IgnoreReason.UNSUPPORTED_ARCH)
     if kind[0] == MessageType.DISCOVER:
         return Reply(_reply(request, policy, MessageType.OFFER, None), firmware, None)
+    if port == SERVER_PORT and request.option(250) is None:
+        # This REQUEST accepts the DHCP server's lease. On a host that also
+        # runs the DHCP server, an ACK from here carries the same option 54
+        # and yiaddr 0.0.0.0, and EDK2 answers it with DHCPDECLINE and stops
+        # (measured with OVMF). A network boot program's request has option 250.
+        return NoReply(IgnoreReason.LEASE_REQUEST)
     step = _step(request, policy.chain)
     packet = _reply(request, policy, MessageType.ACK, BOOT_TABLE[step, firmware])
     return Reply(packet, firmware, step)
@@ -156,12 +164,11 @@ def _step(request: DhcpPacket, chain: Chain) -> Step:
 
 
 def _reply(request: DhcpPacket, policy: Policy, kind: MessageType, boot: Boot | None) -> DhcpPacket:
-    options = [
-        (53, bytes((kind,))),
-        (54, policy.server_ip.packed),
-        (97, request.option(97)),
-        (60, b"PXEClient"),
-    ]
+    options = [(53, bytes((kind,))), (54, policy.server_ip.packed)]
+    guid = request.option(97)
+    if guid is not None:
+        options.append((97, guid))
+    options.append((60, b"PXEClient"))
     relay_agent = request.option(82)
     if relay_agent is not None:
         options.append((82, relay_agent))

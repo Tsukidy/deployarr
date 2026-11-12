@@ -32,6 +32,7 @@ class Started:
     retries: int
     block_wrap_first: int
     block_log: bool
+    answer_without_guid: bool
 
 
 @dataclass(frozen=True)

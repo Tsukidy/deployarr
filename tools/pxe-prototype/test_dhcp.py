@@ -9,7 +9,7 @@ import wds250
 from policy import Chain, Firmware, IgnoreReason, Step
 
 SERVER = "192.0.2.10"
-DISCOVER, OFFER, REQUEST, ACK, INFORM = 1, 2, 3, 5, 8
+DISCOVER, OFFER, REQUEST, DECLINE, ACK, INFORM = 1, 2, 3, 4, 5, 8
 RELAY_INFO = b"\x01\x04eth0"
 NORMAL_250 = bytes.fromhex("020101" "050400000000" "03020014" "040200ba" "06085343434d20505845" "0b0101")
 SECOND_REQUEST_250 = bytes.fromhex("01020009" "0b0102")
@@ -34,12 +34,12 @@ EXPECTED_ACKS = {
 }
 
 
-def answer(request: bytes, chain: str = "two-stage"):
-    return policy.respond(dhcp.parse(request), policy.Policy(IPv4Address(SERVER), Chain(chain)))
+def answer(request: bytes, chain: str = "two-stage", port: int = 4011, **policy_fields):
+    return policy.respond(dhcp.parse(request), policy.Policy(IPv4Address(SERVER), Chain(chain), **policy_fields), port)
 
 
-def reply_to(request: bytes, chain: str = "two-stage") -> reference.DhcpReply:
-    return reference.decode_dhcp_reply(dhcp.encode(answer(request, chain).packet))
+def reply_to(request: bytes, chain: str = "two-stage", port: int = 4011, **policy_fields) -> reference.DhcpReply:
+    return reference.decode_dhcp_reply(dhcp.encode(answer(request, chain, port, **policy_fields).packet))
 
 
 class ReplyTest(unittest.TestCase):
@@ -86,6 +86,22 @@ class ReplyTest(unittest.TestCase):
                     self.assertEqual(reply.file, file.ljust(128, b"\x00"))
                     self.assertEqual(reply.option(code), value)
                     self.assertEqual(reply.codes, [53, 54, 97, 60] + ([82] if option_82 else []) + [code])
+
+    def test_discover_on_port_67_gets_an_offer(self):
+        reply = reply_to(reference.dhcp_request(DISCOVER, 7), port=67)
+        self.assertEqual(reply.option(53), bytes((OFFER,)))
+
+    def test_request_with_option_250_on_port_67_gets_the_second_ack(self):
+        reply = reply_to(reference.dhcp_request(REQUEST, 7, option_250=SECOND_REQUEST_250), port=67)
+        self.assertEqual(reply.option(53), bytes((ACK,)))
+        self.assertEqual(reply.file, rb"boot\x64\bootmgfw.efi".ljust(128, b"\x00"))
+
+    def test_request_without_a_guid_can_be_answered_without_option_97(self):
+        offer = reply_to(reference.dhcp_request(DISCOVER, 0, None), port=67, answer_without_guid=True)
+        self.assertEqual(offer.codes, [53, 54, 60])
+        ack = reply_to(reference.dhcp_request(REQUEST, 0, None), answer_without_guid=True)
+        self.assertEqual(ack.codes, [53, 54, 60, 250])
+        self.assertEqual(ack.file, rb"boot\x64\wdsnbp.com".ljust(128, b"\x00"))
 
     def test_offer_to_a_discover_that_carries_option_250_has_no_boot(self):
         reply = reply_to(reference.dhcp_request(DISCOVER, 9, option_250=SECOND_REQUEST_250))
@@ -146,6 +162,7 @@ class NoReplyTest(unittest.TestCase):
     def test_reasons(self):
         cases = {
             "inform": (reference.dhcp_request(INFORM, 7), IgnoreReason.NOT_DISCOVER_OR_REQUEST),
+            "decline": (reference.dhcp_request(DECLINE, 7), IgnoreReason.NOT_DISCOVER_OR_REQUEST),
             "offer": (reference.dhcp_request(OFFER, 7), IgnoreReason.NOT_DISCOVER_OR_REQUEST),
             "bootreply": (reference.dhcp_request(DISCOVER, 7, op=2), IgnoreReason.NOT_A_REQUEST),
             "no option 93": (reference.dhcp_request(DISCOVER, None), IgnoreReason.NO_OPTION_93),
@@ -156,6 +173,14 @@ class NoReplyTest(unittest.TestCase):
         for name, (request, reason) in cases.items():
             with self.subTest(name):
                 self.assertEqual(answer(request), policy.NoReply(reason))
+
+    def test_lease_request_on_port_67_gets_no_reply(self):
+        for chain in ("single", "two-stage"):
+            for arch in (0, 7):
+                with self.subTest(chain=chain, arch=arch):
+                    self.assertEqual(answer(reference.dhcp_request(REQUEST, arch), chain, port=67),
+                                     policy.NoReply(IgnoreReason.LEASE_REQUEST))
+        self.assertEqual(IgnoreReason.LEASE_REQUEST.value, "lease-request")
 
 
 class DestinationTest(unittest.TestCase):
@@ -175,7 +200,7 @@ class LayoutTest(unittest.TestCase):
         for arch, bcd in ((9, rb"lab\a.bcd"), (0, rb"lab\b.bcd")):
             packet = policy.respond(
                 dhcp.parse(reference.dhcp_request(REQUEST, arch)),
-                policy.Policy(IPv4Address(SERVER), Chain.SINGLE, layout)).packet
+                policy.Policy(IPv4Address(SERVER), Chain.SINGLE, layout), 4011).packet
             self.assertEqual(reference.decode_dhcp_reply(dhcp.encode(packet)).option(252), bcd)
 
     def test_path_that_does_not_fit_the_file_field_is_refused(self):

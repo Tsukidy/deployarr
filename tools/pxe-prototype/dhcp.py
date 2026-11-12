@@ -12,6 +12,7 @@ MAGIC_COOKIE = b"\x63\x82\x53\x63"
 BOOTP_MINIMUM = 300
 BOOTREQUEST = 1
 BOOTREPLY = 2
+SERVER_PORT = 67
 
 _HEADER = struct.Struct("!BBBBIHH4s4s4s4s16s64s128s")
 _OPTIONS_START = _HEADER.size + len(MAGIC_COOKIE)
@@ -24,7 +25,11 @@ class MessageType(IntEnum):
     DISCOVER = 1
     OFFER = 2
     REQUEST = 3
+    DECLINE = 4
     ACK = 5
+    NAK = 6
+    RELEASE = 7
+    INFORM = 8
 
 
 class MalformedPacket(ValueError):

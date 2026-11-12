@@ -48,6 +48,9 @@ def parse_args(argv: list[str] | None = None) -> server.Config:
                         help=r"option 252 for BIOS clients (default: %(default)s)")
     parser.add_argument("--no-block-log", action="store_true",
                         help="leave the line for each DATA and ACK out of the log")
+    parser.add_argument("--answer-without-guid", action="store_true",
+                        help="also answer a request that has no option 97, as QEMU's iPXE ROM sends, "
+                             "with a reply that has no option 97")
     parser.add_argument("--log-file", metavar="FILE", help="append the log to FILE (default: stderr)")
     args = parser.parse_args(argv)
     try:
@@ -63,7 +66,8 @@ def parse_args(argv: list[str] | None = None) -> server.Config:
     return server.Config(
         server_ip=args.server_ip, root=args.root, chain=policy.Chain(args.chain), layout=layout,
         interface=args.interface, dhcp_ports=args.dhcp_ports, tftp_port=args.tftp_port,
-        log_blocks=not args.no_block_log, log_stream=log_stream)
+        log_blocks=not args.no_block_log, answer_without_guid=args.answer_without_guid,
+        log_stream=log_stream)
 
 
 def main(argv: list[str] | None = None) -> int:
