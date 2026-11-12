@@ -41,7 +41,7 @@ This was measured with dnsmasq 2.91 on Linux 6.18. In those modes, both programs
 
 If port 67 still cannot be shared, pass `--dhcp-ports 4011`. The prototype then serves the second stage, but it never sends an OFFER, so #31 cannot run.
 
-`--interface` names the lab bridge. The prototype ignores DHCP requests that arrive on any other interface, and it sends every DHCP reply through the bridge. It logs an ignored request as `dhcp-ignored` with `reason=other-interface`.
+`--interface` names the lab bridge, and `--server-ip` is one of the bridge's addresses. The prototype ignores DHCP requests that arrive on any other interface, and it sends every DHCP reply through the bridge, from that address. It logs an ignored request as `dhcp-ignored` with `reason=other-interface`.
 
 On port 67 the prototype answers a DISCOVER, and a REQUEST only when it carries option 250. It does not answer the broadcast REQUEST with which a PC accepts the DHCP server's lease. It logs that REQUEST as `dhcp-ignored` with `reason=lease-request`. An ACK to it made OVMF decline its lease and stop with `PXE-E07`, because the prototype and dnsmasq share one address and the ACK has no client address. The PXE REQUEST that gets the boot file arrives on port 4011.
 
@@ -123,3 +123,9 @@ cd tools/pxe-prototype && python3 -m unittest
 ```
 
 The tests use loopback and unprivileged ports. `reference.py` builds the requests and decodes the replies. It imports nothing from the tool.
+
+`test_lab.py` needs root, Python 3.12 or later, and the `ip` command, and it is skipped without them. It builds two network namespaces shaped like the lab: a bridge whose port 67 a second socket shares the way dnsmasq does, a PC with no address, and a default route through another link. It checks that the OFFER reaches the PC as a broadcast on the bridge, and that the other socket keeps every unicast to port 67.
+
+```bash
+cd tools/pxe-prototype && sudo python3 -m unittest test_lab
+```

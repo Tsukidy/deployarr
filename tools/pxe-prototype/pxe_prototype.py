@@ -16,7 +16,21 @@ def _port(text: str) -> int:
 
 
 def _ports(text: str) -> tuple[int, ...]:
-    return tuple(_port(port) for port in text.split(","))
+    ports = tuple(_port(port) for port in text.split(","))
+    for port in ports:
+        if ports.count(port) > 1:
+            raise argparse.ArgumentTypeError(f"port {port} is listed twice")
+    return ports
+
+
+def _host_address(text: str) -> IPv4Address:
+    try:
+        address = IPv4Address(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not an IPv4 address") from None
+    if address.is_unspecified or address.is_multicast or address == IPv4Address("255.255.255.255"):
+        raise argparse.ArgumentTypeError(f"{text} is not a host address")
+    return address
 
 
 def _directory(text: str) -> Path:
@@ -31,7 +45,7 @@ def parse_args(argv: list[str] | None = None) -> server.Config:
     parser = argparse.ArgumentParser(
         prog="pxe_prototype.py",
         description="Throwaway proxyDHCP and TFTP server for the deployarr PXE lab experiments.")
-    parser.add_argument("--server-ip", required=True, type=IPv4Address, metavar="ADDRESS",
+    parser.add_argument("--server-ip", required=True, type=_host_address, metavar="ADDRESS",
                         help="this host's address on the lab network: siaddr, option 54, and the TFTP address")
     parser.add_argument("--root", required=True, type=_directory, metavar="DIR", help="the TFTP root")
     parser.add_argument("--chain", required=True, choices=[chain.value for chain in policy.Chain],

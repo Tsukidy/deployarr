@@ -230,14 +230,16 @@ class PxeServer:
 
     def _send(self, sock: socket.socket, datagram: bytes, destination: tuple[str, int],
               ifindex: int | None = None) -> bool:
-        """Sends one datagram. With `ifindex` it leaves through that interface,
-        as dnsmasq sends its replies. A broadcast would otherwise follow the
+        """Sends one datagram. With `ifindex` it leaves through that interface
+        from the server address. A broadcast would otherwise follow the
         default route and miss the lab bridge."""
         try:
             if ifindex is None:
                 sock.sendto(datagram, destination)
             else:
-                pktinfo = _IN_PKTINFO.pack(ifindex, bytes(4), bytes(4))
+                # ipi_spec_dst is the source address. The kernel would pick
+                # the interface's first address, which may not be server_ip.
+                pktinfo = _IN_PKTINFO.pack(ifindex, self._config.server_ip.packed, bytes(4))
                 sock.sendmsg([datagram], [(socket.IPPROTO_IP, _IP_PKTINFO, pktinfo)], 0, destination)
         except OSError as error:
             self._log(events.SendFailed(_address(destination), str(error)))

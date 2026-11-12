@@ -513,6 +513,11 @@ class CommandLineTest(unittest.TestCase):
             "bad address": (["--server-ip", "lab-host"] + self.required[2:], "--server-ip"),
             "missing root": (self.required[:3] + [str(self.root / "none")] + self.required[4:], "is not a directory"),
             "bad port": (self.required + ["--dhcp-ports", "67,70000"], "'70000' is not a UDP port"),
+            "repeated port": (self.required + ["--dhcp-ports", "67,4011,67"], "port 67 is listed twice"),
+            "no address": (["--server-ip", "0.0.0.0"] + self.required[2:], "0.0.0.0 is not a host address"),
+            "broadcast address": (["--server-ip", "255.255.255.255"] + self.required[2:],
+                                  "255.255.255.255 is not a host address"),
+            "multicast address": (["--server-ip", "224.0.0.1"] + self.required[2:], "224.0.0.1 is not a host address"),
             "long BCD path": (self.required + ["--bcd-uefi", "a" * 128], "longer than 127 bytes"),
         }
         for name, (argv, message) in cases.items():
