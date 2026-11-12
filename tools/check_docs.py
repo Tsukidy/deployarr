@@ -24,7 +24,7 @@ BANNED = {
 }
 LINK = re.compile(r"\]\(\s*<?([^)\s>]+)>?(?:\s+\"[^\"]*\")?\s*\)")
 REFERENCE = re.compile(r"^ {0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)")
-HEADING = re.compile(r"^ {0,3}#{1,6}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
+HEADING = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
 FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 CODE_SPAN = re.compile(r"(`+).+?\1")
@@ -72,19 +72,24 @@ def read(path):
         return handle.read()
 
 
-def anchors(text):
+def headings(text):
+    """Yield (line number, level, anchor) for each heading outside code fences and comments.
+
+    A repeated anchor gets the suffix -1, -2, and so on, in document order.
+    """
     seen = Counter()
-    result = set()
     lines, _ = outside_fences(uncomment(text).splitlines())
-    for _, line in lines:
+    for number, line in lines:
         match = HEADING.match(line)
         if not match:
             continue
-        base = slug(match.group(1))
-        name = base if seen[base] == 0 else f"{base}-{seen[base]}"
+        base = slug(match.group(2))
+        yield number, len(match.group(1)), base if seen[base] == 0 else f"{base}-{seen[base]}"
         seen[base] += 1
-        result.add(name)
-    return result
+
+
+def anchors(text):
+    return {anchor for _, _, anchor in headings(text)}
 
 
 def targets(line):
