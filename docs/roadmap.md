@@ -1,6 +1,6 @@
 # Roadmap
 
-This page lists the build order for deployarr. Each milestone ends in a check that someone can run and watch pass. A milestone starts only when the one before it passes its check. For the design behind each item, see [Architecture](architecture.md).
+This page lists the build order for deployarr. Each milestone ends in a check that someone can run and watch pass. A milestone starts only when the one before it passes its check, except where a milestone says otherwise. For the design behind each item, see [Architecture](architecture.md).
 
 ## Test lab
 
@@ -13,6 +13,7 @@ From milestone 1 on, every check runs in a lab that `xtask lab` drives. The lab 
 - virtio disk and network devices test the driver path, because Windows 11 has no inbox drivers for them. They must come from the deployarr driver library and the WinPE driver set.
 - `-smbios type=2,serial=...` gives each VM a known baseboard serial for order lookup tests.
 - From milestone 3 on, each milestone also deploys at least one real PC of the kind you build.
+- From milestone 8 on, a Windows Server evaluation VM is the lab's domain controller, for the domain join check.
 
 ## Milestones
 
@@ -68,11 +69,14 @@ Scope:
 - Agent WinPE mode: `wpeinit`, `drvload`, network, the console screen, and fact gathering (SMBIOS, adapters, firmware, Secure Boot, TPM, memory, processor cores, disks, device IDs).
 - The readiness check, with Microsoft's Windows 11 minimums as defaults.
 - Disk layouts for UEFI and BIOS, image download and apply, `bcdboot`, WinRE, and the unattend file.
-- The offline service install, the handoff to the new OS, the finish action, and cleanup.
+- The offline service install, the handoff to the new OS, the finish action for both end states, and cleanup.
+- The product key prompt and the `ActivateWindows` step.
 
 Check:
-- A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record.
-- One real PC does the same.
+- A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record. The evaluation edition needs no product key, so their sequence has no `ActivateWindows` step.
+- One real PC does the same with the edition its sticker names, and its product key typed at the prompt. `slmgr /dli` on that PC shows the last five characters of that key.
+- On a VM, a key in the right format that Windows rejects fails the `ActivateWindows` step, and the deployment shows the error.
+- The UEFI VM runs once with each end state. With `ReadyToUse`, it boots to the sign-in screen with no OOBE. With `CustomerOobe`, it shuts down, shows OOBE on its next boot, and has no account that deployarr created. Neither leaves a cached answer file in `%WINDIR%\Panther`.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
 - On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. If base WinPE lacks `tbs.dll` or the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
 
@@ -88,16 +92,22 @@ Check:
 - A UEFI VM with no order gets no reply and boots from its disk. A BIOS VM with no order gets `abortpxe.com`.
 - A TFTP test suite covers option-less requests, window size clamping, a retransmitted request, an ACK in the middle of a window, and a missing file.
 - The time to transfer `boot.wim` is measured and recorded with the image size, the network speed, and each block and window size tried.
+- As many VMs as the lab host can run, and at least four, PXE-boot at the same time. Each one reaches WinPE. The time each takes to load `boot.wim` is recorded next to the time for one VM alone, to show how load time grows with the number of PCs.
 
 ### M5. Order lookup
 
+Order lookup is high priority. M5 starts as soon as M3 passes its check and runs alongside M4, because it needs the WinPE agent from M3 but not PXE. M6 starts when both M4 and M5 pass.
+
+Order lookup is optional for a deployarr installation. A server with no data source still deploys from pre-staged records and the manual list.
+
 Scope:
-- Data sources for SQL Server (`tiberius`), PostgreSQL, and MySQL (`sqlx`).
+- Data sources for SQL Server (`tiberius`), PostgreSQL, and MySQL (`sqlx`). All of them are optional.
 - Named queries with bound parameters, the OS-code map, and the lookup chain:
   1. pre-staged record
   2. order by baseboard serial
   3. order number prompt
   4. manual list
+- A chain an admin can reorder or trim, checked when it is saved, and a no-match screen for a PC that no resolver matches.
 - Placeholder filtering for SMBIOS values.
 - The variable trace in the UI and the lookup test box.
 
@@ -105,6 +115,8 @@ Check:
 - Integration tests pass against SQL Server, PostgreSQL, and MySQL containers.
 - A VM whose baseboard serial is in the test order table deploys the order's OS with no input.
 - A VM with an unknown serial stops at the order number prompt, deploys after the number is typed, and does not touch its disk before that.
+- With no data source configured, a VM with no pre-staged record shows the manual list and deploys the task sequence picked there. The server opens no connection to an order database.
+- With a chain of only the pre-staged record, an unknown VM stops at the no-match screen, and its disk is untouched.
 
 ### M6. Drivers
 
@@ -137,15 +149,18 @@ Scope:
 - The tree editor, the step palette, a typed form for each action, and the condition builder.
 - Version history with a diff view, and templates.
 - The monitoring dashboard.
+- Join profiles for a workgroup, a domain, Entra ID bulk enrollment, and Autopilot registration.
 
 Check:
 - Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
+- A lab VM joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
+- A human checks Entra ID join and Autopilot registration against a test tenant, because the lab has no tenant.
 
 ### M9. Hardening and release
 
 Scope:
-- Admin login, per-PC local admin passwords, secrets encryption, and the audit log.
+- Admin login with local accounts, per-PC local admin passwords, secrets encryption, and the audit log.
 - Backup and restore.
 - A Windows installer, a Linux package, a container image, and how-to guides.
 
@@ -156,27 +171,16 @@ Check:
 
 None of these are scheduled yet:
 
-- domain join, Entra ID join, and Autopilot hash upload
 - a Windows Update step
 - BitLocker
 - an auto-logon session for installers that fail as LocalSystem
 - iPXE and wimboot over HTTP for BIOS or Secure Boot off
 - multicast
+- PXE across routed subnets through DHCP relays, after a lab VM boots through a relay
 - IPv6 PXE, with DHCPv6 option 59 and the Microsoft vendor options that ConfigMgr sends
 - ARM64
 - Linux deployment
 - vendor driver catalogs from Dell, HP, and Lenovo
 - an importer for MDT task sequences (`ts.xml`) that applies the conversions listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#what-changes-in-deployarr)
 - a PowerShell module with MDT's `TSEnv:` and `TSEnvList:` drives, for porting MDT scripts
-- writing deployment status back to the order database
-
-## Open questions
-
-These do not block M0 to M2. Each one needs an answer before the milestone named in it.
-
-1. What state should a finished PC be in? One option is ready to use, with OOBE skipped and a local admin account. The other is ready for the customer. The PC deploys in audit mode and then runs `sysprep /oobe /shutdown`, so the customer sees OOBE on first boot. Needed before M3, because it changes the unattend templates and the finish action.
-2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8.
-3. How are PCs activated? Options are a firmware key, KMS or MAK, or OEM key injection. Needed before M3.
-4. How many PCs deploy at once, and across how many subnets? Needed before M4, to size TFTP and decide between proxyDHCP and DHCP options.
-5. Should finished deployments write status back to the order database? Needed before M5, if yes.
-6. How do admins sign in: local accounts, Active Directory, or OIDC? Needed before M9.
+- a desktop program for the server, built with Tauri, that shows the web UI in its own window
