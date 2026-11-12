@@ -1,6 +1,6 @@
 # Roadmap
 
-This page lists the build order for deployarr. Each milestone ends in a check that someone can run and watch pass. A milestone starts only when the one before it passes its check. For the design behind each item, see [Architecture](architecture.md).
+This page lists the build order for deployarr. Each milestone ends in a check that someone can run and watch pass. A milestone starts only when the one before it passes its check, except where a milestone says otherwise. For the design behind each item, see [Architecture](architecture.md).
 
 ## Test lab
 
@@ -96,13 +96,18 @@ Check:
 
 ### M5. Order lookup
 
+Order lookup is high priority. M5 starts as soon as M3 passes its check and runs alongside M4, because it needs the WinPE agent from M3 but not PXE. M6 starts when both M4 and M5 pass.
+
+Order lookup is optional for a deployarr installation. A server with no data source still deploys from pre-staged records and the manual list.
+
 Scope:
-- Data sources for SQL Server (`tiberius`), PostgreSQL, and MySQL (`sqlx`).
+- Data sources for SQL Server (`tiberius`), PostgreSQL, and MySQL (`sqlx`). All of them are optional.
 - Named queries with bound parameters, the OS-code map, and the lookup chain:
   1. pre-staged record
   2. order by baseboard serial
   3. order number prompt
   4. manual list
+- A chain an admin can reorder or trim, checked when it is saved, and a no-match screen for a PC that no resolver matches.
 - Placeholder filtering for SMBIOS values.
 - The variable trace in the UI and the lookup test box.
 
@@ -110,6 +115,8 @@ Check:
 - Integration tests pass against SQL Server, PostgreSQL, and MySQL containers.
 - A VM whose baseboard serial is in the test order table deploys the order's OS with no input.
 - A VM with an unknown serial stops at the order number prompt, deploys after the number is typed, and does not touch its disk before that.
+- With no data source configured, a VM with no pre-staged record shows the manual list and deploys the task sequence picked there. The server opens no connection to an order database.
+- With a chain of only the pre-staged record, an unknown VM stops at the no-match screen, and its disk is untouched.
 
 ### M6. Drivers
 
