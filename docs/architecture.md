@@ -14,6 +14,7 @@ These come from the product owner and drive every decision below.
 - Task sequences that work like MDT's: ordered groups and steps, conditions, variables, scripts, commands, and reboots.
 - Every device has a working driver when the deployment finishes.
 - Configurable applications, with a simple UI to manage drivers and software.
+- Admins configure and run deployarr through a web UI. After the first release, a desktop program on the server shows the same UI in its own window.
 - Install from an ISO or a WIM.
 - A WinPE-based preinstall environment.
 - PXE boot for UEFI with Secure Boot on and for legacy BIOS.
@@ -475,11 +476,15 @@ If the signed chain fails, the fallbacks are UEFI HTTP boot, or the boot ISO thr
 - The agent queues events and sends them in the background with retries, plus a heartbeat on a timer. A slow or unreachable server never delays a step. MDT sends each event as a blocking call with a 60-second timeout, and its PowerShell steps send no events at all.
 - Installation creates a private CA and a server certificate. Each boot image carries the CA certificate.
 - Secrets are encrypted at rest with a server key. This covers data source passwords and per-PC local admin passwords. Each deployed PC gets its own random local admin password, which an admin can read in the UI. MDT uses one shared password.
-- Admin accounts are local at first, with argon2id password hashes. LDAP or OIDC can come later.
+- Staff sign in to the admin web UI with local deployarr accounts. The server stores each password as an argon2id hash. The first release has no other sign-in. Active Directory and OIDC sign-in can come later.
 
 ## Web UI
 
-The UI is written in Leptos and compiled to WebAssembly, so it uses the same `deployarr-core` types as the server. The editor validates a task sequence with the same code the server runs when you save. The screens are these:
+The UI is written in Leptos and compiled to WebAssembly, so it uses the same `deployarr-core` types as the server. The editor validates a task sequence with the same code the server runs when you save.
+
+The web UI is the only admin interface in the first release. After it, a desktop program built with Tauri shows the same UI in its own window on the server. Tauri draws the window with the operating system's web view, so the program bundles no browser and stays in the Rust workspace.
+
+The screens are these:
 
 - Deployments: live progress, step timeline, logs, variable trace, and missing drivers.
 - Task sequences: a tree editor with a step palette, a typed form for each action, a condition builder, version history, and templates.
@@ -522,5 +527,6 @@ These are planned for later and kept out of the first release on purpose:
 - ARM64
 - Linux deployment
 - vendor driver catalogs
+- a desktop program for the server
 
 The [Roadmap](roadmap.md) lists them.

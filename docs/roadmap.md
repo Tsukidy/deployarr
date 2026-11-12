@@ -146,7 +146,7 @@ Check:
 ### M9. Hardening and release
 
 Scope:
-- Admin login, per-PC local admin passwords, secrets encryption, and the audit log.
+- Admin login with local accounts, per-PC local admin passwords, secrets encryption, and the audit log.
 - Backup and restore.
 - A Windows installer, a Linux package, a container image, and how-to guides.
 
@@ -170,6 +170,7 @@ None of these are scheduled yet:
 - vendor driver catalogs from Dell, HP, and Lenovo
 - an importer for MDT task sequences (`ts.xml`) that applies the conversions listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#what-changes-in-deployarr)
 - a PowerShell module with MDT's `TSEnv:` and `TSEnvList:` drives, for porting MDT scripts
+- a desktop program for the server, built with Tauri, that shows the web UI in its own window
 
 ## Open questions
 
@@ -178,4 +179,3 @@ These do not block M0 to M2. Each one needs an answer before the milestone named
 1. What state should a finished PC be in? One option is ready to use, with OOBE skipped and a local admin account. The other is ready for the customer. The PC deploys in audit mode and then runs `sysprep /oobe /shutdown`, so the customer sees OOBE on first boot. Needed before M3, because it changes the unattend templates and the finish action.
 2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8.
 3. How are PCs activated? Options are a firmware key, KMS or MAK, or OEM key injection. Needed before M3.
-6. How do admins sign in: local accounts, Active Directory, or OIDC? Needed before M9.
