@@ -23,40 +23,133 @@ jobs:
       - name: Create the stores with no loader path
         shell: pwsh
         run: ./tools/bcd/New-BcdStores.ps1 -OutputDir out/no-path -NoLoaderPath
-      - name: Create the stores with TFTP block and window sizes
+      - name: Create the stores with the largest TFTP block and window sizes
         shell: pwsh
-        run: ./tools/bcd/New-BcdStores.ps1 -OutputDir out/tftp -RamdiskTftpBlockSize 8192 -RamdiskTftpWindowSize 8
-      - name: Create the default stores again
-        shell: pwsh
-        run: ./tools/bcd/New-BcdStores.ps1 -OutputDir out/rerun
+        run: ./tools/bcd/New-BcdStores.ps1 -OutputDir out/tftp -RamdiskTftpBlockSize 32768 -RamdiskTftpWindowSize 32
       - name: Print every store
         shell: pwsh
         run: |
-          foreach ($dir in 'default', 'no-path', 'tftp', 'rerun') {
+          New-Item -ItemType Directory -Force -Path evidence | Out-Null
+          foreach ($dir in 'default', 'no-path', 'tftp') {
             foreach ($name in 'uefi', 'bios') {
-              $store = "out/$dir/BCD-$name"
-              Write-Host "::group::bcdedit /enum all /store $store"
-              bcdedit /enum all /store $store | Tee-Object -FilePath "$store.txt"
+              $store = "out/$dir/$name.bcd"
+              Write-Host "::group::bcdedit /enum all /v /store $store"
+              bcdedit /enum all /v /store $store | Tee-Object -FilePath "evidence/$dir-$name.txt"
               if ($LASTEXITCODE -ne 0) { throw "bcdedit /enum failed for $store" }
               Write-Host '::endgroup::'
             }
           }
-      - name: Check the variants and the rerun
+      - name: Create the default stores again in the same folder
         shell: pwsh
         run: |
+          Set-Content -Path out/default/uefi.bcd.keep -Value 'not a store file'
+          ./tools/bcd/New-BcdStores.ps1 -OutputDir out/default
+          if (-not (Test-Path out/default/uefi.bcd.keep)) { throw 'the rerun deleted a file that is not a store file' }
           foreach ($name in 'uefi', 'bios') {
-            $default = Get-Content "out/default/BCD-$name.txt" -Raw
-            $noPath = Get-Content "out/no-path/BCD-$name.txt" -Raw
-            $tftp = Get-Content "out/tftp/BCD-$name.txt" -Raw
-            if ($default -notmatch '(?m)^path\s+\\windows\\system32\\boot\\winload\.') { throw "$name default has no loader path" }
-            if ($default -match 'ramdisktftp') { throw "$name default sets a TFTP value" }
-            if ($noPath -match '(?m)^path\s') { throw "$name no-path store has a loader path" }
-            if ($tftp -notmatch '(?m)^ramdisktftpblocksize\s+8192') { throw "$name tftp store lacks the block size" }
-            if ($tftp -notmatch '(?m)^ramdisktftpwindowsize\s+8') { throw "$name tftp store lacks the window size" }
-            if ((Get-Content "out/rerun/BCD-$name.txt" -Raw) -ne $default) { throw "$name rerun differs" }
+            $store = "out/default/$name.bcd"
+            Write-Host "::group::bcdedit /enum all /v /store $store (again)"
+            bcdedit /enum all /v /store $store | Tee-Object -FilePath "evidence/default-again-$name.txt"
+            if ($LASTEXITCODE -ne 0) { throw "bcdedit /enum failed for $store" }
+            Write-Host '::endgroup::'
           }
-      - uses: actions/upload-artifact@v4
+      - name: Check every element and the rerun
+        shell: pwsh
+        run: |
+          # Expected values come from docs/architecture.md#bcd, not from the script.
+          $bootmgrGuid = '{9dea862c-5cdd-4e70-acc1-f32b344d4795}'
+          $ramdiskGuid = '{7619dcc8-fafe-11d9-b411-000476eba25f}'
+          $ramdiskDevice = 'ramdisk=\[boot\]\\boot\\x64\\boot\.wim,(\{ramdiskoptions\}|' + [regex]::Escape($ramdiskGuid) + ')'
+          $variants = @{
+            uefi = @{ Loader = '{7b0e1d6a-5c11-4f3e-9a52-2d3f6a8c0e01}'; Winload = 'winload.efi' }
+            bios = @{ Loader = '{7b0e1d6a-5c11-4f3e-9a52-2d3f6a8c0e02}'; Winload = 'winload.exe' }
+          }
+
+          function Read-Sections([string]$File) {
+            $sections = @{}
+            $header = ''
+            $current = $null
+            foreach ($line in Get-Content $File) {
+              if ($line -match '^-{3,}\s*$') {
+                $current = @{}
+                $sections[$header] = $current
+              } elseif ($current -ne $null -and $line -match '^(\S+)\s{2,}(.+?)\s*$') {
+                $current[$Matches[1].ToLower()] = $Matches[2]
+              }
+              if ($line.Trim() -ne '') { $header = $line.Trim() }
+            }
+            $sections
+          }
+
+          function Assert-Elements([string]$Label, [hashtable]$Sections, [string]$Header, [hashtable]$Expected, [string[]]$Absent) {
+            if (-not $Sections.ContainsKey($Header)) { throw "$Label has no '$Header' section" }
+            $section = $Sections[$Header]
+            foreach ($key in $Expected.Keys) {
+              if (-not $section.ContainsKey($key)) { throw "$Label '$Header' is missing $key" }
+              if ($section[$key] -notmatch "^(?:$($Expected[$key]))$") {
+                throw "$Label '$Header' has $key = '$($section[$key])', expected /$($Expected[$key])/"
+              }
+            }
+            foreach ($key in $Absent) {
+              if ($section.ContainsKey($key)) { throw "$Label '$Header' has $key, which must be absent" }
+            }
+          }
+
+          function Assert-Store([string]$Label, [string]$File, [string]$Name, [bool]$LoaderPath, [string]$Block, [string]$Window) {
+            $variant = $variants[$Name]
+            $loader = [regex]::Escape($variant.Loader)
+            $sections = Read-Sections $File
+
+            Assert-Elements $Label $sections 'Windows Boot Manager' @{
+              identifier   = [regex]::Escape($bootmgrGuid)
+              description  = 'deployarr boot manager'
+              timeout      = '30'
+              fontpath     = '\\boot\\fonts'
+              displayorder = $loader
+              default      = $loader
+            } @()
+
+            $ramdisk = @{
+              description      = 'deployarr ramdisk options'
+              ramdisksdidevice = 'boot'
+              ramdisksdipath   = '\\boot\\boot\.sdi'
+            }
+            $absent = @()
+            if ($Block) { $ramdisk.ramdisktftpblocksize = $Block } else { $absent += 'ramdisktftpblocksize' }
+            if ($Window) { $ramdisk.ramdisktftpwindowsize = $Window } else { $absent += 'ramdisktftpwindowsize' }
+            Assert-Elements $Label $sections 'Setup Ramdisk Options' $ramdisk $absent
+
+            $loaderElements = @{
+              identifier  = $loader
+              description = 'deployarr WinPE'
+              device      = $ramdiskDevice
+              osdevice    = $ramdiskDevice
+              systemroot  = '\\windows'
+              detecthal   = 'Yes'
+              winpe       = 'Yes'
+            }
+            $loaderAbsent = @()
+            if ($LoaderPath) {
+              $loaderElements.path = '\\windows\\system32\\boot\\' + [regex]::Escape($variant.Winload)
+            } else {
+              $loaderAbsent += 'path'
+            }
+            Assert-Elements $Label $sections 'Windows Boot Loader' $loaderElements $loaderAbsent
+          }
+
+          foreach ($name in 'uefi', 'bios') {
+            Assert-Store "$name default" "evidence/default-$name.txt" $name $true '' ''
+            Assert-Store "$name no-path" "evidence/no-path-$name.txt" $name $false '' ''
+            Assert-Store "$name tftp" "evidence/tftp-$name.txt" $name $true '32768' '32'
+            Assert-Store "$name default again" "evidence/default-again-$name.txt" $name $true '' ''
+            $before = Get-Content "evidence/default-$name.txt" -Raw
+            $after = Get-Content "evidence/default-again-$name.txt" -Raw
+            if ($after -ne $before) { throw "$name rerun in the same folder differs from the first run" }
+            Write-Host "$name stores pass, and the rerun in the same folder matches"
+          }
+      - uses: actions/upload-artifact@v7
         with:
           name: bcd-stores
-          path: out/
+          path: |
+            out/
+            evidence/
           if-no-files-found: error

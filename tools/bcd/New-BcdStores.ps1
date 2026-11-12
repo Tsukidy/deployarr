@@ -3,10 +3,12 @@
 Creates the fixed UEFI and BIOS BCD stores that deployarr serves over TFTP.
 
 .DESCRIPTION
-Runs only on Windows, because bcdedit does. Writes BCD-uefi and BCD-bios to
-OutputDir. The script deletes any store it wrote earlier, so a rerun gives the
-same stores. Every GUID is fixed. Any bcdedit failure stops the script.
-See docs/architecture.md#bcd for the elements and the reason for each.
+Runs only on Windows, because bcdedit does. Writes uefi.bcd and bios.bcd to
+OutputDir. Before it creates a store, it deletes the files bcdedit writes for
+that store: the store itself and its .LOG, .LOG1, and .LOG2 files. It leaves
+every other file in OutputDir alone. The GUIDs are fixed, so a rerun gives the
+same stores. See docs/architecture.md#bcd for the elements and the reason for
+each.
 
 .PARAMETER OutputDir
 Folder for the two stores. The script creates it.
@@ -15,10 +17,12 @@ Folder for the two stores. The script creates it.
 Leaves the loader's path element out, as ConfigMgr's store does.
 
 .PARAMETER RamdiskTftpBlockSize
-Sets ramdisktftpblocksize. Omitted when not given.
+Sets ramdisktftpblocksize, from 512 to 32768. The limits match the server's
+TFTP limits in docs/architecture.md#tftp. The element is omitted when not given.
 
 .PARAMETER RamdiskTftpWindowSize
-Sets ramdisktftpwindowsize. Omitted when not given.
+Sets ramdisktftpwindowsize, from 1 to 32. The limits match the server's TFTP
+limits in docs/architecture.md#tftp. The element is omitted when not given.
 #>
 [CmdletBinding()]
 param(
@@ -27,10 +31,10 @@ param(
 
     [switch]$NoLoaderPath,
 
-    [ValidateRange(512, 16384)]
+    [ValidateRange(512, 32768)]
     [int]$RamdiskTftpBlockSize,
 
-    [ValidateRange(1, 64)]
+    [ValidateRange(1, 32)]
     [int]$RamdiskTftpWindowSize
 )
 
@@ -56,11 +60,11 @@ function Invoke-Bcdedit {
 function New-BcdStore {
     param([hashtable]$Variant)
 
-    $store = Join-Path $OutputDir "BCD-$($Variant.Name)"
+    $store = Join-Path $OutputDir "$($Variant.Name).bcd"
     $loader = $Variant.LoaderId
 
-    foreach ($file in @($store) + (Get-ChildItem -Path "$store.*" -Force -ErrorAction SilentlyContinue)) {
-        Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
+    foreach ($suffix in '', '.LOG', '.LOG1', '.LOG2') {
+        Remove-Item -LiteralPath "$store$suffix" -Force -ErrorAction SilentlyContinue
     }
 
     Invoke-Bcdedit '/createstore', $store
