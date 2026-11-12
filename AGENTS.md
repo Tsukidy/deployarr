@@ -181,13 +181,20 @@ For a later release, pass the new link and SHA-256 as the second and third argum
 
 ### WinPE
 
-`tools/re/winpe/reproduce.sh` downloads the WinPE add-on setup program and checks its SHA-256. It reads the setup program's manifest, downloads only the MSI and the CAB that hold the x64 `winpe.wim`, and checks each one's SHA-1. It then writes the module and API set list, a table of every API set, and a summary. It needs `7z`, `msiinfo` from msitools, and Python 3.10 or later with no extra packages:
+`tools/re/winpe/reproduce.sh` downloads the WinPE add-on setup program and checks its SHA-256. It reads the setup program's manifest and downloads one MSI. The MSI's tables name the CAB that holds the x64 `winpe.wim`, and the script downloads that CAB. It checks the SHA-1 of the MSI and the CAB against the manifest. It needs `curl`, `7z`, `msiinfo` from msitools, `sha1sum`, `sha256sum`, and Python 3.10 or later with no extra packages:
 
 ```bash
 bash tools/re/winpe/reproduce.sh "$SCRATCH/winpe"
 ```
 
-Copy `out/winpe-x64-dlls.txt` to `docs/research/winpe-<version>-x64-dlls.txt`. For a later add-on, pass the new link and SHA-256 as the second and third arguments, and use a new work folder.
+It writes four files to `"$SCRATCH/winpe/out"`:
+
+- `winpe-x64-dlls.txt`, the module and API set list
+- `system32-dlls.txt`, the modules in the case the image stores them
+- `apisets.tsv`, every API set and whether it resolves
+- `summary.txt`, the versions, sizes, hashes, and counts
+
+Copy `"$SCRATCH/winpe/out/winpe-x64-dlls.txt"` to `docs/research/winpe-<version>-x64-dlls.txt`. For a later add-on, pass the new link and SHA-256 as the second and third arguments. Then write a new research page for it, and point the import check at the new list.
 
 ### Pitfalls
 
