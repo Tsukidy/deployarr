@@ -23,7 +23,7 @@ The repository holds the design documents and the Cargo workspace for M0. There 
 | `tools/re/configmgr-osd/` | Scripts that rebuild the ConfigMgr research from the installer |
 | `docs/research/winpe-10.1.26100.9457.md` | Which DLLs and API sets base WinPE x64 provides, with the list the agent's import check reads |
 | `tools/re/winpe/` | The script that rebuilds the WinPE list from the ADK's WinPE add-on |
-| `docs/research/` add-on pages | How other products build add-on systems: Mattermost, Grafana, Zed, go-plugin, Jellyfin, Nextcloud, Spin, TUF and minisign, and MDT 8450's ConfigMgr integration. `wasmtime-50.0.1.md` records the WebAssembly prototype in `tools/addon-wasm-prototype/`. Each page ends with the design changes it suggests. |
+| `docs/research/` add-on pages | How other products build add-on systems: Mattermost, Grafana, Zed, go-plugin, Jellyfin, Nextcloud, Spin, TUF and minisign, and MDT 8450's ConfigMgr integration. `wasmtime-50.0.1.md` records the WebAssembly prototype in `tools/addon-wasm-prototype/`. `addon-design-attacks-wasmtime-50.0.1.md` records the adversarial runs against the add-on design, with their probes in `tools/addon-design-attacks/`. Each page ends with the design changes it suggests. |
 | `docs/lab-setup.md`, `tools/lab/` | How to build the PXE lab, and the scripts that run its network and VMs and check it |
 | `docs/agents/` | The issue workflow: the tracker operations, the triage labels, and the agent brief and ticket layouts |
 | `.out-of-scope/` | One page per rejected enhancement, with the reason. Its README gives the format. |
