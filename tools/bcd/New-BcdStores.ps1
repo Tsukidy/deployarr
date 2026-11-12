@@ -88,7 +88,6 @@ function New-BcdStore {
     Invoke-Bcdedit '/store', $store, '/set', $loader, 'device', $ramdiskDevice
     Invoke-Bcdedit '/store', $store, '/set', $loader, 'osdevice', $ramdiskDevice
     Invoke-Bcdedit '/store', $store, '/set', $loader, 'systemroot', '\windows'
-    Invoke-Bcdedit '/store', $store, '/set', $loader, 'detecthal', 'yes'
     Invoke-Bcdedit '/store', $store, '/set', $loader, 'winpe', 'yes'
     if (-not $NoLoaderPath) {
         Invoke-Bcdedit '/store', $store, '/set', $loader, 'path', "\windows\system32\boot\$($Variant.Winload)"
