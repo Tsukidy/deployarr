@@ -1,6 +1,7 @@
-"""Tests for the DHCP replies. Run with: python3 -m unittest"""
+import ast
 import unittest
 from ipaddress import IPv4Address
+from pathlib import Path
 
 import dhcp
 import policy
@@ -16,7 +17,6 @@ SECOND_REQUEST_250 = bytes.fromhex("01020009" "0b0102")
 
 UEFI_MANAGER = (rb"boot\x64\bootmgfw.efi", 252, rb"boot\uefi.bcd")
 BIOS_MANAGER = (rb"boot\x64\pxeboot.n12", 252, rb"boot\bios.bcd")
-# (chain, option 93, the REQUEST's option 250) to (file, option code, option value)
 EXPECTED_ACKS = {
     ("single", 0, None): BIOS_MANAGER,
     ("single", 7, None): UEFI_MANAGER,
@@ -225,10 +225,10 @@ class LayoutTest(unittest.TestCase):
                 policy.Policy(IPv4Address(SERVER), Chain.SINGLE, layout), 4011).packet
             self.assertEqual(reference.decode_dhcp_reply(dhcp.encode(packet)).option(252), bcd)
 
-    def test_path_that_does_not_fit_the_file_field_is_refused(self):
-        policy.Layout(bcd_uefi="a" * 127)
-        with self.assertRaisesRegex(ValueError, "longer than 127 bytes"):
-            policy.Layout(bcd_uefi="a" * 128)
+    def test_path_that_does_not_fit_an_option_is_refused(self):
+        policy.Layout(bcd_uefi="a" * 255)
+        with self.assertRaisesRegex(ValueError, "longer than 255 bytes"):
+            policy.Layout(bcd_bios="a" * 256)
 
     def test_path_that_is_not_ascii_is_refused(self):
         with self.assertRaisesRegex(ValueError, "not ASCII"):
@@ -265,19 +265,33 @@ class ParseTest(unittest.TestCase):
 
 class Option250Test(unittest.TestCase):
     def test_decode(self):
-        self.assertEqual(wds250.decode(SECOND_REQUEST_250), ((1, b"\x00\x09"), (11, b"\x02")))
+        self.assertEqual(wds250.decode(SECOND_REQUEST_250), (((1, b"\x00\x09"), (11, b"\x02")), b""))
 
     def test_decode_keeps_bytes_that_do_not_parse(self):
         self.assertEqual(wds250.decode(b"\x01\x02\x00\x09\x0b\x04\x02"),
-                         ((1, b"\x00\x09"), (-1, b"\x0b\x04\x02")))
-        self.assertEqual(wds250.decode(b"\x01\x02\x00\x09\x0b"), ((1, b"\x00\x09"), (-1, b"\x0b")))
-        self.assertEqual(wds250.decode(b""), ())
+                         (((1, b"\x00\x09"),), b"\x0b\x04\x02"))
+        self.assertEqual(wds250.decode(b"\x01\x02\x00\x09\x0b"), (((1, b"\x00\x09"),), b"\x0b"))
+        self.assertEqual(wds250.decode(b""), ((), b""))
 
     def test_describe_a_second_request(self):
         self.assertEqual(wds250.describe(SECOND_REQUEST_250), "architecture(1)=0009,pxe_prompt(11)=02")
 
     def test_describe_unknown_and_unparsed_bytes(self):
         self.assertEqual(wds250.describe(b"\x07\x01\xaa\x0b\x04\x02"), "unknown(7)=aa,unparsed=0b0402")
+
+
+
+class ReferenceTest(unittest.TestCase):
+    def test_reference_imports_nothing_from_the_tool(self):
+        folder = Path(reference.__file__).parent
+        tool = {path.stem for path in folder.glob("*.py") if not path.stem.startswith("test_")} - {"reference"}
+        tree = ast.parse((folder / "reference.py").read_text())
+        imported = {alias.name.split(".")[0] for node in ast.walk(tree) if isinstance(node, ast.Import)
+                    for alias in node.names}
+        imported |= {node.module.split(".")[0] for node in ast.walk(tree)
+                     if isinstance(node, ast.ImportFrom) and node.module}
+        self.assertIn("dhcp", tool)
+        self.assertEqual(imported & tool, set())
 
 
 if __name__ == "__main__":

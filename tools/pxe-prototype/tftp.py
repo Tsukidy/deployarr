@@ -1,9 +1,4 @@
-"""TFTP read server protocol (RFC 1350, 2347, 2348, 2349, 7440).
-
-`Transfer` is a state machine with no socket, clock, or thread. The server
-feeds it ACKs and the time, and sends what it returns. The tests drive it
-the same way, so window and retry behavior is tested without waiting.
-"""
+"""TFTP read server protocol (RFC 1350, 2347, 2348, 2349, 7440)."""
 import os
 import struct
 from dataclasses import dataclass
@@ -32,8 +27,6 @@ class Opcode(IntEnum):
 
 
 class TftpError(Exception):
-    """A refusal that goes to the client as an ERROR packet."""
-
     def __init__(self, code: int, message: str):
         super().__init__(message)
         self.code = code
@@ -42,7 +35,6 @@ class TftpError(Exception):
 
 @dataclass(frozen=True)
 class Request:
-    """An RRQ or a WRQ. `options` keeps the client's spelling and order."""
     opcode: Opcode
     filename: str
     mode: str
@@ -61,8 +53,6 @@ class ClientError:
 
 
 def parse(datagram: bytes) -> Request | Ack | ClientError:
-    """A datagram from a client. Raises `TftpError` 4 for anything a client
-    of a read-only server should not send or that does not parse."""
     if len(datagram) < 4:
         raise TftpError(4, "Malformed packet")
     opcode = int.from_bytes(datagram[:2], "big")
@@ -103,8 +93,6 @@ class Limits:
 
 @dataclass(frozen=True)
 class Negotiated:
-    """The terms of one transfer. `oack` is empty when the request held no
-    option the server knows, and then no OACK is sent."""
     blksize: int = DEFAULT_BLKSIZE
     windowsize: int = 1
     oack: tuple[tuple[str, str], ...] = ()
@@ -122,9 +110,6 @@ def _number(name: str, value: str, minimum: int) -> int:
 
 
 def negotiate(options: tuple[tuple[str, str], ...], file_size: int, limits: Limits) -> Negotiated:
-    """The terms for a request's options. Values are clamped before the OACK
-    is built, so the OACK states what the server does. Raises `TftpError` 8
-    for a `blksize` or `windowsize` that no server could honor."""
     blksize = DEFAULT_BLKSIZE
     windowsize = 1
     oack: dict[str, tuple[str, str]] = {}
@@ -146,13 +131,9 @@ def negotiate(options: tuple[tuple[str, str], ...], file_size: int, limits: Limi
 
 
 def resolve(root: Path, filename: str) -> Path:
-    """A client's file name to a regular file under `root`.
-
-    Each component is matched against the directory listing, exact spelling
+    """Each component is matched against the directory listing, exact spelling
     first and then ignoring case, because the lab's root is on a
-    case-sensitive file system and Windows boot programs do not keep case.
-    Raises `TftpError` 2 for `..`, `:`, or NUL, and `TftpError` 1 for a
-    name that is not a file."""
+    case-sensitive file system and Windows boot programs do not keep case."""
     name = filename.replace("/", "\\")
     parts = [part for part in name.split("\\") if part]
     if "\x00" in name or ":" in name or ".." in parts:
@@ -189,23 +170,11 @@ class Outcome(Enum):
 
 
 class Transfer:
-    """One file going to one client.
-
-    Blocks are numbered from 1 without a limit. `acked` is the highest block
-    the client confirmed, and `sent_upto` the highest block sent. The window
-    is `acked + 1` to `acked + windowsize`. The last block is short, and it
-    is empty when the size is a multiple of the block size.
-
-    A repeated ACK for `acked` resends the window only while `acked` is
-    past every block that was sent twice. The timer covers the other cases.
-
-    Every method that sends returns the datagrams to send and sets
-    `deadline`, the time after which `on_timeout` resends.
-    """
+    """The last block is short, and it is empty when the size is a multiple
+    of the block size."""
 
     def __init__(self, read_block: Callable[[int], bytes], file_size: int,
                  negotiated: Negotiated, limits: Limits, now: float):
-        """`read_block(i)` returns block `i`, counted from 1."""
         self._read_block = read_block
         self._negotiated = negotiated
         self._limits = limits
@@ -231,15 +200,13 @@ class Transfer:
         return min(self.acked * self._negotiated.blksize, self.file_size)
 
     def start(self, now: float) -> list[bytes]:
-        """The OACK, or the first window when there is no OACK."""
         if self.phase is Phase.AWAIT_OACK_ACK:
             return self._oack(now)
         return self._window(now)
 
-    def on_ack(self, block: int, now: float) -> list[bytes]:
-        """`block` is the 16-bit number from the wire."""
+    def on_ack(self, wire_block: int, now: float) -> list[bytes]:
         if self.phase is Phase.AWAIT_OACK_ACK:
-            if block != 0:
+            if wire_block != 0:
                 return []
             self.phase = Phase.SENDING
             self.tries_left = self._limits.retries
@@ -247,7 +214,7 @@ class Transfer:
         if self.phase is not Phase.SENDING:
             return []
         index = next((i for i in range(self.acked, self.sent_upto + 1)
-                      if self._wire_number(i) == block), None)
+                      if self._wire_number(i) == wire_block), None)
         if index is None:
             return []
         if index == self.acked:
@@ -267,8 +234,6 @@ class Transfer:
         return self._window(now)
 
     def on_timeout(self, now: float) -> list[bytes]:
-        """Resends once `deadline` has passed. Fails the transfer when the
-        client stayed silent through every resend."""
         if not self.active or now < self.deadline:
             return []
         if self.tries_left == 0:
@@ -281,18 +246,15 @@ class Transfer:
         return self._window(now)
 
     def on_error(self, code: int, message: str) -> None:
-        """The client sent ERROR."""
         if self.active:
             self.client_error = ClientError(code, message)
             self._finish(Phase.FAILED, Outcome.CLIENT_ERROR)
 
     def stop(self) -> None:
-        """The server is shutting down."""
         if self.active:
             self._finish(Phase.FAILED, Outcome.STOPPED)
 
     def abort(self) -> None:
-        """The server failed while it served this transfer."""
         if self.active:
             self._finish(Phase.FAILED, Outcome.ERROR)
 

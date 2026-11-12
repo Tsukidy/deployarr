@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 from dhcp import DhcpPacket
 
-# Inferred from WDS header names. Used only to label log fields.
 SUBOPTION_NAMES = {
     1: "architecture",
     2: "next_action",
@@ -22,7 +21,6 @@ SUBOPTION_NAMES = {
     6: "message",
     11: "pxe_prompt",
 }
-UNPARSED = -1
 
 
 @dataclass(frozen=True)
@@ -49,7 +47,6 @@ ZERO_TOUCH_UEFI: Recipe = ((11, b"\x02"),)
 
 
 def render(recipe: Recipe, request: DhcpPacket) -> bytes:
-    """A recipe to the option 250 value for a reply to `request`."""
     out = bytearray()
     for code, value in recipe:
         if isinstance(value, ClientOption):
@@ -59,27 +56,19 @@ def render(recipe: Recipe, request: DhcpPacket) -> bytes:
     return bytes(out)
 
 
-def decode(payload: bytes) -> tuple[tuple[int, bytes], ...]:
-    """An option 250 value to `(code, value)` pairs. Never raises. Bytes that
-    do not parse come back as a last pair with code `UNPARSED`."""
+def decode(payload: bytes) -> tuple[tuple[tuple[int, bytes], ...], bytes]:
     pairs = []
     at = 0
-    while at < len(payload):
-        end = at + 2 + payload[at + 1] if at + 1 < len(payload) else len(payload) + 1
-        if end > len(payload):
-            pairs.append((UNPARSED, payload[at:]))
-            break
+    while at + 1 < len(payload) and at + 2 + payload[at + 1] <= len(payload):
+        end = at + 2 + payload[at + 1]
         pairs.append((payload[at], payload[at + 2:end]))
         at = end
-    return tuple(pairs)
+    return tuple(pairs), payload[at:]
 
 
 def describe(payload: bytes) -> str:
-    """One log field, such as `architecture(1)=0009,pxe_prompt(11)=02`."""
-    fields = []
-    for code, value in decode(payload):
-        if code == UNPARSED:
-            fields.append(f"unparsed={value.hex()}")
-        else:
-            fields.append(f"{SUBOPTION_NAMES.get(code, 'unknown')}({code})={value.hex()}")
+    pairs, rest = decode(payload)
+    fields = [f"{SUBOPTION_NAMES.get(code, 'unknown')}({code})={value.hex()}" for code, value in pairs]
+    if rest:
+        fields.append(f"unparsed={rest.hex()}")
     return ",".join(fields)

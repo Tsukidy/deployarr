@@ -1,12 +1,3 @@
-"""Tests on a network shaped like the lab host. They need root, Linux, and
-the `ip` command. Run with: sudo python3 -m unittest test_lab
-
-One namespace is the lab host. Its bridge has two addresses, and its
-default route leaves through another link. A socket set up the way dnsmasq
-sets up its own in `bind-dynamic` mode shares UDP port 67 with the
-prototype. A second namespace is the PC. Its end of the cable to the
-bridge has no address, as before a lease.
-"""
 import contextlib
 import io
 import os
@@ -52,7 +43,6 @@ def inside(namespace: str):
 
 
 def udp_destination_port(frame: bytes) -> int | None:
-    """The UDP destination port of an Ethernet frame that holds IPv4 and UDP."""
     if frame[12:14] != b"\x08\x00" or frame[23] != 17:
         return None
     udp = 14 + (frame[14] & 15) * 4
@@ -89,7 +79,7 @@ class LabNetworkTest(unittest.TestCase):
         self.log = io.StringIO()
         with inside(HOST):
             # dnsmasq sets these three options on its DHCP socket in
-            # bind-dynamic mode (src/dhcp.c, dhcp_common.c).
+            # bind-dynamic mode (src/dhcp.c, dhcp-common.c).
             self.dhcp_server = self.udp_socket(socket.SO_REUSEADDR, socket.SO_REUSEPORT)
             self.dhcp_server.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, BRIDGE.encode())
             self.dhcp_server.bind(("0.0.0.0", 67))
@@ -125,7 +115,6 @@ class LabNetworkTest(unittest.TestCase):
         return [fields for fields in lines if fields["event"] == name]
 
     def receive_at_the_pc(self) -> tuple[reference.DhcpReply, tuple[str, int], str]:
-        """A reply, its source, and the address it was sent to."""
         raw, ancillary, _, source = self.pc.recvmsg(65535, socket.CMSG_SPACE(12))
         sent_to, = [socket.inet_ntoa(data[8:12]) for level, kind, data in ancillary
                     if (level, kind) == (socket.IPPROTO_IP, socket.IP_PKTINFO)]

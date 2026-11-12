@@ -1,8 +1,4 @@
-"""BOOTP and DHCP packet codec (RFC 951, RFC 2131, RFC 2132).
-
-Knows no PXE policy and opens no socket. `policy.py` decides what a reply
-holds. This module turns bytes into a `DhcpPacket` and back.
-"""
+"""BOOTP and DHCP packet codec (RFC 951, RFC 2131, RFC 2132)."""
 import struct
 from dataclasses import dataclass
 from enum import IntEnum
@@ -21,7 +17,6 @@ _END = 255
 
 
 class MessageType(IntEnum):
-    """Values of option 53."""
     DISCOVER = 1
     OFFER = 2
     REQUEST = 3
@@ -33,13 +28,11 @@ class MessageType(IntEnum):
 
 
 class MalformedPacket(ValueError):
-    """The datagram is not a DHCP packet. The message names the failed check."""
+    pass
 
 
 @dataclass(frozen=True)
 class DhcpPacket:
-    """One DHCP packet. `options` holds `(code, value)` pairs in wire order,
-    without pad (0) and end (255)."""
     op: int
     htype: int
     hlen: int
@@ -57,14 +50,10 @@ class DhcpPacket:
     options: tuple[tuple[int, bytes], ...]
 
     def option(self, code: int) -> bytes | None:
-        """The first value for `code`, or None."""
         return next((value for found, value in self.options if found == code), None)
 
 
 def parse(datagram: bytes) -> DhcpPacket:
-    """Bytes to a packet. Raises `MalformedPacket` on a short packet, a wrong
-    magic cookie, or an option that runs past the end. Option overload (52)
-    is not followed."""
     if len(datagram) < _OPTIONS_START:
         raise MalformedPacket(f"{len(datagram)} bytes, shorter than {_OPTIONS_START}")
     if datagram[_HEADER.size:_OPTIONS_START] != MAGIC_COOKIE:
@@ -94,8 +83,7 @@ def parse(datagram: bytes) -> DhcpPacket:
 
 
 def encode(packet: DhcpPacket) -> bytes:
-    """A packet to bytes: the header, the cookie, each option, then 255.
-    Pads with zeros to the 300-byte BOOTP minimum (RFC 951, RFC 1542)."""
+    """Pads with zeros to the 300-byte BOOTP minimum (RFC 951, RFC 1542)."""
     out = bytearray(_HEADER.pack(
         packet.op, packet.htype, packet.hlen, packet.hops, packet.xid, packet.secs,
         packet.flags, packet.ciaddr.packed, packet.yiaddr.packed, packet.siaddr.packed,

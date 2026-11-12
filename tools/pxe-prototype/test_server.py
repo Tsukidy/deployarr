@@ -1,5 +1,3 @@
-"""Loopback tests for the running server and the command line.
-Run with: python3 -m unittest"""
 import contextlib
 import io
 import os
@@ -318,15 +316,15 @@ class TftpTest(ServerCase):
         finished, = self.wait_for("transfer-finished")
         self.assertEqual((finished["outcome"], finished["client_error"]), ("client-error", "3 Disk full"))
 
-    def test_stop_ends_a_transfer_in_progress(self):
+    def test_stop_ends_every_transfer_in_progress(self):
         pxe = self.start()
-        sock = self.client()
-        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
-        sock.recvfrom(65535)
+        for sock in (self.client(), self.client()):
+            sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+            sock.recvfrom(65535)
         began = time.monotonic()
         pxe.stop()
         self.assertLess(time.monotonic() - began, 1.5)
-        self.assertEqual(self.events("transfer-finished")[0]["outcome"], "stopped")
+        self.assertEqual([fields["outcome"] for fields in self.events("transfer-finished")], ["stopped"] * 2)
 
 
 class DhcpTest(ServerCase):
@@ -607,7 +605,7 @@ class CommandLineTest(unittest.TestCase):
             "broadcast address": (["--server-ip", "255.255.255.255"] + self.required[2:],
                                   "255.255.255.255 is not a host address"),
             "multicast address": (["--server-ip", "224.0.0.1"] + self.required[2:], "224.0.0.1 is not a host address"),
-            "long BCD path": (self.required + ["--bcd-uefi", "a" * 128], "longer than 127 bytes"),
+            "long BCD path": (self.required + ["--bcd-uefi", "a" * 256], "longer than 255 bytes"),
         }
         for name, (argv, message) in cases.items():
             with self.subTest(name):
@@ -648,7 +646,6 @@ class CommandLineTest(unittest.TestCase):
                     stderr=subprocess.PIPE, text=True)
                 self.addCleanup(process.stderr.close)
                 self.addCleanup(process.kill)
-                # A server that never logs must fail the test, not hang it.
                 watchdog = threading.Timer(10.0, process.kill)
                 watchdog.start()
                 self.addCleanup(watchdog.cancel)

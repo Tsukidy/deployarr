@@ -1,4 +1,3 @@
-"""Command line entry point. Run `python3 pxe_prototype.py --help`."""
 import argparse
 import signal
 import sys
@@ -41,7 +40,6 @@ def _directory(text: str) -> Path:
 
 
 def parse_args(argv: list[str] | None = None) -> server.Config:
-    """Arguments to a `Config`. Exits with a message on a bad argument."""
     parser = argparse.ArgumentParser(
         prog="pxe_prototype.py",
         description="Throwaway proxyDHCP and TFTP server for the deployarr PXE lab experiments.")

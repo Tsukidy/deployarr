@@ -1,8 +1,6 @@
-"""Which reply a PXE request gets. Packets in, a packet or a reason out.
-
-`BOOT_TABLE` is the whole boot-chain policy. The reply layout follows
-ConfigMgr 2509's reply builder, `sccmpxe!0x140020f38`, which edits the
-request in place and writes the options in a fixed order.
+"""The reply layout follows ConfigMgr 2509's reply builder,
+`sccmpxe!0x140020f38`, which edits the request in place and writes the
+options in a fixed order.
 """
 import dataclasses
 from dataclasses import dataclass
@@ -13,6 +11,7 @@ import wds250
 from dhcp import BOOTREPLY, BOOTREQUEST, SERVER_PORT, DhcpPacket, MessageType
 
 FILE_FIELD = 128
+OPTION_MAX = 255
 SNAME_FIELD = 64
 
 
@@ -27,8 +26,6 @@ class Firmware(Enum):
 
 
 class Step(Enum):
-    """Where an ACK sits in its chain. `ONLY` belongs to `Chain.SINGLE`.
-    `FIRST` and `SECOND` belong to `Chain.TWO_STAGE`."""
     ONLY = "only"
     FIRST = "first"
     SECOND = "second"
@@ -47,63 +44,61 @@ class IgnoreReason(Enum):
 
 @dataclass(frozen=True)
 class NetworkBootProgram:
-    """A first-stage ACK: a WDS network boot program and option 250."""
     file: str
     option_250: wds250.Recipe
 
 
 @dataclass(frozen=True)
 class BootManager:
-    """An ACK that starts Windows boot: the boot manager and option 252,
-    the BCD store of firmware `bcd` in the `Layout`."""
     file: str
-    bcd: Firmware
 
 
 Boot = NetworkBootProgram | BootManager
 
-# Zero touch is the only mode. `pxeboot.n12` skips the key prompt on BIOS,
-# and sub-option 11 = 2 skips it on UEFI. A BIOS first stage gets the normal
-# recipe, as ConfigMgr sends for a required deployment (sccmpxe!0x140020e14).
+# `pxeboot.n12` skips the key prompt on BIOS, and sub-option 11 = 2 skips it
+# on UEFI. A BIOS first stage gets the normal recipe, as ConfigMgr sends for
+# a required deployment (sccmpxe!0x140020e14).
 BOOT_TABLE: dict[tuple[Step, Firmware], Boot] = {
-    (Step.ONLY, Firmware.UEFI_X64): BootManager(r"boot\x64\bootmgfw.efi", Firmware.UEFI_X64),
-    (Step.ONLY, Firmware.BIOS): BootManager(r"boot\x64\pxeboot.n12", Firmware.BIOS),
+    (Step.ONLY, Firmware.UEFI_X64): BootManager(r"boot\x64\bootmgfw.efi"),
+    (Step.ONLY, Firmware.BIOS): BootManager(r"boot\x64\pxeboot.n12"),
     (Step.FIRST, Firmware.UEFI_X64): NetworkBootProgram(r"boot\x64\wdsmgfw.efi", wds250.ZERO_TOUCH_UEFI),
     (Step.FIRST, Firmware.BIOS): NetworkBootProgram(r"boot\x64\wdsnbp.com", wds250.NORMAL),
-    (Step.SECOND, Firmware.UEFI_X64): BootManager(r"boot\x64\bootmgfw.efi", Firmware.UEFI_X64),
-    (Step.SECOND, Firmware.BIOS): BootManager(r"boot\x64\pxeboot.n12", Firmware.BIOS),
+    (Step.SECOND, Firmware.UEFI_X64): BootManager(r"boot\x64\bootmgfw.efi"),
+    (Step.SECOND, Firmware.BIOS): BootManager(r"boot\x64\pxeboot.n12"),
 }
 
 # Option 93's first entry. Every BIOS PC sends 0, whatever its CPU.
 _FIRMWARE_BY_ARCH = {0: Firmware.BIOS, 7: Firmware.UEFI_X64, 9: Firmware.UEFI_X64}
 
 
-def _path_bytes(path: str) -> bytes:
-    """A TFTP path as it goes on the wire. It must fit the BOOTP `file`
-    field with room for a NUL."""
+def _ascii(path: str, limit: int) -> bytes:
     if not path.isascii():
         raise ValueError(f"path {path!r} is not ASCII")
-    if len(path) >= FILE_FIELD:
-        raise ValueError(f"path {path!r} is longer than {FILE_FIELD - 1} bytes")
+    if len(path) > limit:
+        raise ValueError(f"path {path!r} is longer than {limit} bytes")
     return path.encode("ascii")
+
+
+def _file_bytes(path: str) -> bytes:
+    """The BOOTP `file` field is null terminated (RFC 951)."""
+    return _ascii(path, FILE_FIELD - 1)
 
 
 @dataclass(frozen=True)
 class Layout:
-    """The option 252 path for each firmware, relative to the TFTP root."""
     bcd_uefi: str = r"boot\uefi.bcd"
     bcd_bios: str = r"boot\bios.bcd"
 
     def __post_init__(self) -> None:
-        _path_bytes(self.bcd_uefi)
-        _path_bytes(self.bcd_bios)
+        _ascii(self.bcd_uefi, OPTION_MAX)
+        _ascii(self.bcd_bios, OPTION_MAX)
 
     def bcd(self, firmware: Firmware) -> str:
         return {Firmware.UEFI_X64: self.bcd_uefi, Firmware.BIOS: self.bcd_bios}[firmware]
 
 
 for _boot in BOOT_TABLE.values():
-    _path_bytes(_boot.file)
+    _file_bytes(_boot.file)
 
 
 @dataclass(frozen=True)
@@ -116,7 +111,6 @@ class Policy:
 
 @dataclass(frozen=True)
 class Reply:
-    """A packet to send. `step` is None for an OFFER."""
     packet: DhcpPacket
     firmware: Firmware
     step: Step | None
@@ -128,9 +122,8 @@ class NoReply:
 
 
 def respond(request: DhcpPacket, policy: Policy, port: int) -> Reply | NoReply:
-    """The reply to one request that arrived on UDP `port`. A DISCOVER gets
-    an OFFER, and a REQUEST gets an ACK with a boot file. Options 54 and 60
-    of the request are never read, as in ConfigMgr."""
+    """Options 54 and 60 of the request are never read. ConfigMgr reads only
+    options 5, 53, 82, 93, 97, and 250 (sccmpxe!0x1400201cc)."""
     if request.op != BOOTREQUEST:
         return NoReply(IgnoreReason.NOT_A_REQUEST)
     kind = request.option(53)
@@ -145,7 +138,7 @@ def respond(request: DhcpPacket, policy: Policy, port: int) -> Reply | NoReply:
     if firmware is None:
         return NoReply(IgnoreReason.UNSUPPORTED_ARCH)
     if kind[0] == MessageType.DISCOVER:
-        return Reply(_reply(request, policy, MessageType.OFFER, None), firmware, None)
+        return Reply(_reply(request, policy, firmware, MessageType.OFFER, None), firmware, None)
     if port == SERVER_PORT and request.option(250) is None:
         # This REQUEST accepts the DHCP server's lease. On a host that also
         # runs the DHCP server, an ACK from here carries the same option 54
@@ -153,7 +146,7 @@ def respond(request: DhcpPacket, policy: Policy, port: int) -> Reply | NoReply:
         # (measured with OVMF). A network boot program's request has option 250.
         return NoReply(IgnoreReason.LEASE_REQUEST)
     step = _step(request, policy.chain)
-    packet = _reply(request, policy, MessageType.ACK, BOOT_TABLE[step, firmware])
+    packet = _reply(request, policy, firmware, MessageType.ACK, BOOT_TABLE[step, firmware])
     return Reply(packet, firmware, step)
 
 
@@ -164,7 +157,8 @@ def _step(request: DhcpPacket, chain: Chain) -> Step:
     return Step.SECOND if request.option(250) is not None else Step.FIRST
 
 
-def _reply(request: DhcpPacket, policy: Policy, kind: MessageType, boot: Boot | None) -> DhcpPacket:
+def _reply(request: DhcpPacket, policy: Policy, firmware: Firmware, kind: MessageType,
+           boot: Boot | None) -> DhcpPacket:
     options = [(53, bytes((kind,))), (54, policy.server_ip.packed)]
     guid = request.option(97)
     if guid is not None:
@@ -176,20 +170,16 @@ def _reply(request: DhcpPacket, policy: Policy, kind: MessageType, boot: Boot | 
     file = b""
     match boot:
         case NetworkBootProgram(file=path, option_250=recipe):
-            file = _path_bytes(path)
+            file = _file_bytes(path)
             options.append((250, wds250.render(recipe, request)))
-        case BootManager(file=path, bcd=firmware):
-            file = _path_bytes(path)
-            options.append((252, _path_bytes(policy.layout.bcd(firmware))))
+        case BootManager(file=path):
+            file = _file_bytes(path)
+            options.append((252, _ascii(policy.layout.bcd(firmware), OPTION_MAX)))
     return dataclasses.replace(
         request, op=BOOTREPLY, siaddr=policy.server_ip, sname=bytes(SNAME_FIELD),
         file=file.ljust(FILE_FIELD, b"\x00"), options=tuple(options))
 
 
 def reply_destination(source: tuple[str, int]) -> tuple[str, int]:
-    """Where a reply goes: back to the request's source address and port.
-    A source of 0.0.0.0 cannot be reached by unicast, so that reply is
-    broadcast. A relayed request comes from the relay, so it is answered
-    by unicast to the relay."""
     address, port = source
     return ("255.255.255.255" if address == "0.0.0.0" else address, port)

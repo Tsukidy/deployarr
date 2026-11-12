@@ -1,8 +1,3 @@
-"""Independent wire code for the tests. Imports nothing from the tool.
-
-The tests build requests and decode replies with this module, so a codec
-bug in the tool cannot hide behind the same bug in a test.
-"""
 import socket
 import struct
 from dataclasses import dataclass
@@ -15,7 +10,6 @@ def tlv(code: int, value: bytes) -> bytes:
 
 
 def decode_tlv(data: bytes) -> list[tuple[int, bytes]]:
-    """A run of code, length, value entries, with no pad and no end marker."""
     pairs = []
     at = 0
     while at < len(data):
@@ -30,8 +24,6 @@ def dhcp_request(message_type: int = 1, arch: int | None = 7, guid: bytes | None
                  mac: bytes = b"\x52\x54\x00\xaa\xbb\xcc", giaddr: str = "0.0.0.0",
                  option_5: bytes | None = None, option_82: bytes | None = None,
                  option_250: bytes | None = None) -> bytes:
-    """A PXE client's DHCP packet. `arch` None leaves out option 93, and
-    `guid` None leaves out option 97."""
     packet = struct.pack("!BBBBIHH", op, 1, len(mac), 0, xid, secs, flags)
     packet += bytes(12) + socket.inet_aton(giaddr)
     packet += mac.ljust(16, b"\x00") + bytes(64) + bytes(128)
@@ -56,7 +48,6 @@ def dhcp_request(message_type: int = 1, arch: int | None = 7, guid: bytes | None
 
 @dataclass
 class DhcpReply:
-    """A reply read at the fixed RFC 2131 offsets."""
     raw: bytes
     op: int
     hlen: int
@@ -123,8 +114,6 @@ class Download:
 
 def tftp_get(server: tuple[str, int], filename: str, options: dict[str, str] | None = None,
              timeout: float = 5.0) -> Download:
-    """A TFTP read with the block size and window the OACK grants. It sends
-    one ACK per window, and one for the last block."""
     data = bytearray()
     sizes: list[int] = []
     oack = None

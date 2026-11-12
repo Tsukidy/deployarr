@@ -1,8 +1,3 @@
-"""What the prototype logs. The lab reads these lines as its measurements.
-
-Each event is a frozen dataclass. `format_line` builds every line from the
-dataclass fields, in field order, and leaves out fields that are None.
-"""
 import dataclasses
 import re
 import threading
@@ -15,7 +10,6 @@ from typing import Callable, ClassVar, TextIO
 
 @dataclass(frozen=True)
 class Started:
-    """What this run tests. `dhcp_ports` and `tftp` are the ports actually bound."""
     name: ClassVar[str] = "started"
     chain: str
     server_ip: str
@@ -37,7 +31,6 @@ class Started:
 
 @dataclass(frozen=True)
 class DhcpReceived:
-    """`options` lists the codes of the options that have no field of their own."""
     name: ClassVar[str] = "dhcp-received"
     port: int
     source: str
@@ -114,7 +107,6 @@ class SendFailed:
 
 @dataclass(frozen=True)
 class InternalError:
-    """A bug in the prototype. `where` is the thread that hit it."""
     name: ClassVar[str] = "internal-error"
     where: str
     error: str
@@ -122,7 +114,6 @@ class InternalError:
 
 @dataclass(frozen=True)
 class TransferFinished:
-    """`seconds` runs from the arrival of the RRQ to the last ACK or the failure."""
     name: ClassVar[str] = "transfer-finished"
     client: str
     file: str
@@ -161,24 +152,17 @@ def _text(value: object) -> str:
 def _field(value: object) -> str:
     text = _text(value)
     quote = not text or _NEEDS_QUOTES.search(text)
-    # File names and error messages come from the network. An escaped line
-    # break cannot forge a log line.
     text = _NOT_PRINTABLE.sub(lambda found: f"\\u{ord(found[0]):04x}", text)
     return '"' + text.replace('"', '\\"') + '"' if quote else text
 
 
 def format_line(event: Event) -> str:
-    """`dhcp-sent port=67 destination=255.255.255.255:68 type=OFFER ...`"""
     fields = [f"{field.name}={_field(getattr(event, field.name))}"
               for field in dataclasses.fields(event) if getattr(event, field.name) is not None]
     return " ".join([event.name, *fields])
 
 
 class Sink:
-    """Writes one line per event, with a wall-clock time in milliseconds.
-    The dispatcher and the transfer threads share it, so each write holds
-    a lock and lines never interleave."""
-
     def __init__(self, stream: TextIO, clock: Callable[[], float] = time.time):
         self._stream = stream
         self._clock = clock

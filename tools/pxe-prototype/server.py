@@ -1,9 +1,3 @@
-"""Sockets and threads. The only module that does network I/O.
-
-One dispatcher thread reads the DHCP sockets and the TFTP listener. It is
-the only reader and writer of the session table. Each transfer runs on its
-own thread with its own socket and file handle, and shares only the log.
-"""
 import select
 import selectors
 import socket
@@ -28,9 +22,6 @@ _IN_PKTINFO = struct.Struct("@i4s4s")
 # Python names this socket option from 3.12 on. Linux defines it as 8.
 _IP_PKTINFO = getattr(socket, "IP_PKTINFO", 8 if sys.platform == "linux" else None)
 _ERROR_OPCODE = struct.pack("!H", tftp.Opcode.ERROR)
-# A client can end a transfer and ask again from the same port at once. The
-# packet that ends the transfer and the new request reach two threads in no
-# set order, so the dispatcher gives the transfer thread this long to end.
 _SESSION_END_WAIT = 0.02
 
 
@@ -51,7 +42,7 @@ class Config:
 
 
 class BindError(Exception):
-    """A socket could not be set up. The message names the address and port."""
+    pass
 
 
 def _address(peer: tuple[str, int]) -> str:
@@ -72,23 +63,12 @@ def _message_type(value: bytes | None) -> str:
 
 
 class PxeServer:
-    """The running prototype. Binds every socket when it is created, so a
-    port in use fails in the caller's thread.
-
-        with PxeServer(config) as server:
-            server.dhcp_ports      # the ports bound, in the order of config.dhcp_ports
-            server.tftp_address    # ("192.0.2.10", 69)
-    """
-
     def __init__(self, config: Config):
         self._config = config
         self._policy = policy.Policy(config.server_ip, config.chain, config.layout, config.answer_without_guid)
         self._root = config.root.resolve()
         self._log = events.Sink(config.log_stream)
-        # `stop` writes to one end. Every thread waits on the other end next
-        # to its own socket and never reads it, so one byte wakes them all.
         self._stopping, self._stopper = socket.socketpair()
-        # Each running transfer, with the event its thread sets when it ends.
         self._sessions: dict[tuple[str, int, Path], threading.Event] = {}
         self._transfers: list[threading.Thread] = []
         self._dispatcher = threading.Thread(target=self._dispatch, name="dispatcher")
@@ -156,8 +136,6 @@ class PxeServer:
         self._dispatcher.start()
 
     def stop(self) -> None:
-        """Ends every thread, then closes the sockets. A transfer in progress
-        is logged with the outcome `stopped`."""
         if self._stopper.fileno() == -1:
             return
         self._stopper.send(b"\x00")
@@ -181,8 +159,6 @@ class PxeServer:
                     try:
                         key.data(key.fileobj)
                     except Exception as error:
-                        # This thread answers every DHCP packet and TFTP
-                        # request, so one bad datagram must not end it.
                         self._log(events.InternalError("dispatcher", repr(error)))
 
     def _on_dhcp(self, sock: socket.socket) -> None:
@@ -230,9 +206,9 @@ class PxeServer:
 
     def _send(self, sock: socket.socket, datagram: bytes, destination: tuple[str, int],
               ifindex: int | None = None) -> bool:
-        """Sends one datagram. With `ifindex` it leaves through that interface
-        from the server address. A broadcast would otherwise follow the
-        default route and miss the lab bridge."""
+        """With `ifindex` it leaves through that interface from the server
+        address. A broadcast would otherwise follow the default route and
+        miss the lab bridge."""
         try:
             if ifindex is None:
                 sock.sendto(datagram, destination)
@@ -264,7 +240,6 @@ class PxeServer:
             session = (client[0], client[1], path)
             running = self._sessions.get(session)
             if running is not None and not running.wait(_SESSION_END_WAIT):
-                # The running transfer's own timer resends what the client missed.
                 self._log(events.TftpIgnored(_address(client), "duplicate-request"))
                 return
             try:
@@ -289,8 +264,7 @@ class PxeServer:
         thread.start()
 
     def _read_request(self, datagram: bytes, client: tuple[str, int]) -> tftp.Request | None:
-        """The read request in a datagram to the listener. None for an ERROR
-        packet, which gets no answer (RFC 1350 section 2)."""
+        """None for an ERROR packet, which gets no answer (RFC 1350 section 2)."""
         try:
             request = tftp.parse(datagram)
         except tftp.TftpError:
@@ -312,8 +286,6 @@ class PxeServer:
 
     def _serve(self, handle: BinaryIO, client: tuple[str, int], request: tftp.Request, path: Path,
                size: int, negotiated: tftp.Negotiated, received: float, ended: threading.Event) -> None:
-        """One transfer thread. It owns its socket and `handle`, and sets
-        `ended` when the transfer is over."""
         name = _address(client)
         log_blocks = self._config.log_blocks
 

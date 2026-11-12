@@ -1,4 +1,3 @@
-"""Tests for the TFTP protocol code. Run with: python3 -m unittest"""
 import collections
 import tempfile
 import unittest
@@ -257,9 +256,6 @@ class TransferTest(unittest.TestCase):
         self.assertEqual(t.on_ack(4, 105.2), [])
 
     def blocks_sent_when_block_2_is_lost_once(self, windowsize: int, acks_per_gap: int) -> int:
-        """A receiver that gets every packet in order except the first copy
-        of block 2. It answers the first `acks_per_gap` out-of-order blocks
-        in a row with an ACK for its last good block."""
         t = transfer(10100, windowsize=windowsize)
         wire = collections.deque(t.start(0.0))
         expected, in_window, gap_acks, lost = 1, 0, 0, False
@@ -399,9 +395,6 @@ class TransferTest(unittest.TestCase):
         self.assertEqual(t.on_timeout(200.0), [])
 
     def wire_numbers_around_the_wrap(self, limits):
-        """Sends 65540 blocks of 8 bytes, 4 to a window. Each block holds its
-        own number, so the test maps wire numbers to blocks without help
-        from the code under test."""
         size = 8 * 65539 + 3
         t = Transfer(lambda block: block.to_bytes(8, "big")[:size - 8 * (block - 1)], size,
                      Negotiated(8, 4, ()), limits, 0.0)
