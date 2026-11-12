@@ -87,11 +87,12 @@ Check:
 Scope:
 - Prototype first. Answer the six questions in [Risks to settle with a prototype first](architecture.md#risks-to-settle-with-a-prototype-first) on an OVMF Secure Boot VM and a SeaBIOS VM, using a minimal proxyDHCP and TFTP server and packet captures. Try the single-stage chain (`bootmgfw.efi` and option 252) and ConfigMgr's two-stage chain (`wdsmgfw.efi` or `wdsnbp.com` with option 250, then the boot manager with option 252). Try boot programs signed with the 2011 and 2023 certificates.
 - Choose the single-stage or two-stage chain, or switch to the fallbacks in [Architecture](architecture.md#risks-to-settle-with-a-prototype-first), and record the choice and the captures in the architecture.
-- Then build the proxyDHCP service, the TFTP server, boot file choice by client architecture, the no-reply rule for PCs with no order or a finished deployment, and the PXE settings page.
+- Then build the proxyDHCP service, the TFTP server, boot file choice by client architecture, the no-reply rule for PCs whose deployment succeeded, and the PXE settings page.
 
 Check:
 - Both VM types PXE-boot WinPE from deployarr with no key press while a separate DHCP server hands out addresses.
-- A UEFI VM with no order gets no reply and boots from its disk. A BIOS VM with no order gets `abortpxe.com`.
+- A UEFI VM whose deployment succeeded gets no reply and boots from its disk. A BIOS VM whose deployment succeeded gets `abortpxe.com`.
+- A VM with no pre-staged record and no order row PXE-boots WinPE, and its disk is unchanged.
 - A TFTP test suite covers option-less requests, window size clamping, a retransmitted request, an ACK in the middle of a window, and a missing file.
 - The time to transfer `boot.wim` is measured and recorded with the image size, the network speed, and each block and window size tried.
 - As many VMs as the lab host can run, and at least four, PXE-boot at the same time. Each one reaches WinPE. The time each takes to load `boot.wim` is recorded next to the time for one VM alone, to show how load time grows with the number of PCs.
