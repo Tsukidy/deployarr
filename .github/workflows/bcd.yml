@@ -1,0 +1,62 @@
+name: BCD
+
+on:
+  pull_request:
+    paths:
+      - tools/bcd/**
+      - .github/workflows/bcd.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stores:
+    name: BCD stores
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Create the default stores
+        shell: pwsh
+        run: ./tools/bcd/New-BcdStores.ps1 -OutputDir out/default
+      - name: Create the stores with no loader path
+        shell: pwsh
+        run: ./tools/bcd/New-BcdStores.ps1 -OutputDir out/no-path -NoLoaderPath
+      - name: Create the stores with TFTP block and window sizes
+        shell: pwsh
+        run: ./tools/bcd/New-BcdStores.ps1 -OutputDir out/tftp -RamdiskTftpBlockSize 8192 -RamdiskTftpWindowSize 8
+      - name: Create the default stores again
+        shell: pwsh
+        run: ./tools/bcd/New-BcdStores.ps1 -OutputDir out/rerun
+      - name: Print every store
+        shell: pwsh
+        run: |
+          foreach ($dir in 'default', 'no-path', 'tftp', 'rerun') {
+            foreach ($name in 'uefi', 'bios') {
+              $store = "out/$dir/BCD-$name"
+              Write-Host "::group::bcdedit /enum all /store $store"
+              bcdedit /enum all /store $store | Tee-Object -FilePath "$store.txt"
+              if ($LASTEXITCODE -ne 0) { throw "bcdedit /enum failed for $store" }
+              Write-Host '::endgroup::'
+            }
+          }
+      - name: Check the variants and the rerun
+        shell: pwsh
+        run: |
+          foreach ($name in 'uefi', 'bios') {
+            $default = Get-Content "out/default/BCD-$name.txt" -Raw
+            $noPath = Get-Content "out/no-path/BCD-$name.txt" -Raw
+            $tftp = Get-Content "out/tftp/BCD-$name.txt" -Raw
+            if ($default -notmatch '(?m)^path\s+\\windows\\system32\\boot\\winload\.') { throw "$name default has no loader path" }
+            if ($default -match 'ramdisktftp') { throw "$name default sets a TFTP value" }
+            if ($noPath -match '(?m)^path\s') { throw "$name no-path store has a loader path" }
+            if ($tftp -notmatch '(?m)^ramdisktftpblocksize\s+8192') { throw "$name tftp store lacks the block size" }
+            if ($tftp -notmatch '(?m)^ramdisktftpwindowsize\s+8') { throw "$name tftp store lacks the window size" }
+            if ((Get-Content "out/rerun/BCD-$name.txt" -Raw) -ne $default) { throw "$name rerun differs" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bcd-stores
+          path: out/
+          if-no-files-found: error
