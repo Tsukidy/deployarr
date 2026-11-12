@@ -176,7 +176,7 @@ ConfigMgr 2509 has two PXE paths. `BIN/X64/smspxe.dll` is a provider that runs i
 | `OSD/bin/x64/TsPxe.dll` | 5.0.9141.1002 | `a4fc95b588a19555aa5160645b279342dabe67a5f89acc2049819cb747820808` |
 | `OSD/bin/x64/smstftp.exe` | 5.0.9141.1002 | `f88cc9848279bad4c0639ff3aba58acdcb389d308c1eb4bbbad611940db13d4a` |
 
-One agent wrote each claim in this section from Ghidra pseudocode, and a second agent re-opened each citation and tried to refute it. The claims that change deployarr's design were checked a third time by hand.
+One agent wrote each claim about a binary in this section from Ghidra pseudocode, and a second agent re-opened each citation and tried to refute it. The claims that change deployarr's design were checked a third time by hand.
 
 ### Sockets
 
@@ -192,15 +192,18 @@ One agent wrote each claim in this section from Ghidra pseudocode, and a second 
 
 ### Reply contents
 
-- A reply is the request edited in place. The service copies each request into a buffer of its own, writes the reply over it, and sends that buffer (`sccmpxe!0x1400235e0`, `sccmpxe!0x140020f38`, `sccmpxe!0x140023150`).
+- A reply is the request edited in place. The service copies each request into a zeroed buffer of its own, writes the reply over it, and sends that buffer (`sccmpxe!0x1400235e0`, `sccmpxe!0x140020f38`, `sccmpxe!0x140023150`).
 - The reply sets `op` to 2 and `siaddr` to the server's address. Only the ACK to a REQUEST carries the boot file. The service copies its path, with a NUL, into the BOOTP `file` field (`sccmpxe!0x140020f38`).
-- The code that logs each packet writes a NUL into the last byte of `sname` and the last byte of `file`. It does so on the request and again on the reply (`sccmpxe!0x140022b38`).
+- The code that logs each packet writes a NUL into the last byte of `sname` and the last byte of `file`. It runs on the request and again on the reply (`sccmpxe!0x140022b38`, `sccmpxe!0x1400235e0`, `sccmpxe!0x140023150`).
 - On an IPv4 socket, the service swaps the two bytes of `secs` on receive when the second is larger than the first. A reply can therefore carry them in the other order (`sccmpxe!0x1400235e0`).
-- Every other header byte keeps the request's value. This covers `xid`, `flags`, `ciaddr`, `yiaddr`, `giaddr`, `chaddr`, the cookie, and the bytes of `file` after the boot file's NUL.
-- The options start right after the cookie, in this order: 53, 54, 97, 60 `PXEClient`, and 82 echoed when the request has it. Option 53 is 2 in an OFFER and 5 in an ACK. The ACK to a first-stage REQUEST then carries option 250. The ACK to a second-stage REQUEST carries options 243 and 252 instead, and no option 250. One `0xFF` ends the list (`sccmpxe!0x140020f38`).
-- An OFFER carries no option 43, 66, or 67, and the service writes no boot file into it (`sccmpxe!0x140020f38`).
-- Option 97 always goes out with length 17. The service copies 17 bytes from the start of the request's option 97 value, and no code reads that option's length. A shorter option 97 gets back the bytes that follow it in the request, then zeros past the request's end, because the service copies each request into a zeroed buffer. A longer one gets back only its first 17 bytes (`sccmpxe!0x1400201cc`, `sccmpxe!0x1400235e0`, `sccmpxe!0x14002089c`, `sccmpxe!0x140020f38`).
-- The reply ends right after the `0xFF`, and nothing pads it. An OFFER without option 82 is therefore 280 bytes: 240 for the header and cookie, 3 for option 53, 6 for option 54, 19 for option 97, 11 for option 60, and 1 for the `0xFF`. [RFC 1542](https://www.rfc-editor.org/rfc/rfc1542) section 2.1 calls 300 octets the minimal BOOTP header. An option 82 of n bytes makes the OFFER 282 + n bytes, so it reaches 300 only when n is 18 or more. A first-stage ACK is 312 bytes, or 285 with a 3-byte option 250, plus 2 + n with option 82 (`sccmpxe!0x140020f38`).
+- Every other header byte keeps the request's value. This covers `xid`, `flags`, `ciaddr`, `yiaddr`, `giaddr`, `chaddr`, `sname` apart from its last byte, the cookie, and the bytes of `file` after the boot file's NUL (`sccmpxe!0x1400235e0`, `sccmpxe!0x140020f38`, `sccmpxe!0x140022b38`).
+- The options start right after the cookie, in this order: 53, 54, 97, 60 `PXEClient`, and 82 echoed when the request has it. An ACK then adds the options that the [Two-stage boot chain](#two-stage-boot-chain) table names. One `0xFF` ends the list (`sccmpxe!0x140020f38`).
+- Option 53 is 2 in an OFFER and 5 in an ACK. No reply carries option 250 together with option 243 (`sccmpxe!0x140020f38`).
+- An OFFER carries no option 43, 66, or 67 (`sccmpxe!0x140020f38`).
+- Option 97 always goes out with length 17. The service copies 17 bytes from the start of the request's option 97 value. The parser and the reply builder never read that option's length. A shorter option 97 gets back the bytes that follow it in the request, then zeros past the request's end. A longer one gets back only its first 17 bytes (`sccmpxe!0x1400201cc`, `sccmpxe!0x14002089c`, `sccmpxe!0x140020f38`).
+- The reply ends right after the `0xFF`, and nothing pads it (`sccmpxe!0x140020f38`). An OFFER without option 82 is therefore 280 bytes. That is 240 for the header and cookie, 3 for option 53, 6 for option 54, 19 for option 97, 11 for option 60, and 1 for the `0xFF`.
+- [RFC 1542](https://www.rfc-editor.org/rfc/rfc1542) section 2.1 calls 300 octets the minimal BOOTP header. An option 82 of n bytes adds 2 + n bytes, so an OFFER reaches 300 only when n is 18 or more.
+- A first-stage ACK adds a 32-byte option 250, so it is 312 bytes without option 82. The short option 250 of an abort or of a required deployment on UEFI is 5 bytes, which gives 285 (`sccmpxe!0x140020e14`).
 
 ### Two-stage boot chain
 
@@ -210,24 +213,26 @@ Over IPv4, the service never gives the firmware the boot manager directly. The f
 | --- | --- | --- | --- |
 | 7 or 9 | UEFI x64 | `smsboot\<pkg>\x64\wdsmgfw.efi` and option 250 | `smsboot\<pkg>\x64\bootmgfw.efi` and options 243 and 252 |
 | 11 | UEFI ARM64 | `arm64\wdsmgfw.efi` and option 250 | `arm64\bootmgfw.efi` and options 243 and 252 |
-| 6 | UEFI x86 | `x86\wdsmgfw.efi` and option 250 | `x86\bootmgfw.efi` and options 243 and 252 |
+| 6 | UEFI x86 | `x86\wdsmgfw.efi` and option 250 | None that the code can select. See the notes below |
 | 0 | BIOS | `x86\wdsnbp.com` and option 250 | `pxeboot.com`, or `pxeboot.n12` for a required deployment, and options 243 and 252 |
 
 - `<pkg>` is the boot image's package ID.
-- A BIOS client always sends option 93 = 0, whatever its CPU. In the second request, option 250 sub-option 1 stands in for option 93 as the architecture, so the server learns the CPU only from it. There, 6 selects the `x64` folder (`sccmpxe!0x14002089c`). An x64 boot image therefore also installs `x86\wdsnbp.com`.
-- Option 250 is code `0xFA`, a length byte, and a run of sub-options, each written as code, length, value. It holds no `0xFF` of its own, and the reply's one `0xFF` follows it (`sccmpxe!0x140020134`, `sccmpxe!0x140020e14`, `sccmpxe!0x140020f38`).
+- In the second request, option 250 sub-option 1 stands in for option 93 and picks the second ACK. 7 or 9 gives UEFI x64, and 11 gives UEFI ARM64. 2, 3, or 6 gives BIOS x64, and any other value gives BIOS x86 (`sccmpxe!0x14002089c`, `sccmpxe!0x1400214c4`).
+- No value of sub-option 1 selects `x86\bootmgfw.efi`, so the code cannot give the UEFI x86 row a second ACK with it. This material does not show which value the x86 `wdsmgfw.efi` sends.
+- A BIOS client always sends option 93 = 0, whatever its CPU, so the server learns its CPU only from sub-option 1. An x64 boot image therefore also installs `x86\wdsnbp.com`.
+- Option 250 is code `0xFA`, a length byte, and a run of sub-options, each written as code, length, value. It holds no `0xFF` of its own (`sccmpxe!0x140020134`, `sccmpxe!0x140020e14`, `sccmpxe!0x140020f38`).
 - The first-stage option 250 normally holds sub-option 2 = 1, sub-option 5, sub-option 3 = 20, sub-option 4 = 186, sub-option 6 = `SCCM PXE`, and sub-option 11 = 1, in that order. Sub-options 3 and 4 are 2 bytes each, big-endian. Sub-option 6 is 8 bytes, with no NUL. These are the 32 bytes, where `o0` to `o3` are sub-option 5 (`sccmpxe!0x140020e14`):
 
   ```text
   FA 1E  02 01 01  05 04 o0 o1 o2 o3  03 02 00 14  04 02 00 BA  06 08 53 43 43 4D 20 50 58 45  0B 01 01
   ```
 
-- Sub-option 5 is the first 4 bytes of the request's option 5 value, unchanged. The parser reads 4 bytes and never checks that option's length, so an option 5 shorter than 4 bytes gives the bytes that follow it in the request, then zeros past the request's end. The service sets the value to 0 before it parses each request, so a request without option 5 gets `00 00 00 00` (`sccmpxe!0x1400201cc`, `sccmpxe!0x1400235e0`, `sccmpxe!0x140020e14`).
+- Sub-option 5 is the first 4 bytes of the request's option 5 value, unchanged. The parser does not check the length of option 5. It always reads 4 bytes, so a shorter option 5 gives the bytes that follow it in the request, then zeros past the request's end. The service sets the value to 0 before it parses each request, so a request without option 5 gets `00 00 00 00` (`sccmpxe!0x1400201cc`, `sccmpxe!0x1400235e0`, `sccmpxe!0x140020e14`).
 - A required deployment on UEFI gets only sub-option 11 = 2, which is `FA 03 0B 01 02`. A required deployment on BIOS gets the normal option, with sub-option 11 = 1 (`sccmpxe!0x140020e14`).
 - An abort in the first stage gets only sub-option 2 = 5, which is `FA 03 02 01 05` (`sccmpxe!0x140020e14`). [Deployment decision](#deployment-decision) says which clients receive it.
 - The meanings come from WDS header names (inferred): sub-option 2 is the next action, 3 and 4 are the poll interval and retry count, and 11 is the key-press prompt.
-- Any option 250 in a request marks it as the second request. The parser walks its sub-options and reads only sub-option 1, as 2 bytes big-endian, whatever length that sub-option gives.
-- A second request whose sub-option 1 the parser never reads gets no reply. That happens when option 250 has no sub-option 1, which logs `(continuation) does not have a WDS architecture entry`. It also happens when the sub-options run past the end of option 250 first, which logs `Invalid WDS packet structure.` (`sccmpxe!0x1400201cc`, `sccmpxe!0x1400207e8`, `sccmpxe!0x140020b18`, `sccmpxe!0x140021af4`, `sccmpxe!0x140023150`).
+- Any option 250 in a request marks it as the second request. The parser walks the sub-options and checks each length against what is left of option 250. It reads only sub-option 1, as 2 bytes big-endian, whatever length that sub-option gives (`sccmpxe!0x1400201cc`).
+- The service drops a second request when the parser does not read sub-option 1. Option 250 may have no sub-option 1, or hold it only in its last 2 bytes, and the log then reads `(continuation) does not have a WDS architecture entry`. A sub-option may also run past the end of option 250 before sub-option 1 is read, and the log then reads `Invalid WDS packet structure.` (`sccmpxe!0x1400201cc`, `sccmpxe!0x1400207e8`, `sccmpxe!0x140020b18`, `sccmpxe!0x140021af4`, `sccmpxe!0x140023150`).
 - Option 252 holds the path of a BCD that the server built for the boot image, relative to the TFTP root and with no terminating NUL, such as `SMSTemp\SMS00001-00000-00000.bcd`. The two numbers are the configured TFTP block size and window size. The server reuses a BCD for 600 seconds (`sccmpxe!0x140015eb4`).
 - Option 243 carries the WinPE handoff. It holds sub-option 2, an encrypted key, then sub-option 1, the path of a variables file, then sub-option 3, the server's name. The two strings carry no NUL (`sccmpxe!0x140020d8c`).
 - Which packet the boot manager reads option 252 from is not in this material, because the client boot programs are not in it.
@@ -235,9 +240,10 @@ Over IPv4, the service never gives the firmware the boot manager directly. The f
 ### Deployment decision
 
 - The service looks the PC up through the management point by the option 97 GUID (first three fields little-endian) and the hardware address. It drops a match on an identifier that it knows is shared by several PCs. An unknown PC uses the deployments for unknown computers, or gets no reply when that support is off (`sccmpxe!0x140021af4`, `sccmpxe!0x14000c6c8`).
-- With no deployment, a UEFI client gets no reply at all ("Ignoring UEFI boot."), so the firmware moves on to the next boot device. The service looks a UEFI client up at its DISCOVER, so that client gets no OFFER either (`sccmpxe!0x140021af4`, `sccmpxe!0x140023150`).
-- The service looks a BIOS client up only at its REQUEST, so a BIOS client always gets an OFFER. With no deployment, its ACK names `abortpxe.com`. In the first stage, that ACK carries the abort option 250, so only BIOS clients receive it. In the second stage, it carries option 243 with empty sub-options 2 and 1, and an empty option 252, instead (`sccmpxe!0x140021af4`, `sccmpxe!0x1400214c4`, `sccmpxe!0x140020f38`).
-- A required deployment suppresses the key-press prompt: `pxeboot.n12` on BIOS, and option 250 sub-option 11 = 2 on UEFI. Any other deployment asks for a key press (`sccmpxe!0x140010088`). The code only picks the file and the sub-option. That they change the prompt comes from the file name and the WDS header names (inferred).
+- With no deployment, a UEFI client gets no reply at all ("Ignoring UEFI boot."), so the firmware moves on to the next boot device. The service checks a UEFI client's deployments at its DISCOVER, so that client gets no OFFER either (`sccmpxe!0x140021af4`, `sccmpxe!0x140010088`, `sccmpxe!0x140023150`).
+- The service checks a BIOS client's deployments only at its REQUEST. A BIOS client with no deployment can therefore still get an OFFER, and then an ACK that names `abortpxe.com` (`sccmpxe!0x140021af4`, `sccmpxe!0x140010088`, `sccmpxe!0x1400214c4`).
+- In the first stage, that ACK carries the abort option 250, so only BIOS clients receive it. In the second stage, it carries option 243 with empty sub-options 2 and 1, and an empty option 252, instead (`sccmpxe!0x140020f38`, `sccmpxe!0x140020d8c`, `sccmpxe!0x1400235e0`, `sccmpxe!0x1400214c4`).
+- The two choices for a required deployment, `pxeboot.n12` on BIOS and option 250 sub-option 11 = 2 on UEFI, suppress the key-press prompt. Any other deployment asks for a key press. Both facts are inferred from the file name and the WDS header names, because the code only picks the file and the sub-option (`sccmpxe!0x140010088`, `sccmpxe!0x1400214c4`, `sccmpxe!0x140020e14`).
 - After the second-stage reply for a required deployment, the service sends a "last PXE advertisement" state message, and the management point then reports that deployment as already run. A deployment counts as used when the PXE reply goes out, not when the install finishes (`sccmpxe!0x140010088`, `sccmpxe!0x140023150`).
 
 ### BCD
@@ -284,10 +290,10 @@ The service answers DHCPv6 SOLICIT and REQUEST messages that ask for option 59. 
 | Over IPv4, ConfigMgr never gives the firmware `bootmgfw.efi` directly. It sends WDS's `wdsmgfw.efi` or `wdsnbp.com` with option 250, and answers that program's second request with the boot manager and option 252 | The PXE prototype first tries `bootmgfw.efi` with option 252 in a single reply. If that fails, deployarr implements the two-stage exchange that ConfigMgr uses. See [PXE](../architecture.md#pxe) |
 | The server chooses the BCD and names it in option 252 as a path relative to the TFTP root | deployarr sends option 252 with the path of its fixed BCD for the client's firmware |
 | The OFFER carries no boot file, and only the ACK to a REQUEST carries it | deployarr's proxyDHCP replies the same way |
-| Each reply is the request edited in place, and nothing pads it, so an OFFER is 280 bytes, under the 300-byte BOOTP minimum | deployarr pads every reply to the 300-byte BOOTP minimum. The PXE prototype pads its replies, and the lab tests those |
+| Nothing pads a reply, so an OFFER without option 82 is 280 bytes, under the 300-byte BOOTP minimum | deployarr pads every reply to the 300-byte BOOTP minimum. The PXE prototype pads its replies, and the lab tests those |
 | Option 97 always goes out with length 17, whatever length the request's option 97 has | deployarr parses option 97 where the request enters, as a type byte and a 16-byte GUID, and sends back those 17 bytes. A request whose option 97 has another length counts as a request without option 97. #56 decides how deployarr treats those |
 | A second request without option 250 sub-option 1 gets no reply | No decision now. The lab capture in #28 shows whether both network boot programs always send sub-option 1 |
-| ConfigMgr looks a UEFI client up at its DISCOVER, but a BIOS client only at its REQUEST, so a BIOS client with no deployment still gets an OFFER | No decision now |
+| ConfigMgr checks a UEFI client's deployments at its DISCOVER, but a BIOS client's only at its REQUEST | No decision now on whether deployarr checks a PC at its DISCOVER or at its REQUEST |
 | The BCD loader has no winload path, and the TFTP size elements are absent by default | The prototype tests a template without them |
 | The TFTP server echoes an unclamped window size, resends whole windows, uses 32-bit sizes, starts a second transfer for a retransmitted request, and answers a miss with error code 0 | deployarr clamps the window size before the OACK, resends from the first block not acknowledged (RFC 7440), uses 64-bit sizes, keeps one session per client address, port, and file, and answers a miss with error code 1 at once |
 | With no deployment, a UEFI client gets no reply and a BIOS client gets `abortpxe.com` | deployarr does the same for a PC with no order and for a finished one |
