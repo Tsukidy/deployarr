@@ -8,6 +8,8 @@ From milestone 1 on, every check runs in a lab that `xtask lab` drives. The lab 
 
 - The lab host is a Linux machine with KVM, or a Windows machine with Hyper-V.
 - UEFI test VMs use QEMU with OVMF firmware that has Secure Boot on and Microsoft's keys enrolled. Legacy BIOS test VMs use SeaBIOS.
+- Every test VM runs with `-cpu host` under KVM, so the guest sees the lab host's processor. A VM started without `-cpu` runs QEMU's default model, `qemu64`, which lacks SSE4.1 and PrefetchW. On QEMU 8.2.2, QMP `query-cpu-model-expansion` reports `sse4.1` and `3dnowprefetch` as false for `qemu64`.
+- The lab host's CPU must have each processor feature that Windows 11 requires. Section 3.5 of Microsoft's [Minimum Hardware Requirements for Windows 11](https://download.microsoft.com/download/7/8/8/788bf5ab-0751-4928-a22c-dffdc23c27f2/Minimum%20Hardware%20Requirements%20for%20Windows%2011.pdf) lists PAE, NX, SSE4.1, CMPXCHG16B, LAHF/SAHF, and PrefetchW. Section 5 holds virtual machines to the same minimum, so a VM on `qemu64` falls short of it.
 - The VMs sit on an isolated bridge with a plain DHCP server. deployarr provides only PXE.
 - The OS under test is the multi-edition Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11), with Home and Pro, the editions the owner deploys. Lab VMs install with no product key and stay unactivated. The real PC from milestone 3 on tests activation.
 - virtio disk and network devices test the driver path, because Windows 11 has no inbox drivers for them. They must come from the deployarr driver library and the WinPE driver set.
