@@ -9,7 +9,7 @@ From milestone 1 on, every check runs in a lab that `xtask lab` drives. The lab 
 - The lab host is a Linux machine with KVM. Hyper-V is not a lab host, for two reasons. The [M3 check](#m3-bare-metal-deployment-from-boot-media) needs a BIOS VM that finishes with Windows 11. Microsoft's page [Should I create a generation 1 or 2 virtual machine in Hyper-V?](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/plan/should-i-create-a-generation-1-or-2-virtual-machine-in-hyper-v) shows that a BIOS VM on Hyper-V is a generation 1 VM. The page marks Windows 11 as unsupported on generation 1. The [M6 check](#m6-drivers) needs virtio disk, network, and balloon devices. The page's device table lists no virtio device.
 - UEFI test VMs use QEMU with OVMF firmware that has Secure Boot on and Microsoft's keys enrolled. Legacy BIOS test VMs use SeaBIOS.
 - The VMs sit on an isolated bridge with a plain DHCP server. deployarr provides only PXE.
-- The OS under test is the multi-edition Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11), with Home and Pro, the editions the owner deploys. Lab VMs install with no product key and stay unactivated. The real PC from milestone 3 on tests activation.
+- The OS under test is the multi-edition Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11), with Home and Pro, the editions the owner deploys. Lab VMs install Windows with no product key and stay unactivated. Tests of the `ActivateWindows` step then install Microsoft's KMS client setup key for Pro, which cannot activate without a KMS host (see [Activation](architecture.md#activation)). The real PC from milestone 3 on tests the key from its sticker.
 - virtio disk and network devices test the driver path, because Windows 11 has no inbox drivers for them. They must come from the deployarr driver library and the WinPE driver set.
 - `-smbios type=2,serial=...` gives each VM a known baseboard serial for order lookup tests.
 - From milestone 3 on, each milestone also deploys at least one real PC of the kind you build.
@@ -73,9 +73,9 @@ Scope:
 - The product key prompt and the `ActivateWindows` step.
 
 Check:
-- A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record. The UEFI VM installs Pro, and the BIOS VM installs Home. Both stay unactivated, so their sequence has no `ActivateWindows` step.
+- A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record. The UEFI VM installs Pro, and the BIOS VM installs Home. Neither run types a key, so their sequence has no `ActivateWindows` step.
 - One real PC does the same with the edition its sticker names, and its product key typed at the prompt. `slmgr /dli` on that PC shows the last five characters of that key.
-- On a VM, a key in the right format that Windows rejects fails the `ActivateWindows` step, and the deployment shows the error.
+- On the UEFI VM, a sequence with an `ActivateWindows` step and `online` off takes Microsoft's KMS client setup key for Pro, and `slmgr /dli` shows `T83GX`. The same key with one character changed fails the step, and the deployment shows the error. The lab records the error code.
 - The UEFI VM runs once with each end state. With `ReadyToUse`, it boots to the sign-in screen with no OOBE. With `CustomerOobe`, it shuts down, shows OOBE on its next boot, and has no account that deployarr created. Neither leaves a cached answer file in `%WINDIR%\Panther`.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
 - On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. If base WinPE lacks `tbs.dll` or the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
@@ -152,7 +152,7 @@ Scope:
 - Join profiles for a workgroup, a domain, Entra ID bulk enrollment, and Autopilot registration.
 
 Check:
-- Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab.
+- Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab. It deploys to the UEFI VM, with Microsoft's KMS client setup key for Pro and `online` off.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
 - The UEFI VM, which runs Pro, joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
 - The BIOS VM, which runs Home, has no pre-staged record, so lookup reaches its order row by baseboard serial. The row sets a `Domain` profile. The deployment stops before the disk changes, and its error names the edition ID and the profile.
