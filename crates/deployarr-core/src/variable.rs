@@ -1,5 +1,5 @@
-use std::fmt;
-use std::hash::{Hash, Hasher};
+use core::fmt;
+use core::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
 
@@ -72,7 +72,7 @@ impl fmt::Display for VarNameError {
     }
 }
 
-impl std::error::Error for VarNameError {}
+impl core::error::Error for VarNameError {}
 
 /// One default that a task sequence gives a variable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

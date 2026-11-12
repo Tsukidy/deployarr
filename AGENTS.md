@@ -115,13 +115,13 @@ Several agents can work in this repository at once. Each one delivers its work t
 These rules restate invariants from `docs/architecture.md`.
 
 - Crates live under `crates/` and build tooling under `xtask/`, as listed in the architecture's crate layout.
-- `deployarr-core` does no I/O. It must build for Linux, Windows, and `wasm32`.
+- `deployarr-core` does no I/O. It is `no_std` with `alloc` and forbids unsafe code. Its unit tests get `std` from the crate root's `cfg_attr`. Never add `extern crate std`. Every dependency must build without `std`. The crate must build for Linux, Windows, `wasm32`, and `x86_64-unknown-none`.
 - `deployarr-agent` targets `x86_64-pc-windows-msvc` with the static C runtime. On any other target it builds a stub `main` that exits with code 1. It must run in base WinPE, so it cannot use WMI or any DLL that base WinPE lacks.
 - Parse external data into typed values where it enters the system. This covers config files, API requests, SQL rows, INF files, and SMBIOS tables. Code past that point trusts the types.
 - Every step that changes state in the engine or the agent must be safe to run again after a crash.
 - Bind SQL parameters. Never paste values into SQL text.
 - Never write a secret to a log, an event, or an error message.
-- CI runs `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` on Linux and Windows. On Linux it also runs `cargo build -p deployarr-core --target wasm32-unknown-unknown`. On Windows it also builds `deployarr-agent` in release mode and runs `cargo xtask winpe-imports` on the exe, which fails when the agent imports a module that base WinPE lacks.
+- CI runs `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` on Linux and Windows. On Linux it also builds `deployarr-core` for `wasm32-unknown-unknown` and for `x86_64-unknown-none`. The second target ships no `std`, so that build fails when `deployarr-core` or a dependency needs `std`. On Windows it also builds `deployarr-agent` in release mode and runs `cargo xtask winpe-imports` on the exe, which fails when the agent imports a module that base WinPE lacks.
 
 ## Reproduce the MDT research
 

@@ -1,5 +1,7 @@
-use std::fmt;
-use std::num::NonZeroU32;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
+use core::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
@@ -242,4 +244,4 @@ impl fmt::Display for EmptyIdError {
     }
 }
 
-impl std::error::Error for EmptyIdError {}
+impl core::error::Error for EmptyIdError {}
