@@ -201,7 +201,7 @@ class PxeServer:
         try:
             request = dhcp.parse(datagram)
         except dhcp.MalformedPacket as error:
-            self._log(events.DhcpIgnored(port, _address(source), "malformed", str(error)))
+            self._log(events.DhcpIgnored(port, _address(source), policy.IgnoreReason.MALFORMED.value, str(error)))
             return
         xid = f"{request.xid:08x}"
         arch, guid, option_250 = request.option(93), request.option(97), request.option(250)

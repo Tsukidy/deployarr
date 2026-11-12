@@ -20,7 +20,7 @@ The prototype serves files from one folder. It ignores case and accepts `/` or `
 | `boot\uefi.bcd`, `boot\bios.bcd` | The BCD stores from #26 |
 | `bootmgr.exe`, `boot.sdi`, `boot.wim`, and the fonts | Wherever the boot programs and the BCD ask for them. Read the paths from the `tftp-received` log lines. |
 
-The first three rows are fixed in `BOOT_TABLE` in `policy.py`. `--bcd-uefi` and `--bcd-bios` change the BCD paths.
+The first two rows are fixed in `BOOT_TABLE` in `policy.py`. The BCD paths in the third row are the defaults of `--bcd-uefi` and `--bcd-bios`.
 
 The prototype sends every file as raw bytes, whatever transfer mode the request names. Boot programs ask for `octet`. The `tftp` command asks for `netascii` unless you pass `-m binary`, and it then changes line endings in the file it saves. So check a file by hand with `tftp -m binary`.
 
@@ -67,7 +67,13 @@ The log cannot show a second request that goes by unicast to port 67. While dnsm
 sudo tcpdump -i virbr1 -w second.pcap 'udp port 67 or udp port 68 or udp port 4011'
 ```
 
-Transfer timing, for #30. Each `transfer-finished` line gives the file, its size, the block size, the window size, and the seconds from the request to the last ACK:
+Another BCD store, for #29. Put it in the root and name it with `--bcd-uefi` or `--bcd-bios`. The `started` line shows both BCD paths:
+
+```bash
+sudo python3 pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain single --bcd-uefi 'boot\nopath.bcd' --log-file nopath.log
+```
+
+Transfer timing, for #30. Each `transfer-finished` line gives the file, its size, the block size, the window size, and the seconds from the request to the last ACK. Its `options` field holds what the client asked for. Its `blksize` and `windowsize` fields hold the values the transfer used, after the prototype clamps them to 32768 and 32:
 
 ```bash
 sudo python3 pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain single --no-block-log --log-file timing.log
@@ -96,13 +102,21 @@ Each line is one event: a UTC time in milliseconds, the event name, then `key=va
 | `dhcp-sent` | The OFFER or ACK, with the firmware type, the chain step, the boot file, and option 250 or option 252 |
 | `dhcp-ignored` | A packet that got no reply, with the reason, such as `lease-request`, `no-option-97`, or `other-interface` |
 | `tftp-received`, `tftp-sent` | Every TFTP packet. `--no-block-log` leaves out the DATA and ACK lines |
+| `send-failed` | A reply that the kernel refused to send, with its error |
 | `tftp-ignored` | A packet that got no answer: a repeated request for a transfer that is running, a packet from an unknown port, or a packet that the client of a running transfer should not send |
 | `transfer-finished` | One line per transfer, with the outcome `complete`, `timeout`, `client-error`, `stopped`, or `error` |
 | `internal-error` | A bug in the prototype. The server keeps running, and the transfer that hit it ends with the outcome `error`. |
 
 The names of the option 250 sub-options in the log are inferred from WDS header names.
 
-The DATA and ACK lines cost time. A 256 MiB file sent over loopback to a Python client with `blksize` 1456 and no window took a median of 9.0 seconds with the lines and 8.0 seconds without them, over 5 runs each. That is about 6 microseconds for each block. Use `--no-block-log` when you time transfers for #30.
+The DATA and ACK lines cost time, and they cost the most with a window. These are the medians of 5 runs each for a 64 MiB file, sent over loopback to a Python client with `blksize` 1456, on a cloud VM with 4 CPUs:
+
+| Window size | With the lines | With `--no-block-log` |
+| --- | --- | --- |
+| 1 | 2.47 seconds | 2.26 seconds |
+| 8 | 1.55 seconds | 0.46 seconds |
+
+With the lines, the server's CPU time equals the transfer time, so writing the lines sets the speed. Use `--no-block-log` when you time transfers for #30.
 
 ## Differences from ConfigMgr
 

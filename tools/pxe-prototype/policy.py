@@ -42,6 +42,7 @@ class IgnoreReason(Enum):
     NO_OPTION_97 = "no-option-97"
     UNSUPPORTED_ARCH = "unsupported-arch"
     OTHER_INTERFACE = "other-interface"
+    MALFORMED = "malformed"
 
 
 @dataclass(frozen=True)
