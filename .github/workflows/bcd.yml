@@ -57,7 +57,7 @@ jobs:
         run: |
           # Expected values come from docs/architecture.md#bcd, not from the script.
           $bootmgrGuid = '{9dea862c-5cdd-4e70-acc1-f32b344d4795}'
-          $ramdiskGuid = '{7619dcc8-fafe-11d9-b411-000476eba25f}'
+          $ramdiskGuid = '{ae5534e0-a924-466c-b836-758539a3ee3a}'
           $ramdiskDevice = 'ramdisk=\[boot\]\\boot\\x64\\boot\.wim,(\{ramdiskoptions\}|' + [regex]::Escape($ramdiskGuid) + ')'
           $variants = @{
             uefi = @{ Loader = '{7b0e1d6a-5c11-4f3e-9a52-2d3f6a8c0e01}'; Winload = 'winload.efi' }
