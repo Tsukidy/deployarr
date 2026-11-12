@@ -23,6 +23,11 @@ jobs:
       - name: Test the PXE prototype on a lab-like network
         working-directory: tools/pxe-prototype
         run: sudo python3 -m unittest -v test_lab
+      - name: Check the lab scripts
+        run: shellcheck -x tools/lab/*.sh
+      - name: Test the lab check summary
+        working-directory: tools/lab
+        run: python3 -m unittest
 
   pxe-prototype-oldest-python:
     name: PXE prototype on Python 3.10
