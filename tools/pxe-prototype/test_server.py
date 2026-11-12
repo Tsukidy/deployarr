@@ -230,6 +230,42 @@ class TftpTest(ServerCase):
         sock.sendto(b"\x00\x05\x00\x00stop\x00", transfer_address)
         self.wait_for("transfer-finished")
 
+    def test_request_right_after_a_transfer_ends_is_served(self):
+        pxe = self.start()
+        sock = self.client(timeout=1.0)
+        for _ in range(100):
+            sock.sendto(reference.tftp_request("small.bin", {"tsize": "0"}), pxe.tftp_address)
+            oack, transfer_address = sock.recvfrom(65535)
+            self.assertEqual(oack, b"\x00\x06tsize\x001300\x00")
+            sock.sendto(b"\x00\x05\x00\x08size probe\x00", transfer_address)
+        for _ in range(100):
+            sock.sendto(reference.tftp_request("small.bin", {"blksize": "1300"}), pxe.tftp_address)
+            oack, transfer_address = sock.recvfrom(65535)
+            sock.sendto(reference.tftp_ack(0), transfer_address)
+            self.assertEqual(sock.recvfrom(65535)[0], b"\x00\x03\x00\x01" + SMALL)
+            sock.sendto(reference.tftp_ack(1), transfer_address)
+            self.assertEqual(sock.recvfrom(65535)[0], b"\x00\x03\x00\x02")
+            sock.sendto(reference.tftp_ack(2), transfer_address)
+        self.wait_for("transfer-finished", 200)
+        self.assertEqual(self.events("tftp-ignored"), [])
+
+    def test_only_the_same_client_port_and_file_is_a_repeated_request(self):
+        pxe = self.start()
+        sock, other_port = self.client(), self.client()
+        other_address = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(other_address.close)
+        other_address.bind(("127.0.0.2", sock.getsockname()[1]))
+        other_address.settimeout(5.0)
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        sock.sendto(reference.tftp_request("even.bin"), pxe.tftp_address)
+        other_port.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        other_address.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        first_blocks = sorted(sock.recvfrom(65535)[0] for _ in range(2))
+        self.assertEqual(first_blocks, sorted([b"\x00\x03\x00\x01" + SMALL[:512], b"\x00\x03\x00\x01" + b"e" * 512]))
+        self.assertEqual(other_port.recvfrom(65535)[0], b"\x00\x03\x00\x01" + SMALL[:512])
+        self.assertEqual(other_address.recvfrom(65535)[0], b"\x00\x03\x00\x01" + SMALL[:512])
+        self.assertEqual(self.events("tftp-ignored"), [])
+
     def test_silent_client_times_out(self):
         pxe = self.start()
         sock = self.client()

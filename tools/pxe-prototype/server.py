@@ -26,6 +26,10 @@ _OPTIONS_WITH_A_LOG_FIELD = (53, 93, 97, 250)
 # struct in_pktinfo: ipi_ifindex, ipi_spec_dst, ipi_addr.
 _IN_PKTINFO = struct.Struct("@i4s4s")
 _ERROR_OPCODE = struct.pack("!H", tftp.Opcode.ERROR)
+# A client can end a transfer and ask again from the same port at once. The
+# packet that ends the transfer and the new request reach two threads in no
+# set order, so the dispatcher gives the transfer thread this long to end.
+_SESSION_END_WAIT = 0.02
 
 
 @dataclass(frozen=True)
@@ -82,7 +86,9 @@ class PxeServer:
         # `stop` writes to one end. Every thread waits on the other end next
         # to its own socket and never reads it, so one byte wakes them all.
         self._stopping, self._stopper = socket.socketpair()
-        self._sessions: dict[tuple[str, int, Path], threading.Thread] = {}
+        # Each running transfer, with the event its thread sets when it ends.
+        self._sessions: dict[tuple[str, int, Path], threading.Event] = {}
+        self._transfers: list[threading.Thread] = []
         self._dispatcher = threading.Thread(target=self._dispatch, name="dispatcher")
         self._ifindex = None if config.interface is None else self._interface_index(config.interface)
         self._dhcp_sockets: list[socket.socket] = []
@@ -155,7 +161,7 @@ class PxeServer:
         self._stopper.send(b"\x00")
         if self._dispatcher.is_alive():
             self._dispatcher.join()
-        for thread in self._sessions.values():
+        for thread in self._transfers:
             thread.join()
         for sock in (*self._dhcp_sockets, self._listener, self._stopping, self._stopper):
             sock.close()
@@ -243,15 +249,17 @@ class PxeServer:
     def _on_tftp_request(self, sock: socket.socket) -> None:
         datagram, client = sock.recvfrom(65535)
         received = time.monotonic()
-        for key in [key for key, thread in self._sessions.items() if not thread.is_alive()]:
+        for key in [key for key, ended in self._sessions.items() if ended.is_set()]:
             del self._sessions[key]
+        self._transfers = [thread for thread in self._transfers if thread.is_alive()]
         try:
             request = self._read_request(datagram, client)
             if request is None:
                 return
             path = tftp.resolve(self._root, request.filename)
             session = (client[0], client[1], path)
-            if session in self._sessions:
+            running = self._sessions.get(session)
+            if running is not None and not running.wait(_SESSION_END_WAIT):
                 # The running transfer's own timer resends what the client missed.
                 self._log(events.TftpIgnored(_address(client), "duplicate-request"))
                 return
@@ -268,10 +276,12 @@ class PxeServer:
         except tftp.TftpError as error:
             self._refuse(sock, client, error)
             return
+        ended = threading.Event()
         thread = threading.Thread(
             target=self._serve, name=f"transfer-{_address(client)}",
-            args=(handle, client, request, path, size, negotiated, received))
-        self._sessions[session] = thread
+            args=(handle, client, request, path, size, negotiated, received, ended))
+        self._sessions[session] = ended
+        self._transfers.append(thread)
         thread.start()
 
     def _read_request(self, datagram: bytes, client: tuple[str, int]) -> tftp.Request | None:
@@ -297,8 +307,9 @@ class PxeServer:
         return request
 
     def _serve(self, handle: BinaryIO, client: tuple[str, int], request: tftp.Request, path: Path,
-               size: int, negotiated: tftp.Negotiated, received: float) -> None:
-        """One transfer thread. It owns its socket and `handle`."""
+               size: int, negotiated: tftp.Negotiated, received: float, ended: threading.Event) -> None:
+        """One transfer thread. It owns its socket and `handle`, and sets
+        `ended` when the transfer is over."""
         name = _address(client)
         log_blocks = self._config.log_blocks
 
@@ -316,10 +327,10 @@ class PxeServer:
                 elif log_blocks:
                     self._log(events.TftpSent(name, "DATA", block=block, bytes=len(datagram) - 4))
 
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock, handle:
-            sock.bind((str(self._config.server_ip), 0))
-            transfer = tftp.Transfer(read_block, size, negotiated, self._config.limits, time.monotonic())
-            try:
+        transfer = tftp.Transfer(read_block, size, negotiated, self._config.limits, time.monotonic())
+        try:
+            with handle, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.bind((str(self._config.server_ip), 0))
                 send(transfer.start(time.monotonic()))
                 while transfer.active:
                     now = time.monotonic()
@@ -356,10 +367,11 @@ class PxeServer:
                             transfer.on_error(code, message)
                         case tftp.Request():
                             self._log(events.TftpIgnored(name, "request-on-transfer-port"))
-            except Exception as error:
-                self._log(events.InternalError(threading.current_thread().name, repr(error)))
-                transfer.abort()
-            seconds = time.monotonic() - received
+        except Exception as error:
+            self._log(events.InternalError(threading.current_thread().name, repr(error)))
+            transfer.abort()
+        ended.set()
+        seconds = time.monotonic() - received
         error = transfer.client_error
         self._log(events.TransferFinished(
             client=name, file=request.filename, path=str(path), size=size,
