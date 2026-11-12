@@ -13,7 +13,7 @@ From milestone 1 on, every check runs in a lab that `xtask lab` drives. The lab 
 - virtio disk and network devices test the driver path, because Windows 11 has no inbox drivers for them. They must come from the deployarr driver library and the WinPE driver set.
 - `-smbios type=2,serial=...` gives each VM a known baseboard serial for order lookup tests.
 - From milestone 3 on, each milestone also deploys at least one real PC of the kind you build.
-- From milestone 8 on, a Windows Server evaluation VM is the lab's domain controller, for the domain join check.
+- From milestone 8 on, a Windows Server evaluation VM is the lab's domain controller, for the domain join check on the UEFI VM, which runs Pro.
 
 ## Milestones
 
@@ -154,8 +154,9 @@ Scope:
 Check:
 - Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
-- A lab VM joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
-- A human checks Entra ID join and Autopilot registration against a test tenant, because the lab has no tenant.
+- The UEFI VM, which runs Pro, joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
+- An order row that sets a `Domain` profile for the Home image stops the BIOS VM, which runs Home, before its disk changes, and the deployment names the edition and the profile.
+- A human checks Entra ID join and Autopilot registration on Pro against a test tenant, because the lab has no tenant. Home supports neither (see [Directory join](architecture.md#directory-join)).
 
 ### M9. Hardening and release
 
