@@ -19,8 +19,8 @@ from typing import NamedTuple
 BURN = "{http://schemas.microsoft.com/wix/2008/Burn}"
 AMD64_DIR = "Windows Preinstallation Environment\\amd64\\en-us"
 SCHEMA_VERSION = 6
-INSTALLER_NAME = re.compile(r"[A-Za-z0-9 ._()-]+")
-MSI_NAME = re.compile(r"[A-Za-z0-9._-]+")
+INSTALLER_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._()-]*")
+MSI_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
 class ApiSet(NamedTuple):
@@ -51,7 +51,7 @@ class Payload(NamedTuple):
 
 
 def plain_name(name: str, pattern: re.Pattern[str]) -> bool:
-    return name not in (".", "..") and pattern.fullmatch(name) is not None
+    return pattern.fullmatch(name) is not None
 
 
 def parse_apiset_section(section: bytes) -> ApiSetSchema:
