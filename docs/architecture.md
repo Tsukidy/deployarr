@@ -340,7 +340,35 @@ pub trait DataSource {
 - PostgreSQL and MySQL use `sqlx`. Recent `sqlx` releases dropped SQL Server support, which is why SQL Server has its own driver.
 - An admin writes each query with named parameters, such as `SELECT os_code, order_no FROM orders WHERE board_serial = :board_serial`. The server rewrites the names into each engine's placeholder syntax and always binds values. Values are never pasted into the SQL text.
 - A lookup error or an empty result moves to the next resolver and appears in the trace. MDT logs the error and continues as if nothing happened.
-- The order database is read-only to deployarr. The setup guide requires a database account that can only read. On PostgreSQL and MySQL, the server also runs each named query in a read-only transaction, so a query that tries to write fails even when the account allows it. On SQL Server, deployarr relies on the read-only account alone.
+- The order database is read-only to deployarr. The setup guide requires a database account that can only read. That account is the guard that holds on every engine. The engine guards in [Write guards](#write-guards) are a second guard, and each one has limits.
+
+#### Write guards
+
+The test results below come from runs on 2026-11-12 with an account that may write, on PostgreSQL 16.15, MySQL 8.0.46, and MariaDB 10.11.14. Without a guard, that account's `INSERT`, `TRUNCATE`, and `DROP TABLE` changed the data on each engine.
+
+The server sends each named query to PostgreSQL, MySQL, and MariaDB as one prepared statement. A query text that holds a second statement then fails before it runs. PostgreSQL accepts one statement in each prepared statement ([Extended Query](https://www.postgresql.org/docs/16/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY)), and so does MySQL ([PREPARE Statement](https://dev.mysql.com/doc/refman/8.0/en/prepare.html)). Sent as plain text, a second statement can end the guard's transaction or reset the session, and then write. On PostgreSQL, `COMMIT; DROP TABLE orders` sent as one query inside `BEGIN READ ONLY` dropped the table. On MySQL and MariaDB, `SET SESSION TRANSACTION READ WRITE; DROP TABLE orders` sent as one query dropped it under the guard below. Sent as a prepared statement, each text failed and changed nothing.
+
+The guard on each engine:
+
+- PostgreSQL. The server runs each named query in its own transaction. It opens the transaction with `BEGIN READ ONLY` and rolls it back after the query. In a read-only transaction, PostgreSQL refuses `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, and every `CREATE`, `ALTER`, and `DROP` command ([SET TRANSACTION](https://www.postgresql.org/docs/16/sql-set-transaction.html)). It refused every write to the database that the tests tried, including a `CALL` of a procedure that writes. A transaction per query also holds where a setting made once per connection does not. After a named query ran `SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE`, the next named query on that connection dropped a table under a once-per-connection setting. The same `DROP TABLE` failed under a transaction per query.
+- MySQL and MariaDB. Before each named query, the server sets the session's transaction access mode with `SET SESSION TRANSACTION READ ONLY`. After each named query, it runs `ROLLBACK`, which ends any transaction that the query left open. Under this guard, `INSERT`, `DELETE`, `TRUNCATE`, `DROP TABLE`, and a `CALL` of a procedure that runs `TRUNCATE` each failed with error 1792 and changed nothing.
+- SQL Server. deployarr relies on the read-only account alone.
+
+The MySQL and MariaDB guard takes this form for two reasons:
+
+- A read-only transaction alone does not stop DDL. A DDL statement such as `TRUNCATE TABLE` or `DROP TABLE` commits the open transaction and then runs ([Statements That Cause an Implicit Commit](https://dev.mysql.com/doc/refman/8.0/en/implicit-commit.html)). Inside `START TRANSACTION READ ONLY`, `TRUNCATE TABLE` emptied the table and `DROP TABLE` dropped it. The session's read-only access mode refuses DDL as well as data changes ([Transaction Access Mode](https://dev.mysql.com/doc/refman/8.0/en/set-transaction.html#set-transaction-access-mode)).
+- A setting made once per connection does not hold. A named query can run `SET SESSION TRANSACTION READ WRITE`, and the next named query on that pooled connection then dropped a table. On MariaDB, a named query can also run `START TRANSACTION READ WRITE`. A session setting does not change a transaction that is already open ([Transaction Characteristic Scope](https://dev.mysql.com/doc/refman/8.0/en/set-transaction.html#set-transaction-scope)), so the next named query wrote inside it, and a later one committed it. Setting the access mode before each query stops the first case, and the `ROLLBACK` after each query stops the second. MySQL 8.0 refused to prepare `START TRANSACTION`, with error 1295.
+
+The engine guards do not stop these:
+
+- A query that writes a file or runs a program on the database server. On MySQL and MariaDB, `SELECT ... INTO OUTFILE` wrote a file under every guard tested. On PostgreSQL, `COPY ... TO` a file and `COPY ... TO PROGRAM` both ran inside `BEGIN READ ONLY`. PostgreSQL's read-only mode "does not prevent all writes to disk" ([SET TRANSACTION](https://www.postgresql.org/docs/16/sql-set-transaction.html)).
+- On MySQL and MariaDB, a call to a stored procedure that sets the session back to read-write and then writes. A procedure that runs `SET SESSION TRANSACTION READ WRITE` and then `TRUNCATE TABLE` emptied the table under every guard tested. An account with only `SELECT` and `EXECUTE` emptied it the same way, through a procedure that runs with its definer's rights. On PostgreSQL, the same kind of procedure failed inside `BEGIN READ ONLY`.
+- On MariaDB, a named query that starts with `SET STATEMENT tx_read_only=0 FOR`. MariaDB runs the statement after `FOR` with the variable changed for that statement, and its list of variables that cannot be set this way does not include `tx_read_only` ([SET STATEMENT](https://mariadb.com/docs/server/reference/sql-statements/administrative-sql-statements/set-commands/set-statement)). Sent as one prepared statement under the guard, it ran `INSERT`, `TRUNCATE TABLE`, and `DROP TABLE`. MySQL 8.0 refused to prepare it, with error 1064.
+
+The read-only account that the setup guide requires must also meet these rules:
+
+- On MySQL and MariaDB, it holds neither the `FILE` privilege ([FILE](https://dev.mysql.com/doc/refman/8.0/en/privileges-provided.html#priv_file)) nor `EXECUTE` on a stored procedure that writes.
+- On PostgreSQL, it is not a superuser, and it is not a member of `pg_write_server_files` or `pg_execute_server_program` ([Predefined Roles](https://www.postgresql.org/docs/16/predefined-roles.html)).
 
 ### Wipe safety
 
