@@ -73,8 +73,8 @@ Scope:
 - The product key prompt and the `ActivateWindows` step.
 
 Check:
-- A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record.
-- One real PC does the same, with the product key from its sticker typed at the prompt. Windows on that PC holds the key.
+- A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record. The evaluation edition needs no product key, so their sequence has no `ActivateWindows` step.
+- One real PC does the same with the edition its sticker names, and its product key typed at the prompt. `slmgr /dli` on that PC shows the last five characters of that key.
 - On a VM, a key in the right format that Windows rejects fails the `ActivateWindows` step, and the deployment shows the error.
 - The UEFI VM runs once with each end state. With `ReadyToUse`, it boots to the sign-in screen with no OOBE. With `CustomerOobe`, it shuts down, shows OOBE on its next boot, and has no account that deployarr created. Neither leaves a cached answer file in `%WINDIR%\Panther`.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
@@ -92,7 +92,7 @@ Check:
 - A UEFI VM with no order gets no reply and boots from its disk. A BIOS VM with no order gets `abortpxe.com`.
 - A TFTP test suite covers option-less requests, window size clamping, a retransmitted request, an ACK in the middle of a window, and a missing file.
 - The time to transfer `boot.wim` is measured and recorded with the image size, the network speed, and each block and window size tried.
-- At least four VMs PXE-boot at the same time. The time each takes to load `boot.wim` is recorded next to the time for one VM alone.
+- As many VMs as the lab host can run, and at least four, PXE-boot at the same time. Each one reaches WinPE. The time each takes to load `boot.wim` is recorded next to the time for one VM alone, to show how load time grows with the number of PCs.
 
 ### M5. Order lookup
 
@@ -148,7 +148,7 @@ Check:
 - Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
 - A lab VM joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
-- A human checks Entra ID join and Autopilot registration against the owner's tenant, because the lab has no tenant.
+- A human checks Entra ID join and Autopilot registration against a test tenant, because the lab has no tenant.
 
 ### M9. Hardening and release
 

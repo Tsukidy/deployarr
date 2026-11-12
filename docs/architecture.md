@@ -267,7 +267,7 @@ pub trait DataSource {
 - PostgreSQL and MySQL use `sqlx`. Recent `sqlx` releases dropped SQL Server support, which is why SQL Server has its own driver.
 - An admin writes each query with named parameters, such as `SELECT os_code, order_no FROM orders WHERE board_serial = :board_serial`. The server rewrites the names into each engine's placeholder syntax and always binds values. Values are never pasted into the SQL text.
 - A lookup error or an empty result moves to the next resolver and appears in the trace. MDT logs the error and continues as if nothing happened.
-- The order database is read-only to deployarr. The setup guide requires a database account that can only read. On PostgreSQL and MySQL, the server also runs each named query in a read-only transaction, so a query that tries to write fails even when the account allows it. SQL Server has no read-only transaction, so there the account is the only guard.
+- The order database is read-only to deployarr. The setup guide requires a database account that can only read. On PostgreSQL and MySQL, the server also runs each named query in a read-only transaction, so a query that tries to write fails even when the account allows it. On SQL Server, deployarr relies on the read-only account alone.
 
 ### Wipe safety
 
@@ -322,24 +322,25 @@ The owner ships some PCs ready to use and others ready for the customer, so each
 - `ReadyToUse`: the unattend file skips OOBE and creates the local admin account with the PC's own password (see [Server](#server)). The finish action restarts the PC or shuts it down.
 - `CustomerOobe`: the unattend file sets `Microsoft-Windows-Deployment | Reseal | Mode` to `Audit` in the oobeSystem pass. Setup then ignores the other oobeSystem settings and starts the auditSystem pass ([Reseal Mode](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-reseal-mode)). The agent service runs the rest of the sequence in audit mode. Its last action is `sysprep /oobe /shutdown`, which Microsoft documents for a PC that goes to a customer ([Boot Windows to audit mode or OOBE](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe)). It does not pass `/generalize`, because the image stays on the PC it was applied to.
 
-Both states share these rules:
+In `CustomerOobe`:
 
-- The agent service must also continue in audit mode. `IMAGE_STATE_COMPLETE` means that the specialize and oobeSystem passes are complete ([Windows Setup states](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-states)). A PC in audit mode has not finished OOBE, so the service cannot wait for that value alone (inferred). The M3 lab records the value that audit mode shows.
-- Before the finish action, the agent deletes the cached answer files in `%WINDIR%\Panther`. Microsoft says to delete the cached answer file before a PC goes to a customer ([Windows Setup automation overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)), and deployarr's answer file can hold passwords.
-- In `CustomerOobe`, the agent reports success, uploads its logs, and removes its service before it runs `sysprep`, because the shutdown ends its run. The customer's first boot starts no deployarr code.
-- `CustomerOobe` leaves no account or password that deployarr created. The M3 lab confirms it.
+- The agent service must continue in audit mode. `IMAGE_STATE_COMPLETE` means that the specialize and oobeSystem passes are complete ([Windows Setup states](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-states)). A PC in audit mode has not finished OOBE, so the service cannot wait for that value alone (inferred). The M3 lab records the value that audit mode shows.
+- The agent reports success, uploads its logs, and removes its service before it runs `sysprep`, because the shutdown ends its run. The customer's first boot starts no deployarr code.
+- The PC keeps no account or password that deployarr created. The M3 lab confirms it.
+
+In both states, the agent deletes the cached answer files in `%WINDIR%\Panther` before the finish action. Microsoft says to delete the cached answer file before a PC goes to a customer ([Windows Setup automation overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)), and deployarr's answer file can hold passwords.
 
 ## Activation
 
 Each PC has a Windows product key on a sticker, and a technician types it during the deployment.
 
-- A task sequence that contains an `ActivateWindows` step needs a key. The agent asks for it in WinPE right after lookup, before the disk changes. When lookup used the order-number prompt, the key prompt follows on the same screen, so the technician types both in one visit.
+- A task sequence that contains an `ActivateWindows` step needs a key. The built-in Windows client template contains one at the start of its full-OS phase. A sequence that installs an edition with its own key, such as the lab's evaluation edition, leaves the step out. The agent asks for it in WinPE right after lookup, before the disk changes. When lookup used the order-number prompt, the key prompt follows on the same screen, so the technician types both in one visit.
 - The agent checks only the format: 25 letters and digits in five groups of five. A format check cannot tell a mistyped key from a real one.
 - The typed key is the secret variable `ProductKey`, so it never reaches a log line or an event. The server stores it encrypted with the other secrets and shows it to admins next to the deployment.
 - The key does not go into the unattend file. An invalid key in the `ProductKey` setting of `Microsoft-Windows-Shell-Setup` makes Windows Setup fail ([ProductKey](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-productkey)), so one typo would stop the PC in Setup.
 - `ActivateWindows` runs in the full OS instead. It installs the key with `slmgr /ipk`, which returns an error when the key is not valid for the installed operating system ([Slmgr.vbs options](https://learn.microsoft.com/en-us/windows-server/get-started/activation-slmgr-vbs-options)). With `online` set, it then runs `slmgr /ato` to activate online.
 - In `ReadyToUse`, the step then runs `slmgr /cpky` to remove the key from the registry. Microsoft calls this the best practice for retail installations that deploy keys. The step skips `/cpky` in `CustomerOobe`, because Microsoft says that some servicing operations need the key in the registry during OOBE (same page).
-- A rejected key fails the step, and the UI shows the error with the deployment. Put the step early in the full-OS phase, so a mistyped key shows up minutes after the first reboot.
+- A rejected key fails the step, and the UI shows the error with the deployment. Because the template runs the step first in the full OS, a mistyped key shows up minutes after the first reboot.
 - Microsoft's rule on whether a system builder or the customer activates a PC is not yet checked. The `online` flag lets each task sequence follow that rule.
 
 ## Directory join
@@ -350,14 +351,14 @@ A PC stays in a workgroup by default. Domain join, Entra ID join, and Autopilot 
 pub enum JoinProfile {
 	Workgroup { name: String },   // "WORKGROUP" unless an admin changes it
 	Domain { domain: String, ou: Option<String>, account: String, password: SecretRef },
-	EntraId { package: ContentRef, made_on: Date },   // bulk enrollment package from Windows Configuration Designer
+	EntraId { package: SecretRef, made_on: Date },   // bulk enrollment package from Windows Configuration Designer
 	Autopilot { upload: AutopilotUpload },   // CsvExport, or Graph through a tenant connection
 }
 ```
 
-- `Workgroup` and `Domain` go into the unattend file, in the specialize pass of the `Microsoft-Windows-UnattendedJoin` component. `JoinWorkgroup` names the workgroup. `JoinDomain`, `Credentials`, and `MachineObjectOU` name the domain, the join account, and the full LDAP path of the OU ([UnattendedJoin](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-unattendedjoin)). The PC must reach a domain controller during the specialize pass.
+- `Workgroup` and `Domain` go into the unattend file, in the specialize pass of the `Microsoft-Windows-UnattendedJoin` component. `JoinWorkgroup` names the workgroup. `JoinDomain`, `Credentials`, and `MachineObjectOU` name the domain, the join account, and the full LDAP path of the OU ([UnattendedJoin](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-unattendedjoin), [Identification](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-unattendedjoin-identification), [MachineObjectOU](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-unattendedjoin-identification-machineobjectou)). The PC must reach a domain controller during the specialize pass.
 - The join account's password is a secret. The server stores it encrypted, and the agent deletes the cached answer files before the finish action (see [End state](#end-state)).
-- `EntraId` uses bulk enrollment. An admin makes the provisioning package with Windows Configuration Designer and uploads it. The package joins the PC to the Entra tenant and enrolls it in Intune ([Bulk enrollment](https://learn.microsoft.com/en-us/intune/intune-service/enrollment/windows-bulk-enroll)).
+- `EntraId` uses bulk enrollment. An admin makes the provisioning package with Windows Configuration Designer and uploads it. The package joins the PC to the Entra tenant and enrolls it in Intune ([Bulk enrollment](https://learn.microsoft.com/en-us/intune/intune-service/enrollment/windows-bulk-enroll)). It carries a token for a `package_{GUID}` account in Entra ID (same page), so the server stores it encrypted as a secret.
 - In WinPE, the agent adds the package to the applied image with `DISM /Image=W:\ /Add-ProvisioningPackage`, which works on an applied image ([DISM provisioning package options](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/dism-provisioning-package-command-line-options)). Windows applies a package that is embedded in the image during the OOBE pass ([How provisioning works](https://learn.microsoft.com/en-us/windows/configuration/provisioning-packages/provisioning-how-it-works)). The M8 lab checks that a `ReadyToUse` PC, which skips the OOBE screens, applies it too. If it does not, the agent runs `Install-ProvisioningPackage` in the full OS instead (inferred).
 - The token in a bulk enrollment package is valid for 90 days (Bulk enrollment page). The admin enters the date the package was made, and the UI warns before the 90 days pass.
 - `Autopilot` only customizes OOBE ([Autopilot FAQ](https://learn.microsoft.com/en-us/autopilot/faq)), so it needs `EndState` set to `CustomerOobe`. The server rejects any other pair before the disk changes.
@@ -458,7 +459,7 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 - The boot image holds no passwords or credentials. MDT's unattended setup needs share credentials in `Bootstrap.ini` inside the boot image.
 - wimlib can add files but cannot add WinPE optional components such as PowerShell. Those are servicing packages that only DISM installs, and MDT adds each one with `dism /Add-Package`, followed by its language package. On a Linux server, a sequence that runs PowerShell in WinPE therefore needs a base image already serviced with WinPE-WMI, WinPE-NetFx, WinPE-Scripting, and WinPE-PowerShell on a Windows machine. A server running on Windows can do that servicing itself. The importer records which components a base image contains, and the server rejects a sequence that needs one the image lacks.
 - The builder rebuilds the boot image from the untouched base every time, and keys each build by a hash of its recipe: the base, the files, and the drivers. Any failed step fails the build. MDT patches the previous image instead, ignores servicing failures, and records failed items as present, so it never retries them.
-- Outputs are `boot.wim` for PXE, plus an ISO for USB sticks and remote-management virtual media. The ISO is built with `xorriso`, using the El Torito boot files from the imported Windows media. It uses the no-prompt EFI boot image, `efisys_noprompt.bin`, so it starts without a key press. MDT's ISO uses `efisys.bin`, which waits for a key (inferred from ADK behavior).
+- Outputs are `boot.wim` for PXE, plus an ISO for USB sticks and remote-management virtual media. The ISO is built with `xorriso`, using the El Torito boot files from the imported Windows media. It uses the no-prompt EFI boot image, `efisys_noprompt.bin`, so it starts without a key press. MDT's ISO uses `efisys.bin`, which waits for a key press (inferred from ADK behavior).
 
 ## PXE
 
@@ -473,16 +474,16 @@ deployarr's PXE design follows ConfigMgr's PXE responder, `sccmpxe.exe`, which b
   3. The boot manager reads the BCD and loads `boot.sdi` and `boot.wim` over TFTP into a RAM disk.
 - A single stage, with `bootmgfw.efi` and option 252 in the first reply, would be simpler, but no Microsoft product is known to do it. The prototype tests both chains. deployarr ships the single stage only if it boots every lab firmware with Secure Boot on. Otherwise it ships the two-stage chain.
 - Every BIOS PC sends option 93 = 0, whatever its CPU. In the two-stage chain, `wdsnbp.com` reports the real CPU in its second request. deployarr supports only x64, so the single stage would send the x64 BIOS files to every BIOS PC.
-- For zero touch, nothing waits for a key: `pxeboot.n12` on BIOS, and option 250 sub-option 11 = 2 for `wdsmgfw.efi` on UEFI. These are what ConfigMgr sends for a required deployment.
+- For zero touch, nothing waits for a key press: `pxeboot.n12` on BIOS, and option 250 sub-option 11 = 2 for `wdsmgfw.efi` on UEFI. These are what ConfigMgr sends for a required deployment.
 - In WinPE, the agent reads the DHCP reply that booted it from `HKLM\SYSTEM\ControlSet001\Control\PXE\BootServerReply` and logs which server sent it. The boot image's config still names the server. DHCP and TFTP carry no secrets. ConfigMgr hides a password in that reply under keys that are hard-coded in its binaries, so anyone who captures the reply can recover it.
 
 ### DHCP
 
-- deployarr works only as a proxyDHCP server. The existing DHCP server keeps handing out addresses, and deployarr answers only PXE clients. That server needs no options 66 and 67. It binds UDP 67 and 4011 on each chosen interface address, so it knows which address to put in its replies. An admin chooses interfaces by MAC address. A setting skips port 67, so deployarr can run on a host that also runs a DHCP server.
+- deployarr works only as a proxyDHCP server, because on one subnet it hears every PXE broadcast itself. The existing DHCP server keeps handing out addresses, and deployarr answers only PXE clients. That server needs no options 66 and 67. It binds UDP 67 and 4011 on each chosen interface address, so it knows which address to put in its replies. An admin chooses interfaces by MAC address. A setting skips port 67, so deployarr can run on a host that also runs a DHCP server.
 - deployarr answers a DISCOVER or a REQUEST that carries option 93 (client architecture) and option 97 (machine GUID), as ConfigMgr does. It ignores INFORM.
 - The OFFER sets `siaddr` to deployarr's address and carries options 53, 54, 97 (echoed), 60 (`PXEClient`), and 82 (echoed when present). It carries no boot file and no option 43. Only the ACK to a REQUEST carries the boot file, in the BOOTP `file` field, with option 250 or option 252.
 - Replies go to the request's source address and port. deployarr broadcasts only when the source is `0.0.0.0`, and it answers a relayed request by unicast to the relay. On routed networks, a DHCP relay (IP helper) forwards PXE clients to deployarr.
-- The first release supports PXE on one subnet, and the lab tests only that. The relay handling above stays in the design, so routed subnets can come later without a redesign. Before they do, a lab VM must boot through a DHCP relay. RFC 2131 section 4.1 sends replies to the relay address in `giaddr`, and deployarr sends them to the source address, so that test also confirms the two match.
+- The first release supports PXE on one subnet, and the lab tests only that. The relay handling above stays in the design, so routed subnets can come later without a redesign. Before they do, the design must choose where a relayed reply goes. deployarr sends it to the request's source address, as ConfigMgr does. RFC 2131 section 4.1 sends it to port 67 at the relay address in `giaddr`. The two differ when a relay sends from another interface (inferred).
 - A PC with no order, or one whose deployment succeeded, gets no reply on UEFI, so the firmware moves on to the next boot device. On BIOS it gets `abortpxe.com`. ConfigMgr does the same.
 - deployarr cannot share UDP 67, 69, or 4011 with a Windows DHCP server or WDS on the same host. The installer checks for them.
 - IPv6 PXE is not in the first release. ConfigMgr's DHCPv6 reply carries option 59 with a `tftp://` URL and the BCD path in a Microsoft vendor option. It does not handle relayed DHCPv6.
@@ -529,7 +530,7 @@ If the signed chain fails, the fallbacks are UEFI HTTP boot, or the boot ISO thr
 - Each deployment gets its own ID from the server. Succeeded and Failed are final states that later events cannot change. MDT's monitoring service keeps one record per computer, sets a finished record back to Running on its next event, and keeps no history.
 - The agent queues events and sends them in the background with retries, plus a heartbeat on a timer. A slow or unreachable server never delays a step. MDT sends each event as a blocking call with a 60-second timeout, and its PowerShell steps send no events at all.
 - Installation creates a private CA and a server certificate. Each boot image carries the CA certificate.
-- Secrets are encrypted at rest with a server key. This covers data source passwords and per-PC local admin passwords. Each deployed PC gets its own random local admin password, which an admin can read in the UI. MDT uses one shared password.
+- Secrets are encrypted at rest with a server key. This covers data source passwords, per-PC local admin passwords, product keys, domain join passwords, bulk enrollment packages, and Autopilot tenant credentials. Each deployed PC gets its own random local admin password, which an admin can read in the UI. MDT uses one shared password.
 - Staff sign in to the admin web UI with local deployarr accounts. The server stores each password as an argon2id hash. The first release has no other sign-in. Active Directory and OIDC sign-in can come later.
 
 ## Web UI
@@ -547,6 +548,7 @@ The screens are these:
 - Applications: upload files, set the command, the detection rule, and dependencies, and test detection.
 - Order lookup: data source connections with a test button, named queries, the OS-code map, and the lookup chain. A test box takes an order number or a serial number and shows the resolved task sequence and its trace.
 - Machines: pre-staged PCs, with CSV import.
+- Join profiles: workgroup and domain settings, Entra ID packages, Autopilot tenant connections, and the Autopilot hash export.
 - Boot images and PXE: build boot images, set the active image, and choose the PXE interfaces and the port 67 setting.
 
 ## Crate layout
