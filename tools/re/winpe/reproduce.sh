@@ -11,8 +11,7 @@
 #   <workdir>/out/apisets.tsv         every API set schema entry and whether it resolves
 #   <workdir>/out/summary.txt         versions, sizes, hashes, and counts
 #
-# Needs: curl, 7z, msiinfo (msitools), sha1sum, sha256sum, and python3 (stdlib only).
-# Downloaded files are data. Nothing from them runs.
+# Needs: curl, 7z, msiinfo (msitools), sha1sum, sha256sum, and Python 3.10 or later (stdlib only).
 set -euo pipefail
 
 work="${1:?usage: reproduce.sh <workdir> [setup-url] [expected-sha256]}"
@@ -26,11 +25,10 @@ py() { python3 -I "$helper" "$@"; }
 
 die() { echo "$*" >&2; exit 1; }
 
-# verify <file> <sha1|sha256> <expected-hex> <label>
 verify() {
-  local actual
-  actual="$("$2sum" "$1" | cut -d' ' -f1)"
-  [ "$actual" = "${3,,}" ] || die "$4 $2 mismatch: got $actual, expected ${3,,}"
+  local file="$1" algo="$2" want="${3,,}" label="$4" actual
+  actual="$("${algo}sum" "$file" | cut -d' ' -f1)"
+  [ "$actual" = "$want" ] || die "$label $algo mismatch: got $actual, expected $want"
 }
 
 mkdir -p "$work/dl" "$work/burn" "$work/msi" "$work/wim" "$work/out"
@@ -51,14 +49,15 @@ manifest="$work/burn/0"
 addon_version="$(py version "$manifest")"
 payloads="$(py payloads "$manifest" "$msi_package")"
 
-# fetch <FilePath> <sha1> <url path>: downloads if missing or corrupt, verifies, echoes the local path
 fetch() {
-  local dest="$work/dl/${1##*\\}"
-  if [ -f "$dest" ] && [ "$(sha1sum "$dest" | cut -d' ' -f1)" != "$2" ]; then rm -f "$dest"; fi
+  local manifest_path="$1" sha1="$2" url_path="$3"
+  local name="${manifest_path##*\\}"
+  local dest="$work/dl/$name"
+  if [ -f "$dest" ] && [ "$(sha1sum "$dest" | cut -d' ' -f1)" != "$sha1" ]; then rm -f "$dest"; fi
   if [ ! -f "$dest" ]; then
-    curl -fL --retry 4 --retry-delay 2 -sS -o "$dest" "$base/$3"
+    curl -fL --retry 4 --retry-delay 2 -sS -o "$dest" "$base/$url_path"
   fi
-  verify "$dest" sha1 "$2" "${1##*\\}"
+  verify "$dest" sha1 "$sha1" "$name"
   echo "$dest"
 }
 

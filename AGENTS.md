@@ -181,7 +181,7 @@ For a later release, pass the new link and SHA-256 as the second and third argum
 
 ### WinPE
 
-`tools/re/winpe/reproduce.sh` downloads the WinPE add-on setup program and checks its SHA-256. It reads the setup program's manifest, downloads only the MSI and the CAB that hold the x64 `winpe.wim`, and checks each one's SHA-1. It then writes the module and API set list, a table of every API set, and a summary. It needs `7z`, `msiinfo` from msitools, and Python 3 with no extra packages:
+`tools/re/winpe/reproduce.sh` downloads the WinPE add-on setup program and checks its SHA-256. It reads the setup program's manifest, downloads only the MSI and the CAB that hold the x64 `winpe.wim`, and checks each one's SHA-1. It then writes the module and API set list, a table of every API set, and a summary. It needs `7z`, `msiinfo` from msitools, and Python 3.10 or later with no extra packages:
 
 ```bash
 bash tools/re/winpe/reproduce.sh "$SCRATCH/winpe"

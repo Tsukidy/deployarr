@@ -31,24 +31,34 @@ class ApiSet(NamedTuple):
         return bool(self.default_host) and self.default_host.lower() in dlls
 
 
-def parse_apiset_section(data: bytes) -> tuple[int, int, list[ApiSet]]:
-    """Return (schema version, header count, entries) from a .apiset section."""
-    version, _size, _flags, count, entry_off, _hash_off, _factor = struct.unpack_from("<7I", data, 0)
+class ApiSetSchema(NamedTuple):
+    version: int
+    entries: list[ApiSet]
+
+
+class WimLocation(NamedTuple):
+    file_key: str
+    cabinet: str
+    size: int
+
+
+def parse_apiset_section(section: bytes) -> ApiSetSchema:
+    version, _size, _flags, count, entry_off, _hash_off, _factor = struct.unpack_from("<7I", section, 0)
     if version != SCHEMA_VERSION:
         raise ValueError(f"API set schema version {version}, expected {SCHEMA_VERSION}")
 
     def text(off: int, length: int) -> str:
-        if off + length > len(data):
+        if off + length > len(section):
             raise ValueError("string outside the .apiset section")
-        return data[off : off + length].decode("utf-16-le")
+        return section[off : off + length].decode("utf-16-le")
 
     entries = []
     for i in range(count):
-        _f, name_off, name_len, hashed_len, val_off, val_count = struct.unpack_from("<6I", data, entry_off + 24 * i)
+        _f, name_off, name_len, hashed_len, val_off, val_count = struct.unpack_from("<6I", section, entry_off + 24 * i)
         default_host: str | None = None
         aliases: dict[str, str] = {}
         for j in range(val_count):
-            _vf, imp_off, imp_len, host_off, host_len = struct.unpack_from("<5I", data, val_off + 20 * j)
+            _vf, imp_off, imp_len, host_off, host_len = struct.unpack_from("<5I", section, val_off + 20 * j)
             importer, host = text(imp_off, imp_len), text(host_off, host_len)
             if importer == "":
                 if default_host is None:
@@ -56,7 +66,7 @@ def parse_apiset_section(data: bytes) -> tuple[int, int, list[ApiSet]]:
             else:
                 aliases[importer] = host
         entries.append(ApiSet(text(name_off, name_len), text(name_off, hashed_len), default_host, aliases))
-    return version, count, entries
+    return ApiSetSchema(version, entries)
 
 
 def apiset_section(pe: bytes) -> bytes:
@@ -82,8 +92,7 @@ def long_name(default_dir: str) -> str:
     return default_dir.split("|")[-1]
 
 
-def locate_amd64_wim(table_dir: Path) -> tuple[str, str, int]:
-    """Return (file key, cabinet name, file size) of the amd64 winpe.wim."""
+def locate_amd64_wim(table_dir: Path) -> WimLocation:
     dirs = {r["Directory"]: r for r in read_idt(table_dir / "Directory.idt")}
     comp_dir = {r["Component"]: r["Directory_"] for r in read_idt(table_dir / "Component.idt")}
 
@@ -107,7 +116,7 @@ def locate_amd64_wim(table_dir: Path) -> tuple[str, str, int]:
     seq = int(row["Sequence"])
     media = [m for m in read_idt(table_dir / "Media.idt") if int(m["LastSequence"]) >= seq]
     cab = min(media, key=lambda m: int(m["LastSequence"]))["Cabinet"]
-    return row["File"], cab, int(row["FileSize"])
+    return WimLocation(row["File"], cab, int(row["FileSize"]))
 
 
 def parse_listing(text: str) -> tuple[ET.Element, list[tuple[str, bool]]]:
@@ -151,9 +160,8 @@ def cmd_build(listing: Path, schema_dll: Path, out: Path, facts: list[str]) -> N
     dlls = sorted(system32_dlls(entries), key=lambda n: (n.lower(), n))
     lower = {d.lower() for d in dlls}
 
-    version, count, sets = parse_apiset_section(apiset_section(schema_dll.read_bytes()))
-    if len(sets) != count:
-        raise ValueError(f"parsed {len(sets)} entries, header says {count}")
+    schema = parse_apiset_section(apiset_section(schema_dll.read_bytes()))
+    sets = schema.entries
     bad = [s.name for s in sets if not s.name.startswith(("api-", "ext-"))]
     if bad:
         raise ValueError(f"unexpected API set names: {bad[:5]}")
@@ -174,10 +182,10 @@ def cmd_build(listing: Path, schema_dll: Path, out: Path, facts: list[str]) -> N
     summary += list(wim.items())
     summary += [
         ("system32_dll_count", str(len(dlls))),
-        ("apiset_schema_version", str(version)),
-        ("apiset_entry_count", str(count)),
+        ("apiset_schema_version", str(schema.version)),
+        ("apiset_entry_count", str(len(sets))),
         ("apisets_resolvable", str(len(ok))),
-        ("apisets_unresolvable", str(count - len(ok))),
+        ("apisets_unresolvable", str(len(sets) - len(ok))),
         ("winpe_x64_dll_list_count", str(len(names))),
         ("tbs.dll_present", "yes" if "tbs.dll" in lower else "no"),
     ]
