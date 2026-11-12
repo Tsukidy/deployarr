@@ -4,3 +4,12 @@ version = "0.0.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_path_to_error = "0.1"
+time = { version = "0.3", features = ["serde-well-known"] }
+# No `v4` feature. It pulls in `getrandom`, which does not build for
+# `wasm32-unknown-unknown` without extra setup. The crate parses IDs and never generates them.
+uuid = { version = "1", features = ["serde"] }
