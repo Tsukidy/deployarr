@@ -1,0 +1,11 @@
+[package]
+name = "probe-mysql-async"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+mysql_async = { version = "0.37", default-features = false, features = ["default-rustls-ring"] }
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[workspace]

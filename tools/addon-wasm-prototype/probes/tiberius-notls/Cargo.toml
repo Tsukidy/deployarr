@@ -1,0 +1,12 @@
+[package]
+name = "probe-tiberius-notls"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+tiberius = { version = "0.13", default-features = false, features = ["tds73"] }
+tokio = { version = "1", features = ["rt", "macros", "net"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+
+[workspace]

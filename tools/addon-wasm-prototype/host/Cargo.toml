@@ -1,0 +1,12 @@
+[package]
+name = "addon-host"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+wasmtime = "=50.0.1"
+wasmtime-wasi = "=50.0.1"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[workspace]
