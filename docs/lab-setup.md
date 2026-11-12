@@ -140,7 +140,7 @@ The script exports index 1 of `sources\boot.wim`, which is WinPE, as a single-im
 
 The last lines show the CA that issued each boot manager's signing certificate. The `_EX` copies come from `\Windows\Boot\EFI_EX` and `\Windows\Boot\PXE_EX` in the image. Their signers were first read with `osslsigncode` in the `winpe.wim` of the ADK WinPE add-on 10.1.26100.9457. The script says so if an ISO's `boot.wim` has no `_EX` copies.
 
-A later download can have a different build and hash. The lab was built from this ISO:
+A later download can have a different build and hash. The lab uses this ISO:
 
 | Item | Value |
 | --- | --- |
@@ -149,7 +149,7 @@ A later download can have a different build and hash. The lab was built from thi
 | `sources\install.wim` | Build 26300.9457, 11 editions. Index 1 is Windows 11 Home and index 6 is Windows 11 Pro. |
 | `sources\boot.wim` index 1 | Microsoft Windows PE (amd64), build 26100.9457. It has the `_EX` boot managers, and their signers match the table above. |
 
-`media.sh` prints the WinPE build, and `manifest.txt` records the ISO's SHA-256.
+`media.sh` prints the WinPE name and build number. `manifest.txt` records the full WinPE build and the ISO's SHA-256.
 
 Both folders have the same layout:
 
