@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck source-path=SCRIPTDIR
 # Builds the two TFTP folders that the PXE lab experiments serve, from the
-# Windows 11 Enterprise evaluation ISO and the BCD stores from the BCD workflow.
+# Windows 11 ISO and the BCD stores from the BCD workflow.
 # See docs/lab-setup.md.
 #
 # Usage: tools/lab/media.sh <Windows ISO> <bcd-stores.zip>
