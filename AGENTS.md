@@ -19,7 +19,7 @@ The repository holds the design documents and the Cargo workspace for M0. There 
 | `docs/research/mdt-8456.md` | How MDT 8456 scripts and templates implement each feature, with citations |
 | `docs/research/mdt-8450-binaries.md` | What MDT's compiled components do, from the 8450 installer |
 | `docs/research/configmgr-2509.md` | What ConfigMgr 2509 ships for OS deployment, how its steps handle Windows 11, and how its PXE responder boots WinPE without WDS |
-| `docs/research/configmgr-2509-osd/` | The first ConfigMgr 2509 report, the generated step catalog, and the binary inventory |
+| `docs/research/configmgr-2509-osd/` | The generated ConfigMgr 2509 step catalog and binary inventory, and how to rebuild them |
 | `tools/re/configmgr-osd/` | Scripts that rebuild the ConfigMgr research from the installer |
 | `docs/research/winpe-10.1.26100.9457.md` | Which DLLs and API sets base WinPE x64 provides, with the list the agent's import check reads |
 | `tools/re/winpe/` | The script that rebuilds the WinPE list from the ADK's WinPE add-on |
