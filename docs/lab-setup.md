@@ -117,7 +117,7 @@ The last line is `RESULT PASS`. The check writes a folder and a zip named `lab-c
 
 The experiments serve Microsoft's boot programs and WinPE, and the repository never holds them.
 
-1. Download the Windows 11 Enterprise evaluation ISO from the [Evaluation Center](https://www.microsoft.com/en-us/evalcenter/download-windows-11-enterprise). Choose the 64-bit ISO in English (United States). Microsoft asks for contact details first.
+1. Download the Windows 11 ISO for x64 devices from Microsoft's [download page](https://www.microsoft.com/software-download/windows11), in English (United States). Microsoft calls it a multi-edition ISO. The PXE experiments use only its WinPE and boot files, which come from `sources\boot.wim`.
 2. Download the BCD stores. In GitHub, open Actions, then the BCD workflow, and choose Run workflow on `main`. When the run finishes, download its `bcd-stores` artifact. The run from the pull request that added the stores also has one, until 2027-02-10: [run 43169481137](https://github.com/Tsukidy/deployarr/actions/runs/43169481137).
 3. Build the TFTP folders. Use the paths of your two downloads:
 
@@ -132,7 +132,7 @@ The script exports index 1 of `sources\boot.wim`, which is WinPE, as a single-im
 | `~/deployarr-lab/tftp/2011` | `bootmgfw.efi` and `wdsmgfw.efi`, signed by the Microsoft Windows Production PCA 2011 | #27 to #31 |
 | `~/deployarr-lab/tftp/2023` | `bootmgfw_EX.efi` and `wdsmgfw_EX.efi`, renamed, signed by the Windows UEFI CA 2023 | #32 |
 
-The last lines show the signer of each boot manager. The `_EX` copies come from `\Windows\Boot\EFI_EX` and `\Windows\Boot\PXE_EX` in the image. Their signers were read with `osslsigncode` in the `winpe.wim` of the ADK WinPE add-on 10.1.26100.9457. The evaluation ISO's `boot.wim` was not checked, and the script says so if it has no `_EX` copies.
+The last lines show the signer of each boot manager. The `_EX` copies come from `\Windows\Boot\EFI_EX` and `\Windows\Boot\PXE_EX` in the image. Their signers were read with `osslsigncode` in the `winpe.wim` of the ADK WinPE add-on 10.1.26100.9457. The `boot.wim` of the Windows 11 ISO was not checked, and the script says so if it has no `_EX` copies.
 
 Both folders have the same layout:
 
