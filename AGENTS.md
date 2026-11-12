@@ -198,7 +198,7 @@ It writes four files to `"$SCRATCH/winpe/out"`:
 - `apisets.tsv`, every API set and whether it resolves
 - `summary.txt`, the versions, sizes, hashes, and counts
 
-Copy `"$SCRATCH/winpe/out/winpe-x64-dlls.txt"` to `docs/research/winpe-<version>-x64-dlls.txt`. For a later add-on, pass the new link and SHA-256 as the second and third arguments. Then write a new research page for it, and point the import check at the new list.
+Copy `"$SCRATCH/winpe/out/winpe-x64-dlls.txt"` to `docs/research/winpe-<version>-x64-dlls.txt`. Copy `"$SCRATCH/winpe/out/system32-dlls.txt"` to `docs/research/winpe-<version>-system32-dlls.txt`. For a later add-on, pass the new link and SHA-256 as the second and third arguments. Then write a new research page for it, and point the import check at the new list.
 
 ### Pitfalls
 
