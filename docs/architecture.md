@@ -118,7 +118,7 @@ pub struct ExitCodes {
 }
 
 pub struct StepLimits {
-	pub max_runtime: Option<Duration>,
+	pub max_runtime_secs: Option<NonZeroU32>,   // whole seconds. Default none
 	pub rerun_if_interrupted: bool,   // default false
 }
 
@@ -128,8 +128,8 @@ pub enum Condition {
 	Not(Box<Condition>),
 	Var { name: VarName, op: CompareOp, value: Template },
 	Registry { key: Template, value: Option<String>, op: CompareOp, data: Option<RegData> },
-	File { path: Template, version: Option<(CompareOp, FileVersion)>, modified: Option<(CompareOp, DateTime)> },
-	Folder { path: Template, modified: Option<(CompareOp, DateTime)> },
+	File { path: Template, version: Option<Comparison<FileVersion>>, modified: Option<Comparison<Timestamp>> },
+	Folder { path: Template, modified: Option<Comparison<Timestamp>> },
 	InstalledMsi(MsiProduct),   // ProductCode or UpgradeCode. Full OS only
 	Wmi { namespace: String, query: Template, ignore_failure: bool },   // full OS only
 }
@@ -140,6 +140,63 @@ pub enum CompareOp { Exists, NotExists, Equals, NotEquals, Less, LessEqual, Grea
 Each MDT step type that does real work becomes a typed `Action` variant with typed parameters. `RunCommand` and `RunPowerShell` cover everything else. MDT passes every step's settings as untyped variables and command lines, so a typo becomes a runtime failure. With typed actions, the editor and the server reject a bad step when you save it.
 
 The condition types match what MDT's engine evaluates. MDT also has make, model, location, and computer conditions, which compare by substring, so a gateway of `10.0.0.1` also matches `10.0.0.10`. deployarr expresses those as `Var` conditions on gathered facts, which compare exactly.
+
+### Parameter types
+
+```rust
+pub struct NodeId(pub Uuid);
+pub struct Template(String);   // the text as written. Substitution happens at run time
+pub struct VarAssignment { pub name: VarName, pub value: Template }
+
+pub enum RunIn { WinPe, FullOs, Either }
+pub enum RestartTarget { WinPe, InstalledOs }
+pub enum DiskSelector { FirstInternal }   // the default
+pub enum DriverSelection { Auto, Profile, ProfileAll }
+pub enum MissingDriverPolicy { Fail, Warn, Ignore }
+pub enum AppSelection { One(AppId), FromList(VarName) }
+
+pub struct ReadinessChecks {
+	pub memory: MemoryCheck,         // min_mib. Default 4096, Fail
+	pub disk: DiskCheck,             // min_gb. Default 64, Fail
+	pub processor: ProcessorCheck,   // min_cores. Default 2, Fail
+	pub uefi: CheckMode,             // default Fail
+	pub tpm_2_0: CheckMode,          // default Fail
+	pub secure_boot: CheckMode,      // default Warn
+}
+
+pub enum CheckMode { Fail, Warn, Off }
+
+pub struct Comparison<T> { pub op: CompareOp, pub value: T }
+pub struct FileVersion { pub major: u16, pub minor: u16, pub build: u16, pub revision: u16 }
+pub struct Timestamp(pub OffsetDateTime);
+pub enum MsiProduct { ProductCode(Uuid), UpgradeCode(Uuid) }
+pub enum RegData { String(String), Integer(i64) }   // compared by the `Var` rules
+```
+
+- `NodeId` wraps a UUID. The core crate parses and writes IDs and never generates one. The `uuid` crate's `v4` feature needs `getrandom`, which does not build for `wasm32-unknown-unknown` without extra setup.
+- `TaskSequenceId` holds one or more of `A` to `Z`, digits, `_`, or `-`.
+- `VarName` holds 1 to 256 ASCII letters, digits, `_`, or `-`. Two names that differ only in case are equal. The name keeps the spelling its author wrote.
+- `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, and `AppId` are strings that reject an empty value.
+- `DiskSelector` has one rule so far, the first internal, non-removable disk.
+- The memory minimum is in mebibytes, the unit that firmware reports. The disk minimum is in decimal gigabytes, the unit that disks are sold in, because a disk sold as 64 GB holds less than 64 GiB.
+- `max_runtime_secs` is a whole number of seconds and is never zero, because a zero limit fails every run.
+- `FileVersion` is written as `a.b.c.d` and orders by its four fields. `Timestamp` is written in RFC 3339, such as `2026-01-31T08:00:00Z`.
+- `MsiProduct` is written as a GUID without braces. `RegData` is written as a bare JSON string or integer.
+
+### JSON format
+
+A task sequence is stored and sent as one JSON document. `TaskSequence::from_json` parses it into the types above.
+
+- The top-level `schema_version` is 1. The parser rejects any other version.
+- Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`.
+- A variant with data is an object with one key, the variant's name, such as `{"run_command": {"command": "ipconfig"}}`. A variant without data is a string, such as `"win_pe"`. Each node in `children` is `{"group": ...}` or `{"step": ...}`.
+- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `Option` field is none. Every other field is required.
+- An unknown field is an error, so a misspelled field name never passes as a default.
+- The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
+- A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
+- The parser checks each value by itself. The rules that span fields, such as an empty success list or a `run_in` that the action cannot honor, belong to the compiler, so that their errors name the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
+
+`crates/deployarr-core/tests/data/windows-11-pro.json` is a sample that uses every action and every condition.
 
 ## Task sequence engine
 
@@ -212,7 +269,7 @@ pub struct RunState {
 - A step can return `Reboot { rerun: false }` to reboot and continue with the next step, or `Reboot { rerun: true }` to run the same step again. These map to MDT's `SMSTSRebootRequested` and `SMSTSRetryRequested`.
 - The exit codes in `ExitCodes.reboot`, 3010 and 1641 by default, mean success and then a reboot. This is a deliberate difference from MDT, whose engine never reboots because of an exit code.
 - The agent saves state before every reboot, including a re-run. MDT's engine skips that save for a re-run, so the step's variable changes are lost. After saving, the agent writes a marker that the reboot clears: a volatile registry key in Windows, or a file on `X:` in WinPE. It refuses to resume while the marker exists. MDT's engine uses a volatile key the same way.
-- The agent runs each command in a Windows job object. When `max_runtime` passes, it ends the whole process tree and fails the step. MDT's templates set no time limit, so a hung step waits forever.
+- The agent runs each command in a Windows job object. When `max_runtime_secs` passes, it ends the whole process tree and fails the step. MDT's templates set no time limit, so a hung step waits forever.
 - The agent streams each step start, step result, and log line to the server. The server is the record of what happened, and the local journal covers network outages.
 
 The engine is a pure state machine over an `Executor` trait, so it is tested on Linux with a fake executor. The key test crashes the agent at every step boundary and checks that each resumed run ends in the same state as a run with no crash.
