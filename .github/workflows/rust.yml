@@ -1,0 +1,40 @@
+name: Rust
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Rust (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            wasm: true
+          - name: Windows
+            os: windows-latest
+            wasm: false
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: Add the wasm32 target
+        if: matrix.wasm
+        run: rustup target add wasm32-unknown-unknown
+      - name: Build deployarr-core for wasm32
+        if: matrix.wasm
+        run: cargo build -p deployarr-core --target wasm32-unknown-unknown

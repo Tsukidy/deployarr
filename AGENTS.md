@@ -117,7 +117,7 @@ These rules restate invariants from `docs/architecture.md`.
 - Every step that changes state in the engine or the agent must be safe to run again after a crash.
 - Bind SQL parameters. Never paste values into SQL text.
 - Never write a secret to a log, an event, or an error message.
-- CI runs `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` on Linux and Windows.
+- CI runs `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace` on Linux and Windows. On Linux it also runs `cargo build -p deployarr-core --target wasm32-unknown-unknown`.
 
 ## Reproduce the MDT research
 
