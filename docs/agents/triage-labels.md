@@ -35,6 +35,7 @@ These labels belong to this repository. The upstream skills do not know them.
 | --- | --- |
 | `epic` | A roadmap milestone. Its sub-issues are the tickets. An epic carries no category or state label. |
 | `area:*` | The part of deployarr an issue touches. An issue can carry several, or none. |
+| `bookkeeping` | Upkeep of the docs and agent guides, kept apart from milestone work. The owner uses it to point an agent at this work. It goes with a category and a state, like `area:*`. |
 
 ## Who applies each label
 
