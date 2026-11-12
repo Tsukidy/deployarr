@@ -4,7 +4,7 @@ This file is for coding agents that work in this repository. Claude Code reads i
 
 ## Project
 
-deployarr is a planned self-hosted Windows deployment server written in Rust, modeled on Microsoft Deployment Toolkit (MDT). A PC network-boots, the server finds what to install from a pre-staged record, an order in an optional SQL database, or a technician's pick from a list, and the PC installs that Windows edition, drivers, and applications with no further input.
+deployarr is a planned self-hosted Windows deployment server written in Rust, modeled on Microsoft Deployment Toolkit (MDT). A PC network-boots, the server finds what to install from a pre-staged record, an order in an optional SQL database, or a technician's pick from a list, and the PC installs that Windows edition, drivers, and applications. The only other input is the Windows product key from the PC's sticker, which a technician types in WinPE.
 
 The repository holds design documents only. There is no code yet. The next milestone is M0 in `docs/roadmap.md`.
 
@@ -13,7 +13,7 @@ The repository holds design documents only. There is no code yet. The next miles
 | Path | Holds |
 | --- | --- |
 | `docs/architecture.md` | The design and the reason for each decision. It is the source of truth for design. |
-| `docs/roadmap.md` | Milestones M0 to M9, the check that ends each one, and the open product questions |
+| `docs/roadmap.md` | Milestones M0 to M9, the check that ends each one, and any open product questions |
 | `docs/research/mdt-8456.md` | How MDT 8456 scripts and templates implement each feature, with citations |
 | `docs/research/mdt-8450-binaries.md` | What MDT's compiled components do, from the 8450 installer |
 | `docs/research/configmgr-2509.md` | What ConfigMgr 2509 ships for OS deployment, how its steps handle Windows 11, and how its PXE responder boots WinPE without WDS |
