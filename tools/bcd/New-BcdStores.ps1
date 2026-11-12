@@ -37,6 +37,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+$SetBlockSize = $PSBoundParameters.ContainsKey('RamdiskTftpBlockSize')
+$SetWindowSize = $PSBoundParameters.ContainsKey('RamdiskTftpWindowSize')
+
 $Variants = @(
     @{ Name = 'uefi'; LoaderId = '{7b0e1d6a-5c11-4f3e-9a52-2d3f6a8c0e01}'; Winload = 'winload.efi' },
     @{ Name = 'bios'; LoaderId = '{7b0e1d6a-5c11-4f3e-9a52-2d3f6a8c0e02}'; Winload = 'winload.exe' }
@@ -69,10 +72,10 @@ function New-BcdStore {
     Invoke-Bcdedit '/store', $store, '/create', '{ramdiskoptions}', '/d', 'deployarr ramdisk options'
     Invoke-Bcdedit '/store', $store, '/set', '{ramdiskoptions}', 'ramdisksdidevice', 'boot'
     Invoke-Bcdedit '/store', $store, '/set', '{ramdiskoptions}', 'ramdisksdipath', '\boot\boot.sdi'
-    if ($PSBoundParameters.ContainsKey('RamdiskTftpBlockSize')) {
+    if ($SetBlockSize) {
         Invoke-Bcdedit '/store', $store, '/set', '{ramdiskoptions}', 'ramdisktftpblocksize', "$RamdiskTftpBlockSize"
     }
-    if ($PSBoundParameters.ContainsKey('RamdiskTftpWindowSize')) {
+    if ($SetWindowSize) {
         Invoke-Bcdedit '/store', $store, '/set', '{ramdiskoptions}', 'ramdisktftpwindowsize', "$RamdiskTftpWindowSize"
     }
 
