@@ -68,11 +68,12 @@ Scope:
 - Agent WinPE mode: `wpeinit`, `drvload`, network, the console screen, and fact gathering (SMBIOS, adapters, firmware, Secure Boot, TPM, memory, processor cores, disks, device IDs).
 - The readiness check, with Microsoft's Windows 11 minimums as defaults.
 - Disk layouts for UEFI and BIOS, image download and apply, `bcdboot`, WinRE, and the unattend file.
-- The offline service install, the handoff to the new OS, the finish action, and cleanup.
+- The offline service install, the handoff to the new OS, the finish action for both end states, and cleanup.
 
 Check:
 - A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record.
 - One real PC does the same.
+- The UEFI VM runs once with each end state. With `ReadyToUse`, it boots to the sign-in screen with no OOBE. With `CustomerOobe`, it shuts down, shows OOBE on its next boot, and has no account that deployarr created. Neither leaves a cached answer file in `%WINDIR%\Panther`.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
 - On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. If base WinPE lacks `tbs.dll` or the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
 
@@ -176,6 +177,5 @@ None of these are scheduled yet:
 
 These do not block M0 to M2. Each one needs an answer before the milestone named in it.
 
-1. What state should a finished PC be in? One option is ready to use, with OOBE skipped and a local admin account. The other is ready for the customer. The PC deploys in audit mode and then runs `sysprep /oobe /shutdown`, so the customer sees OOBE on first boot. Needed before M3, because it changes the unattend templates and the finish action.
 2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8.
 3. How are PCs activated? Options are a firmware key, KMS or MAK, or OEM key injection. Needed before M3.

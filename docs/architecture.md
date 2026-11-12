@@ -14,6 +14,7 @@ These come from the product owner and drive every decision below.
 - Task sequences that work like MDT's: ordered groups and steps, conditions, variables, scripts, commands, and reboots.
 - Every device has a working driver when the deployment finishes.
 - Configurable applications, with a simple UI to manage drivers and software.
+- A finished PC ends in one of two states, picked for each deployment. A PC that is ready to use skips OOBE and has a local admin account. A PC that is ready for the customer deploys in audit mode and then runs `sysprep /oobe /shutdown`, so the customer sees OOBE on first boot.
 - Admins configure and run deployarr through a web UI. After the first release, a desktop program on the server shows the same UI in its own window.
 - Install from an ISO or a WIM.
 - A WinPE-based preinstall environment.
@@ -51,9 +52,9 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 5. The server runs the lookup chain (see [Order lookup](#order-lookup)). The result is a task sequence and a set of variables, or a request for the technician to type an order number or pick from the list.
 6. The server pins the task sequence version and sends the compiled program and variables to the agent.
 7. The agent runs the WinPE steps. A typical run checks readiness, partitions the disk, downloads and applies the OS image, injects drivers, writes the unattend file, runs `bcdboot`, and installs itself as a service in the offline image.
-8. The PC reboots into Windows Setup. When Setup finishes, the agent service resumes the sequence at the next step.
+8. The PC reboots into Windows Setup. When Setup finishes, or reaches audit mode, the agent service resumes the sequence at the next step.
 9. The agent installs applications, runs scripts, reboots as steps request, and checks that every device has a driver.
-10. The agent uploads its logs, removes itself, and runs the finish action (shut down, restart, or reseal).
+10. The agent uploads its logs, removes itself, and runs the finish action. A PC that is ready to use restarts or shuts down. A PC for the customer runs `sysprep /oobe /shutdown`. See [End state](#end-state).
 11. The server marks the deployment complete. Later PXE boots of that PC fall through to the local disk.
 
 ## Core data shapes
@@ -305,11 +306,25 @@ MDT resumes in the new OS through auto-logon as Administrator with a logon count
 1. Before the reboot, the agent copies itself to `W:\Deployarr\bin`.
 2. It loads the offline `SYSTEM` registry hive from `W:\Windows\System32\config` with `RegLoadKeyW`.
 3. It creates the `DeployarrAgent` service key: automatic start, running as LocalSystem, set to restart on failure.
-4. The service starts at boot. It waits until Windows Setup reports that it has finished, by watching `ImageState` and `SystemSetupInProgress`, and then continues the sequence.
+4. The service starts at boot. It waits until Windows Setup reports that it has finished, by watching `ImageState` and `SystemSetupInProgress`, and then continues the sequence. In the customer end state it continues in audit mode instead. See [End state](#end-state).
 
 This removes the stored Administrator password and the logon count from the deployment. It also makes the PC deploy the same way whether or not anyone is in front of it.
 
 The trade-off is that steps run as LocalSystem in session 0, with no desktop. A few installers fail without a logged-on user. For those, a later milestone adds a per-step option that runs the step in an auto-logon session with a one-time password. The agent removes that password after the step.
+
+## End state
+
+The owner ships some PCs ready to use and others ready for the customer, so each deployment picks one of two end states. The `EndState` variable holds the choice. A task sequence sets its default, and an order column or a pre-staged record can override it, because a value that is already set beats a sequence default. The server accepts only `ReadyToUse` and `CustomerOobe`, and it rejects any other value before the disk changes.
+
+- `ReadyToUse`: the unattend file skips OOBE and creates the local admin account with the PC's own password (see [Server](#server)). The finish action restarts the PC or shuts it down.
+- `CustomerOobe`: the unattend file sets `Microsoft-Windows-Deployment | Reseal | Mode` to `Audit` in the oobeSystem pass. Setup then ignores the other oobeSystem settings and starts the auditSystem pass ([Reseal Mode](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-reseal-mode)). The agent service runs the rest of the sequence in audit mode. Its last action is `sysprep /oobe /shutdown`, which Microsoft documents for a PC that goes to a customer ([Boot Windows to audit mode or OOBE](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe)). It does not pass `/generalize`, because the image stays on the PC it was applied to.
+
+Both states share these rules:
+
+- The agent service must also continue in audit mode. `IMAGE_STATE_COMPLETE` means that the specialize and oobeSystem passes are complete ([Windows Setup states](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-states)). A PC in audit mode has not finished OOBE, so the service cannot wait for that value alone (inferred). The M3 lab records the value that audit mode shows.
+- Before the finish action, the agent deletes the cached answer files in `%WINDIR%\Panther`. Microsoft says to delete the cached answer file before a PC goes to a customer ([Windows Setup automation overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)), and deployarr's answer file can hold passwords.
+- In `CustomerOobe`, the agent reports success, uploads its logs, and removes its service before it runs `sysprep`, because the shutdown ends its run. The customer's first boot starts no deployarr code.
+- `CustomerOobe` leaves no account or password that deployarr created. The M3 lab confirms it.
 
 ## Readiness check
 
