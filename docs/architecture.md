@@ -156,13 +156,17 @@ pub enum MissingDriverPolicy { Fail, Warn, Ignore }
 pub enum AppSelection { One(AppId), FromList(VarName) }
 
 pub struct ReadinessChecks {
-	pub memory: MemoryCheck,         // min_mib. Default 4096, Fail
-	pub disk: DiskCheck,             // min_gb. Default 64, Fail
-	pub processor: ProcessorCheck,   // min_cores. Default 2, Fail
+	pub memory: MemoryCheck,
+	pub disk: DiskCheck,
+	pub processor: ProcessorCheck,
 	pub uefi: CheckMode,             // default Fail
 	pub tpm_2_0: CheckMode,          // default Fail
 	pub secure_boot: CheckMode,      // default Warn
 }
+
+pub struct MemoryCheck { pub min_mib: u32, pub mode: CheckMode }        // mebibytes. Default 4096, Fail
+pub struct DiskCheck { pub min_gb: u32, pub mode: CheckMode }           // decimal gigabytes. Default 64, Fail
+pub struct ProcessorCheck { pub min_cores: u32, pub mode: CheckMode }   // processor cores. Default 2, Fail
 
 pub enum CheckMode { Fail, Warn, Off }
 
@@ -173,14 +177,17 @@ pub enum MsiProduct { ProductCode(Uuid), UpgradeCode(Uuid) }
 pub enum RegData { String(String), Integer(i64) }   // compared by the `Var` rules
 ```
 
-- `NodeId` wraps a UUID. The core crate parses and writes IDs and never generates one. The `uuid` crate's `v4` feature needs `getrandom`, which does not build for `wasm32-unknown-unknown` without extra setup.
+- `NodeId` wraps a UUID. The core crate parses and writes IDs and never generates one, so it leaves out the `uuid` crate's `v4` feature. On `wasm32-unknown-unknown`, `uuid` stops a build that has `v4` unless the build also turns on one of its randomness features: `js`, `rng-getrandom`, or `rng-rand`.
 - `TaskSequenceId` holds one or more of `A` to `Z`, digits, `_`, or `-`.
-- `VarName` holds 1 to 256 ASCII letters, digits, `_`, or `-`. Two names that differ only in case are equal. The name keeps the spelling its author wrote.
+- `VarName` holds 1 to 256 ASCII letters, digits, `_`, or `-`. Two names that differ only in case are equal. The name keeps the spelling its author wrote. The length, the character classes, and the case rule are MDT's. The ASCII limit is deployarr's choice. See [Variables](#variables).
 - `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, and `AppId` are strings that reject an empty value.
 - `DiskSelector` has one rule so far, the first internal, non-removable disk.
-- The memory minimum is in mebibytes, the unit that firmware reports. The disk minimum is in decimal gigabytes, the unit that disks are sold in, because a disk sold as 64 GB holds less than 64 GiB.
-- `max_runtime_secs` is a whole number of seconds and is never zero, because a zero limit fails every run.
-- `FileVersion` is written as `a.b.c.d` and orders by its four fields. `Timestamp` is written in RFC 3339, such as `2026-01-31T08:00:00Z`.
+- `MemoryCheck`, `DiskCheck`, and `ProcessorCheck` each hold a minimum and a `mode`, so the JSON for one is an object such as `{"min_mib": 4096, "mode": "fail"}`. The `uefi`, `tpm_2_0`, and `secure_boot` checks have no minimum, so each is a bare `CheckMode`, such as `"warn"`.
+- `min_mib` is in mebibytes of 2^20 bytes, so the default 4096 is 4 GiB. `min_gb` is in decimal gigabytes of 10^9 bytes, the unit that disks are sold in, because a disk sold as 64 GB holds less than 64 GiB. `min_cores` counts processor cores.
+- `max_runtime_secs` is a whole number of seconds and is never zero, because a zero limit fails every run. An earlier sketch had `max_runtime: Option<Duration>`. serde writes a `Duration` as an object with `secs` and `nanos`. deployarr limits a step in whole seconds, so the limit is one JSON integer and the field name carries the unit.
+- `Comparison<T>` has named `op` and `value` fields. An earlier sketch had the tuple `(CompareOp, T)`. serde writes a tuple as a JSON array, so a parse error would point at `version[1]`. With named fields it points at `version.value`.
+- `FileVersion` is written as `a.b.c.d` and orders by its four fields.
+- `Timestamp` is written in RFC 3339, such as `2026-01-31T08:00:00Z`. An earlier sketch had `DateTime` and named no format. RFC 3339 requires a UTC offset, so every value names one instant.
 - `MsiProduct` is written as a GUID without braces. `RegData` is written as a bare JSON string or integer.
 
 ### JSON format
@@ -189,12 +196,13 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 
 - The top-level `schema_version` is 1. The parser rejects any other version.
 - Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`.
-- A variant with data is an object with one key, the variant's name, such as `{"run_command": {"command": "ipconfig"}}`. A variant without data is a string, such as `"win_pe"`. Each node in `children` is `{"group": ...}` or `{"step": ...}`.
+- A variant with data is an object with one key, the variant's name, such as `{"run_command": {"command": "ipconfig"}}`. A variant without data is a string, such as `"win_pe"`. Each node in `children` is `{"group": ...}` or `{"step": ...}`. This is serde's externally tagged form. The other choice puts a `"type"` key inside the object. serde buffers such an object before it reads the variant, so the path of a parse error stops at `action` and does not reach the field that failed.
 - A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `Option` field is none. Every other field is required.
 - An unknown field is an error, so a misspelled field name never passes as a default.
 - The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
 - A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
-- The parser checks each value by itself. The rules that span fields, such as an empty success list or a `run_in` that the action cannot honor, belong to the compiler, so that their errors name the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
+- A value that is valid but not in canonical form still parses, and the serializer writes it back in canonical form. A GUID in upper case or in braces is written in lower case without braces. A file version part with leading zeros, such as `010`, is written as `10`. A timestamp with a lower-case `t` or `z`, a space in place of `T`, or a `+00:00` offset is written with `T` and `Z`. Any other offset is kept.
+- The parser checks each value by itself. It accepts an empty success list, an empty `All` or `Any`, and a `run_in` that the action cannot honor. The compiler rejects those when the sequence is saved, so that each error names the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
 
 `crates/deployarr-core/tests/data/windows-11-pro.json` is a sample that uses every action and every condition.
 
@@ -276,7 +284,7 @@ The engine is a pure state machine over an `Executor` trait, so it is tested on 
 
 ### Variables
 
-- A name is 1 to 256 letters, digits, `_`, or `-`, and names are case-insensitive. These are MDT's rules. Names that start with `_` belong to the agent, and steps can read them but not set them.
+- A name is 1 to 256 letters, digits, `_`, or `-`, and names are case-insensitive. These are MDT's rules. deployarr also limits the letters and digits to ASCII. That limit is deployarr's choice, because the [MDT 8450 binaries reference](research/mdt-8450-binaries.md#variables) does not say whether MDT accepts other letters. A strict set can loosen later without breaking a stored sequence. Names that start with `_` belong to the agent, and steps can read them but not set them.
 - A value is a scalar or a list. MDT's `Applications001`-style lists become real lists.
 - A value that is already set beats a sequence default. MDT's `globalVarList` follows the same rule.
 - `%Name%` inside a `Template` substitutes a value, and `%%` stands for a literal `%`. Substitution makes one pass from left to right and never scans inserted text again. A name that is not a task sequence variable falls back to the process environment, as in MDT. A name that neither defines fails the step. MDT leaves such a name in the text, and its expander scans inserted text again, so one stored value can make it loop forever.
