@@ -88,6 +88,7 @@ Check:
 - A UEFI VM with no order gets no reply and boots from its disk. A BIOS VM with no order gets `abortpxe.com`.
 - A TFTP test suite covers option-less requests, window size clamping, a retransmitted request, an ACK in the middle of a window, and a missing file.
 - The time to transfer `boot.wim` is measured and recorded with the image size, the network speed, and each block and window size tried.
+- At least four VMs PXE-boot at the same time. The time each takes to load `boot.wim` is recorded next to the time for one VM alone.
 
 ### M5. Order lookup
 
@@ -162,6 +163,7 @@ None of these are scheduled yet:
 - an auto-logon session for installers that fail as LocalSystem
 - iPXE and wimboot over HTTP for BIOS or Secure Boot off
 - multicast
+- PXE across routed subnets through DHCP relays, after a lab VM boots through a relay
 - IPv6 PXE, with DHCPv6 option 59 and the Microsoft vendor options that ConfigMgr sends
 - ARM64
 - Linux deployment
@@ -176,5 +178,4 @@ These do not block M0 to M2. Each one needs an answer before the milestone named
 1. What state should a finished PC be in? One option is ready to use, with OOBE skipped and a local admin account. The other is ready for the customer. The PC deploys in audit mode and then runs `sysprep /oobe /shutdown`, so the customer sees OOBE on first boot. Needed before M3, because it changes the unattend templates and the finish action.
 2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8.
 3. How are PCs activated? Options are a firmware key, KMS or MAK, or OEM key injection. Needed before M3.
-4. How many PCs deploy at once, and across how many subnets? Needed before M4, to size TFTP and decide between proxyDHCP and DHCP options.
 6. How do admins sign in: local accounts, Active Directory, or OIDC? Needed before M9.

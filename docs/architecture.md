@@ -17,6 +17,7 @@ These come from the product owner and drive every decision below.
 - Install from an ISO or a WIM.
 - A WinPE-based preinstall environment.
 - PXE boot for UEFI with Secure Boot on and for legacy BIOS.
+- PXE on one subnet, with as many PCs deploying at once as the server can serve. The design keeps routed subnets possible for a later release.
 - One central deployment server that runs on Windows or Linux.
 
 ## Components
@@ -422,10 +423,11 @@ deployarr's PXE design follows ConfigMgr's PXE responder, `sccmpxe.exe`, which b
 
 ### DHCP
 
-- proxyDHCP is the default. The existing DHCP server keeps handing out addresses, and deployarr answers only PXE clients. It binds UDP 67 and 4011 on each chosen interface address, so it knows which address to put in its replies. An admin chooses interfaces by MAC address. A setting skips port 67, so deployarr can run on a host that also runs a DHCP server.
+- deployarr works only as a proxyDHCP server. The existing DHCP server keeps handing out addresses, and deployarr answers only PXE clients. That server needs no options 66 and 67. It binds UDP 67 and 4011 on each chosen interface address, so it knows which address to put in its replies. An admin chooses interfaces by MAC address. A setting skips port 67, so deployarr can run on a host that also runs a DHCP server.
 - deployarr answers a DISCOVER or a REQUEST that carries option 93 (client architecture) and option 97 (machine GUID), as ConfigMgr does. It ignores INFORM.
 - The OFFER sets `siaddr` to deployarr's address and carries options 53, 54, 97 (echoed), 60 (`PXEClient`), and 82 (echoed when present). It carries no boot file and no option 43. Only the ACK to a REQUEST carries the boot file, in the BOOTP `file` field, with option 250 or option 252.
 - Replies go to the request's source address and port. deployarr broadcasts only when the source is `0.0.0.0`, and it answers a relayed request by unicast to the relay. On routed networks, a DHCP relay (IP helper) forwards PXE clients to deployarr.
+- The first release supports PXE on one subnet, and the lab tests only that. The relay handling above stays in the design, so routed subnets can come later without a redesign. Before they do, a lab VM must boot through a DHCP relay. RFC 2131 section 4.1 sends replies to the relay address in `giaddr`, and deployarr sends them to the source address, so that test also confirms the two match.
 - A PC with no order, or one whose deployment succeeded, gets no reply on UEFI, so the firmware moves on to the next boot device. On BIOS it gets `abortpxe.com`. ConfigMgr does the same.
 - deployarr cannot share UDP 67, 69, or 4011 with a Windows DHCP server or WDS on the same host. The installer checks for them.
 - IPv6 PXE is not in the first release. ConfigMgr's DHCPv6 reply carries option 59 with a `tftp://` URL and the BCD path in a Microsoft vendor option. It does not handle relayed DHCPv6.
@@ -444,6 +446,7 @@ deployarr's PXE design follows ConfigMgr's PXE responder, `sccmpxe.exe`, which b
 - After an ACK for a block inside the window, it resends from the next block, as RFC 7440 says. ConfigMgr resends the whole window.
 - File sizes and counters are 64-bit. ConfigMgr's 32-bit sizes cannot serve a file of 2 GiB or more.
 - One session exists per client address, port, and file, so a retransmitted request does not start a second transfer. ConfigMgr starts one for each.
+- No setting limits how many transfers run at once. Each transfer is its own async task, so the network link and the disk set the limit.
 - Each transfer has its own socket on the address that received the request. The retransmit timer is 5 seconds, with 5 retries, as in ConfigMgr. Both values are settings.
 - A request without options gets plain 512-byte blocks and no OACK. ConfigMgr's own WinPE TFTP client sends requests like that.
 - A missing file gets ERROR code 1 at once, so the boot manager's probes for files that do not exist fail fast.
@@ -485,7 +488,7 @@ The UI is written in Leptos and compiled to WebAssembly, so it uses the same `de
 - Applications: upload files, set the command, the detection rule, and dependencies, and test detection.
 - Order lookup: data source connections with a test button, named queries, the OS-code map, and the lookup chain. A test box takes an order number or a serial number and shows the resolved task sequence and its trace.
 - Machines: pre-staged PCs, with CSV import.
-- Boot images and PXE: build boot images, set the active image, and configure DHCP mode and interfaces.
+- Boot images and PXE: build boot images, set the active image, and choose the PXE interfaces and the port 67 setting.
 
 ## Crate layout
 
@@ -514,6 +517,7 @@ These are planned for later and kept out of the first release on purpose:
 - BitLocker
 - user state migration and in-place upgrades
 - multicast
+- PXE across routed subnets through a DHCP relay
 - IPv6 PXE
 - ARM64
 - Linux deployment
