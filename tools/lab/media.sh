@@ -10,7 +10,8 @@
 #   $LAB_DIR/tftp/2011  boot programs signed with the 2011 certificates
 #   $LAB_DIR/tftp/2023  the same, with the _EX boot managers, which are
 #                       signed with the Windows UEFI CA 2023
-#   $LAB_DIR/tftp/manifest.txt  every file's size, SHA-256, and signer
+#   $LAB_DIR/tftp/manifest.txt  every file's size, SHA-256, and the CA that
+#                       issued its signing certificate
 # Each run rebuilds both folders from the ISO. Never commit these files.
 set -euo pipefail
 # shellcheck source=lab.conf
@@ -89,9 +90,15 @@ else
     echo "This boot.wim has no _EX boot managers, so $tftp/2023 is not built." >&2
 fi
 
-signer() {
+# Prints the CN of the CA that issued the file's signing certificate, such as
+# "Microsoft Windows Production PCA 2011". It reads the first Issuer line under
+# "Signer's certificate:", because osslsigncode also prints the timestamp
+# countersignature's chain, and 2.13 prints that chain first. Older versions
+# write names as /C=US/.../CN=..., and 2.13 writes CN=...,O=...
+issuer() {
     osslsigncode verify -in "$1" 2>/dev/null |
-        sed -n 's/^[[:space:]]*Subject:.*CN=\(.*\)$/\1/p' | grep -E 'CA|PCA' | head -1 || true
+        awk '/^Signer.s certificate:/ { found = 1 } found && /^[[:space:]]*Issuer[[:space:]]*:/ { print; exit }' |
+        sed -n 's/.*CN=\([^,/]*\).*/\1/p' || true
 }
 
 {
@@ -99,11 +106,11 @@ signer() {
     echo "bcd_zip $(basename "$bcd_zip") sha256 $(sha256sum "$bcd_zip" | cut -d' ' -f1)"
     wiminfo "$tftp/boot.wim" 1 | grep -E '^(Name|Description|Architecture|Build|Service Pack Build|Major Version|Minor Version):'
     echo
-    printf '%-40s %10s  %-64s  %s\n' path bytes sha256 signer
+    printf '%-40s %10s  %-64s  %s\n' path bytes sha256 issuer
     cd "$tftp"
     find 2011 2023 -type f 2>/dev/null | sort | while read -r f; do
         s=""
-        [[ $f == *.efi || $f == *.exe ]] && s=$(signer "$f")
+        [[ $f == *.efi || $f == *.exe ]] && s=$(issuer "$f")
         printf '%-40s %10s  %-64s  %s\n' "$f" "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -d' ' -f1)" "${s:--}"
     done
 } >"$tftp/manifest.txt"
