@@ -95,3 +95,70 @@ def decode_dhcp_reply(raw: bytes) -> DhcpReply:
         ciaddr=socket.inet_ntoa(raw[12:16]), yiaddr=socket.inet_ntoa(raw[16:20]),
         siaddr=socket.inet_ntoa(raw[20:24]), giaddr=socket.inet_ntoa(raw[24:28]),
         chaddr=raw[28:44], sname=raw[44:108], file=raw[108:236], options=options)
+
+
+def tftp_request(filename: str, options: dict[str, str] | None = None, opcode: int = 1) -> bytes:
+    fields = [filename, "octet"]
+    for name, value in (options or {}).items():
+        fields += [name, value]
+    return struct.pack("!H", opcode) + b"".join(field.encode() + b"\x00" for field in fields)
+
+
+def tftp_ack(block: int) -> bytes:
+    return struct.pack("!HH", 4, block)
+
+
+def decode_tftp_error(packet: bytes) -> tuple[int, str]:
+    assert packet[:2] == b"\x00\x05", packet[:4]
+    return int.from_bytes(packet[2:4], "big"), packet[4:-1].decode()
+
+
+@dataclass
+class Download:
+    data: bytes
+    oack: dict[str, str] | None
+    block_sizes: list[int]
+    error: tuple[int, str] | None = None
+
+
+def tftp_get(server: tuple[str, int], filename: str, options: dict[str, str] | None = None,
+             timeout: float = 5.0) -> Download:
+    """A TFTP read with the block size and window the OACK grants. It sends
+    one ACK per window, and one for the last block."""
+    data = bytearray()
+    sizes: list[int] = []
+    oack = None
+    blksize, window = 512, 1
+    expected, in_window = 1, 0
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.settimeout(timeout)
+        sock.sendto(tftp_request(filename, options), server)
+        while True:
+            packet, peer = sock.recvfrom(65535)
+            opcode = int.from_bytes(packet[:2], "big")
+            if opcode == 5:
+                return Download(bytes(data), oack, sizes, decode_tftp_error(packet))
+            if opcode == 6:
+                fields = packet[2:].split(b"\x00")[:-1]
+                oack = {name.decode().lower(): value.decode() for name, value in zip(fields[::2], fields[1::2])}
+                blksize = int(oack.get("blksize", 512))
+                window = int(oack.get("windowsize", 1))
+                sock.sendto(tftp_ack(0), peer)
+                continue
+            assert opcode == 3, packet[:4]
+            if int.from_bytes(packet[2:4], "big") != expected % 65536:
+                sock.sendto(tftp_ack((expected - 1) % 65536), peer)
+                in_window = 0
+                continue
+            payload = packet[4:]
+            data += payload
+            sizes.append(len(payload))
+            expected += 1
+            in_window += 1
+            last = len(payload) < blksize
+            if last or in_window == window:
+                sock.sendto(tftp_ack((expected - 1) % 65536), peer)
+                in_window = 0
+            if last:
+                return Download(bytes(data), oack, sizes)

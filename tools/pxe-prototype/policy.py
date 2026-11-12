@@ -40,6 +40,7 @@ class IgnoreReason(Enum):
     NO_OPTION_93 = "no-option-93"
     NO_OPTION_97 = "no-option-97"
     UNSUPPORTED_ARCH = "unsupported-arch"
+    OTHER_INTERFACE = "other-interface"
 
 
 @dataclass(frozen=True)

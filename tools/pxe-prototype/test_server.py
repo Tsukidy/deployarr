@@ -1,0 +1,417 @@
+"""Loopback tests for the running server and the command line.
+Run with: python3 -m unittest"""
+import contextlib
+import io
+import re
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+from ipaddress import IPv4Address
+from pathlib import Path
+
+import pxe_prototype
+import reference
+from policy import Chain
+from server import Config, PxeServer
+from tftp import Limits
+
+DISCOVER, OFFER, REQUEST, ACK, INFORM = 1, 2, 3, 5, 8
+HERE = Path(__file__).parent
+BOOTMGFW = bytes(range(256)) * 20 + b"tail"
+SMALL = b"s" * 1300
+OTHER_INTERFACES = [name for _, name in socket.if_nameindex() if name != "lo"]
+
+
+def log_fields(line: str) -> dict[str, str]:
+    stamp, name, rest = line.rstrip("\n").split(" ", 2)
+    fields = {"time": stamp, "event": name}
+    for key, quoted, bare in re.findall(r'(\w+)=(?:"((?:[^"\\]|\\.)*)"|(\S*))', rest):
+        fields[key] = quoted.replace('\\"', '"') if quoted else bare
+    return fields
+
+
+class ServerCase(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name).resolve()
+        (self.root / "Boot" / "x64").mkdir(parents=True)
+        (self.root / "Boot" / "x64" / "bootmgfw.efi").write_bytes(BOOTMGFW)
+        (self.root / "small.bin").write_bytes(SMALL)
+        (self.root / "even.bin").write_bytes(b"e" * 1024)
+        self.log = io.StringIO()
+
+    def start(self, chain: str = "two-stage", **changes) -> PxeServer:
+        config = Config(
+            server_ip=IPv4Address("127.0.0.1"), root=self.root, chain=Chain(chain),
+            dhcp_bind="127.0.0.1", dhcp_ports=(0, 0), tftp_port=0,
+            limits=Limits(timeout=0.2, retries=2), log_stream=self.log, **changes)
+        pxe = PxeServer(config)
+        pxe.start()
+        self.addCleanup(pxe.stop)
+        return pxe
+
+    def client(self, timeout: float = 5.0) -> socket.socket:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.addCleanup(sock.close)
+        sock.bind(("127.0.0.1", 0))
+        sock.settimeout(timeout)
+        return sock
+
+    def events(self, name: str) -> list[dict[str, str]]:
+        lines = [log_fields(line) for line in self.log.getvalue().splitlines()]
+        return [fields for fields in lines if fields["event"] == name]
+
+    def wait_for(self, name: str, count: int = 1) -> list[dict[str, str]]:
+        deadline = time.monotonic() + 5.0
+        while len(self.events(name)) < count and time.monotonic() < deadline:
+            time.sleep(0.005)
+        found = self.events(name)
+        self.assertEqual(len(found), count, self.log.getvalue())
+        return found
+
+    def exchange(self, port: int, request: bytes) -> reference.DhcpReply:
+        sock = self.client()
+        sock.sendto(request, ("127.0.0.1", port))
+        raw, source = sock.recvfrom(65535)
+        self.assertEqual(source, ("127.0.0.1", port))
+        return reference.decode_dhcp_reply(raw)
+
+
+class TftpTest(ServerCase):
+    def test_download_without_options(self):
+        pxe = self.start()
+        got = reference.tftp_get(pxe.tftp_address, "small.bin")
+        self.assertEqual(got.data, SMALL)
+        self.assertIsNone(got.oack)
+        self.assertEqual(got.block_sizes, [512, 512, 276])
+
+    def test_download_with_options(self):
+        pxe = self.start()
+        got = reference.tftp_get(pxe.tftp_address, r"\Boot\x64\bootmgfw.efi",
+                                 {"blksize": "1024", "tsize": "0", "windowsize": "4"})
+        self.assertEqual(got.data, BOOTMGFW)
+        self.assertEqual(got.oack, {"blksize": "1024", "tsize": "5124", "windowsize": "4"})
+        self.assertEqual(got.block_sizes, [1024, 1024, 1024, 1024, 1024, 4])
+
+    def test_oack_states_the_clamped_values(self):
+        pxe = self.start()
+        got = reference.tftp_get(pxe.tftp_address, "small.bin", {"blksize": "65464", "windowsize": "64"})
+        self.assertEqual(got.oack, {"blksize": "32768", "windowsize": "32"})
+        self.assertEqual(got.data, SMALL)
+
+    def test_size_on_a_block_boundary_ends_with_an_empty_block(self):
+        pxe = self.start()
+        got = reference.tftp_get(pxe.tftp_address, "EVEN.BIN")
+        self.assertEqual(got.block_sizes, [512, 512, 0])
+        self.assertEqual(got.data, b"e" * 1024)
+
+    def test_refusals(self):
+        pxe = self.start()
+        cases = {
+            "missing file": (reference.tftp_request("missing.bin"), 1),
+            "directory": (reference.tftp_request("boot"), 1),
+            "parent folder": (reference.tftp_request(r"..\small.bin"), 2),
+            "write request": (reference.tftp_request("small.bin", opcode=2), 2),
+            "blksize 7": (reference.tftp_request("small.bin", {"blksize": "7"}), 8),
+            "not a request": (reference.tftp_ack(1), 4),
+        }
+        for name, (packet, code) in cases.items():
+            with self.subTest(name):
+                sock = self.client()
+                sock.sendto(packet, pxe.tftp_address)
+                reply, source = sock.recvfrom(65535)
+                self.assertEqual(source, pxe.tftp_address)
+                self.assertEqual(reference.decode_tftp_error(reply)[0], code)
+
+    def test_packet_from_another_port_gets_error_5_and_the_transfer_goes_on(self):
+        pxe = self.start()
+        sock, stranger = self.client(), self.client()
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        first, transfer_address = sock.recvfrom(65535)
+        self.assertNotEqual(transfer_address, pxe.tftp_address)
+        stranger.sendto(reference.tftp_ack(1), transfer_address)
+        self.assertEqual(reference.decode_tftp_error(stranger.recvfrom(65535)[0])[0], 5)
+        received = first[4:]
+        for block in (1, 2, 3):
+            sock.sendto(reference.tftp_ack(block), transfer_address)
+            if block < 3:
+                packet = sock.recvfrom(65535)[0]
+                self.assertEqual(packet[:4], b"\x00\x03" + (block + 1).to_bytes(2, "big"))
+                received += packet[4:]
+        self.assertEqual(received, SMALL)
+        finished, = self.wait_for("transfer-finished")
+        self.assertEqual((finished["outcome"], finished["retransmits"]), ("complete", "0"))
+
+    def test_repeated_request_does_not_start_a_second_transfer(self):
+        pxe = self.start()
+        sock = self.client(timeout=0.1)
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        sock.sendto(reference.tftp_request("SMALL.BIN"), pxe.tftp_address)
+        first, transfer_address = sock.recvfrom(65535)
+        self.assertEqual(first[:4], b"\x00\x03\x00\x01")
+        with self.assertRaises(TimeoutError):
+            sock.recvfrom(65535)
+        self.assertEqual(len(self.events("tftp-ignored")), 1)
+        self.assertEqual(self.events("tftp-ignored")[0]["reason"], "duplicate-request")
+        sock.sendto(b"\x00\x05\x00\x00stop\x00", transfer_address)
+        self.wait_for("transfer-finished")
+
+    def test_silent_client_times_out(self):
+        pxe = self.start()
+        sock = self.client()
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        packets = [sock.recvfrom(65535)[0] for _ in range(3)]
+        self.assertEqual(packets, [b"\x00\x03\x00\x01" + SMALL[:512]] * 3)
+        finished, = self.wait_for("transfer-finished")
+        self.assertEqual((finished["outcome"], finished["retransmits"], finished["bytes_acked"]),
+                         ("timeout", "2", "0"))
+        self.assertGreaterEqual(float(finished["seconds"]), 0.6)
+
+    def test_client_error_ends_the_transfer(self):
+        pxe = self.start()
+        sock = self.client()
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        _, transfer_address = sock.recvfrom(65535)
+        sock.sendto(b"\x00\x05\x00\x03Disk full\x00", transfer_address)
+        finished, = self.wait_for("transfer-finished")
+        self.assertEqual((finished["outcome"], finished["client_error"]), ("client-error", "3 Disk full"))
+
+    def test_stop_ends_a_transfer_in_progress(self):
+        pxe = self.start()
+        sock = self.client()
+        sock.sendto(reference.tftp_request("small.bin"), pxe.tftp_address)
+        sock.recvfrom(65535)
+        began = time.monotonic()
+        pxe.stop()
+        self.assertLess(time.monotonic() - began, 1.5)
+        self.assertEqual(self.events("transfer-finished")[0]["outcome"], "stopped")
+
+
+class DhcpTest(ServerCase):
+    def test_discover_on_each_port_gets_an_offer_at_the_sender(self):
+        pxe = self.start()
+        self.assertEqual(len(pxe.dhcp_ports), 2)
+        for port in pxe.dhcp_ports:
+            with self.subTest(port=port):
+                offer = self.exchange(port, reference.dhcp_request(DISCOVER, 7))
+                self.assertEqual(offer.option(53), bytes((OFFER,)))
+                self.assertEqual(offer.siaddr, "127.0.0.1")
+                self.assertEqual(offer.option(54), bytes((127, 0, 0, 1)))
+                self.assertEqual(offer.xid, 0x1234ABCD)
+                self.assertEqual(offer.file, bytes(128))
+
+    def test_requests_that_get_no_reply_are_logged_with_the_reason(self):
+        pxe = self.start()
+        sock = self.client(timeout=0.1)
+        sock.sendto(reference.dhcp_request(INFORM, 7), ("127.0.0.1", pxe.dhcp_ports[0]))
+        sock.sendto(b"not dhcp", ("127.0.0.1", pxe.dhcp_ports[1]))
+        with self.assertRaises(TimeoutError):
+            sock.recvfrom(65535)
+        ignored = self.wait_for("dhcp-ignored", 2)
+        self.assertEqual({(fields["port"], fields["reason"]) for fields in ignored},
+                         {(str(pxe.dhcp_ports[0]), "not-discover-or-request"),
+                          (str(pxe.dhcp_ports[1]), "malformed")})
+
+    def test_two_stage_conversation_ends_with_the_boot_manager(self):
+        pxe = self.start("two-stage")
+        port_67, port_4011 = pxe.dhcp_ports
+        offer = self.exchange(port_67, reference.dhcp_request(DISCOVER, 7))
+        self.assertEqual(offer.option(53), bytes((OFFER,)))
+        first = self.exchange(port_4011, reference.dhcp_request(REQUEST, 7))
+        self.assertEqual(first.file.rstrip(b"\x00"), rb"boot\x64\wdsmgfw.efi")
+        self.assertEqual(first.option(250), b"\x0b\x01\x02")
+        second = self.exchange(port_4011, reference.dhcp_request(
+            REQUEST, 7, option_250=bytes.fromhex("01020009" "0b0102")))
+        self.assertEqual(second.option(53), bytes((ACK,)))
+        self.assertEqual(second.file.rstrip(b"\x00"), rb"boot\x64\bootmgfw.efi")
+        self.assertEqual(second.option(252), rb"boot\uefi.bcd")
+        self.assertIsNone(second.option(250))
+        got = reference.tftp_get(pxe.tftp_address, second.file.rstrip(b"\x00").decode(),
+                                 {"tsize": "0", "blksize": "1456"})
+        self.assertEqual(got.data, BOOTMGFW)
+
+        received = self.events("dhcp-received")
+        self.assertEqual([fields.get("option_250") for fields in received],
+                         [None, None, "architecture(1)=0009,pxe_prompt(11)=02"])
+        self.assertEqual(received[0] | {"time": "", "source": ""}, {
+            "time": "", "event": "dhcp-received", "port": str(port_67), "source": "", "type": "DISCOVER",
+            "xid": "1234abcd", "mac": "52:54:00:aa:bb:cc", "arch": "0007",
+            "guid": "00101112131415161718191a1b1c1d1e1f", "options": "55,57,94,60"})
+        sent = [{key: fields.get(key) for key in ("type", "firmware", "step", "file", "option_250", "option_252")}
+                for fields in self.events("dhcp-sent")]
+        self.assertEqual(sent, [
+            {"type": "OFFER", "firmware": "uefi-x64", "step": None, "file": None,
+             "option_250": None, "option_252": None},
+            {"type": "ACK", "firmware": "uefi-x64", "step": "first", "file": r"boot\x64\wdsmgfw.efi",
+             "option_250": "pxe_prompt(11)=02", "option_252": None},
+            {"type": "ACK", "firmware": "uefi-x64", "step": "second", "file": r"boot\x64\bootmgfw.efi",
+             "option_250": None, "option_252": r"boot\uefi.bcd"},
+        ])
+
+    @unittest.skipUnless(hasattr(socket, "IP_PKTINFO"), "needs IP_PKTINFO")
+    def test_discover_that_arrives_on_the_configured_interface_is_answered(self):
+        pxe = self.start(interface="lo")
+        offer = self.exchange(pxe.dhcp_ports[0], reference.dhcp_request(DISCOVER, 7))
+        self.assertEqual(offer.option(53), bytes((OFFER,)))
+        self.assertEqual(self.events("started")[0]["interface"], "lo")
+
+    @unittest.skipUnless(OTHER_INTERFACES and hasattr(socket, "IP_PKTINFO"), "needs a second interface")
+    def test_discover_that_arrives_on_another_interface_is_ignored(self):
+        pxe = self.start(interface=OTHER_INTERFACES[0])
+        sock = self.client(timeout=0.1)
+        sock.sendto(reference.dhcp_request(DISCOVER, 7), ("127.0.0.1", pxe.dhcp_ports[0]))
+        with self.assertRaises(TimeoutError):
+            sock.recvfrom(65535)
+        ignored, = self.wait_for("dhcp-ignored")
+        self.assertEqual(ignored["reason"], "other-interface")
+        self.assertEqual(ignored["detail"], f"ifindex={socket.if_nametoindex('lo')}")
+        self.assertEqual(self.events("dhcp-received"), [])
+
+    def test_single_chain_names_the_boot_manager_in_the_first_ack(self):
+        pxe = self.start("single")
+        ack = self.exchange(pxe.dhcp_ports[0], reference.dhcp_request(REQUEST, 0))
+        self.assertEqual(ack.file.rstrip(b"\x00"), rb"boot\x64\pxeboot.n12")
+        self.assertEqual(ack.option(252), rb"boot\bios.bcd")
+
+
+class LogTest(ServerCase):
+    def test_started_line_says_what_the_run_tests(self):
+        pxe = self.start("single")
+        started, = self.events("started")
+        del started["time"]
+        self.assertEqual(started, {
+            "event": "started", "chain": "single", "server_ip": "127.0.0.1", "root": str(self.root),
+            "dhcp_bind": "127.0.0.1", "dhcp_ports": f"{pxe.dhcp_ports[0]},{pxe.dhcp_ports[1]}",
+            "tftp": f"127.0.0.1:{pxe.tftp_address[1]}", "bcd_uefi": r"boot\uefi.bcd",
+            "bcd_bios": r"boot\bios.bcd", "max_blksize": "32768", "max_windowsize": "32",
+            "timeout": "0.200000", "retries": "2", "block_wrap_first": "0", "block_log": "true"})
+
+    def test_transfer_is_logged_packet_by_packet(self):
+        pxe = self.start()
+        reference.tftp_get(pxe.tftp_address, "Small.bin", {"blksize": "1024", "tsize": "0"})
+        finished, = self.wait_for("transfer-finished")
+        self.assertGreater(float(finished.pop("seconds")), 0.0)
+        self.assertRegex(finished.pop("time"), r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}\+00:00$")
+        client = finished.pop("client")
+        self.assertEqual(finished, {
+            "event": "transfer-finished", "file": "Small.bin", "path": str(self.root / "small.bin"),
+            "size": "1300", "options": "blksize=1024,tsize=0", "blksize": "1024", "windowsize": "1",
+            "blocks_sent": "2", "retransmits": "0", "bytes_acked": "1300", "outcome": "complete"})
+        packets = [(fields["event"], fields["kind"], fields.get("block"), fields.get("options"))
+                   for fields in self.events("tftp-received") + self.events("tftp-sent")
+                   if fields["client"] == client]
+        self.assertEqual(packets, [
+            ("tftp-received", "RRQ", None, "blksize=1024,tsize=0"),
+            ("tftp-received", "ACK", "0", None),
+            ("tftp-received", "ACK", "1", None),
+            ("tftp-received", "ACK", "2", None),
+            ("tftp-sent", "OACK", None, "blksize=1024,tsize=1300"),
+            ("tftp-sent", "DATA", "1", None),
+            ("tftp-sent", "DATA", "2", None),
+        ])
+
+    def test_block_lines_can_be_left_out(self):
+        pxe = self.start(log_blocks=False)
+        reference.tftp_get(pxe.tftp_address, "missing.bin")
+        reference.tftp_get(pxe.tftp_address, "small.bin", {"blksize": "1024"})
+        self.wait_for("transfer-finished")
+        kinds = [(fields["event"], fields["kind"]) for fields in self.events("tftp-received") + self.events("tftp-sent")]
+        self.assertEqual(kinds, [("tftp-received", "RRQ"), ("tftp-received", "RRQ"),
+                                 ("tftp-sent", "ERROR"), ("tftp-sent", "OACK")])
+        self.assertEqual(self.events("started")[0]["block_log"], "false")
+
+    def test_file_name_from_the_network_stays_on_one_line(self):
+        pxe = self.start()
+        reference.tftp_get(pxe.tftp_address, 'a b\n2026 started chain="x"')
+        self.wait_for("tftp-sent")
+        self.assertEqual(len(self.log.getvalue().splitlines()), 3)
+        self.assertEqual(self.events("tftp-received")[0]["file"], 'a b\\u000a2026 started chain="x"')
+
+
+class CommandLineTest(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name).resolve()
+        self.required = ["--server-ip", "127.0.0.1", "--root", str(self.root), "--chain", "single",
+                         "--interface", "lo"]
+
+    def test_defaults(self):
+        config = pxe_prototype.parse_args(self.required)
+        self.assertEqual(config, Config(server_ip=IPv4Address("127.0.0.1"), root=self.root, chain=Chain.SINGLE,
+                                        interface="lo"))
+        self.assertEqual((config.dhcp_ports, config.tftp_port, config.dhcp_bind), ((67, 4011), 69, "0.0.0.0"))
+        self.assertEqual((config.layout.bcd_uefi, config.layout.bcd_bios), (r"boot\uefi.bcd", r"boot\bios.bcd"))
+        self.assertEqual((config.log_blocks, config.log_stream), (True, sys.stderr))
+
+    def test_every_flag(self):
+        log_file = self.root / "run.log"
+        config = pxe_prototype.parse_args([
+            "--server-ip", "192.0.2.10", "--root", str(self.root), "--chain", "two-stage",
+            "--interface", "br-lab", "--dhcp-ports", "4011", "--tftp-port", "6969",
+            "--bcd-uefi", r"lab\a.bcd", "--bcd-bios", r"lab\b.bcd", "--no-block-log",
+            "--log-file", str(log_file)])
+        self.addCleanup(config.log_stream.close)
+        self.assertEqual((config.server_ip, config.chain), (IPv4Address("192.0.2.10"), Chain.TWO_STAGE))
+        self.assertEqual((config.interface, config.dhcp_ports, config.tftp_port), ("br-lab", (4011,), 6969))
+        self.assertEqual((config.layout.bcd_uefi, config.layout.bcd_bios), (r"lab\a.bcd", r"lab\b.bcd"))
+        self.assertIs(config.log_blocks, False)
+        self.assertEqual(config.log_stream.name, str(log_file))
+
+    def test_bad_arguments_exit_with_a_message(self):
+        cases = {
+            "no chain": (self.required[:4] + self.required[6:], "--chain"),
+            "no interface": (self.required[:6], "--interface"),
+            "unknown chain": (self.required[:5] + ["three-stage"] + self.required[6:], "invalid choice"),
+            "bad address": (["--server-ip", "lab-host"] + self.required[2:], "--server-ip"),
+            "missing root": (self.required[:3] + [str(self.root / "none")] + self.required[4:], "is not a directory"),
+            "bad port": (self.required + ["--dhcp-ports", "67,70000"], "'70000' is not a UDP port"),
+            "long BCD path": (self.required + ["--bcd-uefi", "a" * 128], "longer than 127 bytes"),
+        }
+        for name, (argv, message) in cases.items():
+            with self.subTest(name):
+                stderr = io.StringIO()
+                with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as exit_:
+                    pxe_prototype.parse_args(argv)
+                self.assertEqual(exit_.exception.code, 2)
+                self.assertIn(message, stderr.getvalue())
+                self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_port_in_use_exits_with_a_message_that_names_it(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as busy:
+            busy.bind(("127.0.0.1", 0))
+            port = busy.getsockname()[1]
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                code = pxe_prototype.main(self.required + ["--dhcp-ports", "0", "--tftp-port", str(port)])
+        self.assertEqual(code, 1)
+        self.assertIn(f"cannot bind UDP 127.0.0.1:{port}: Address already in use", stderr.getvalue())
+
+    def test_unknown_interface_exits_with_a_message_that_names_it(self):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = pxe_prototype.main(self.required[:7] + ["no-such-if0", "--dhcp-ports", "0", "--tftp-port", "0"])
+        self.assertEqual(code, 1)
+        self.assertIn("no interface named no-such-if0", stderr.getvalue())
+
+    def test_runs_until_interrupted(self):
+        process = subprocess.Popen(
+            [sys.executable, str(HERE / "pxe_prototype.py"), *self.required,
+             "--dhcp-ports", "0", "--tftp-port", "0"],
+            stderr=subprocess.PIPE, text=True)
+        self.addCleanup(process.stderr.close)
+        self.addCleanup(process.kill)
+        started = log_fields(process.stderr.readline())
+        self.assertEqual((started["event"], started["chain"]), ("started", "single"))
+        process.send_signal(signal.SIGINT)
+        self.assertEqual(process.wait(timeout=5), 0)
+        self.assertEqual(process.stderr.read(), "")
+
+
+if __name__ == "__main__":
+    unittest.main()
