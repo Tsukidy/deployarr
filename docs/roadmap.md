@@ -1,6 +1,6 @@
 # Roadmap
 
-This page lists the build order for deployarr. Each milestone ends in a check that someone can run and watch pass. A milestone starts only when the one before it passes its check. For the design behind each item, see [Architecture](architecture.md).
+This page lists the build order for deployarr. Each milestone ends in a check that someone can run and watch pass. A milestone starts only when the one before it passes its check, except where a milestone says otherwise. For the design behind each item, see [Architecture](architecture.md).
 
 ## Test lab
 
@@ -91,13 +91,18 @@ Check:
 
 ### M5. Order lookup
 
+Order lookup is high priority. M5 starts as soon as M3 passes its check and runs alongside M4, because it needs the WinPE agent from M3 but not PXE. M6 starts when both M4 and M5 pass.
+
+Order lookup is optional for a deployarr installation. A server with no data source still deploys from pre-staged records and the manual list.
+
 Scope:
-- Data sources for SQL Server (`tiberius`), PostgreSQL, and MySQL (`sqlx`).
+- Data sources for SQL Server (`tiberius`), PostgreSQL, and MySQL (`sqlx`). All of them are optional.
 - Named queries with bound parameters, the OS-code map, and the lookup chain:
   1. pre-staged record
   2. order by baseboard serial
   3. order number prompt
   4. manual list
+- A chain an admin can reorder or trim, checked when it is saved, and a no-match screen for a PC that no resolver matches.
 - Placeholder filtering for SMBIOS values.
 - The variable trace in the UI and the lookup test box.
 
@@ -105,6 +110,8 @@ Check:
 - Integration tests pass against SQL Server, PostgreSQL, and MySQL containers.
 - A VM whose baseboard serial is in the test order table deploys the order's OS with no input.
 - A VM with an unknown serial stops at the order number prompt, deploys after the number is typed, and does not touch its disk before that.
+- With no data source configured, a VM with no pre-staged record shows the manual list and deploys the task sequence picked there. The server opens no connection to an order database.
+- With a chain of only the pre-staged record, an unknown VM stops at the no-match screen, and its disk is untouched.
 
 ### M6. Drivers
 
@@ -172,11 +179,11 @@ None of these are scheduled yet:
 
 ## Open questions
 
-These do not block M0 to M2. Each one needs an answer before the milestone named in it.
+These do not block M0 to M2. Each one needs an answer before the milestone named in it. Each question has a `ready-for-human` issue for the owner's answer. When it closes, a ticket records the answer here and in the architecture.
 
-1. What state should a finished PC be in? One option is ready to use, with OOBE skipped and a local admin account. The other is ready for the customer. The PC deploys in audit mode and then runs `sysprep /oobe /shutdown`, so the customer sees OOBE on first boot. Needed before M3, because it changes the unattend templates and the finish action.
-2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8.
-3. How are PCs activated? Options are a firmware key, KMS or MAK, or OEM key injection. Needed before M3.
-4. How many PCs deploy at once, and across how many subnets? Needed before M4, to size TFTP and decide between proxyDHCP and DHCP options.
-5. Should finished deployments write status back to the order database? Needed before M5, if yes.
-6. How do admins sign in: local accounts, Active Directory, or OIDC? Needed before M9.
+1. What state should a finished PC be in? One option is ready to use, with OOBE skipped and a local admin account. The other is ready for the customer. The PC deploys in audit mode and then runs `sysprep /oobe /shutdown`, so the customer sees OOBE on first boot. Needed before M3, because it changes the unattend templates and the finish action. Answer in [#34](https://github.com/Tsukidy/deployarr/issues/34).
+2. Should PCs join a domain, Entra ID, or Autopilot, or stay in a workgroup? Needed before M8. Answer in [#35](https://github.com/Tsukidy/deployarr/issues/35).
+3. How are PCs activated? Options are a firmware key, KMS or MAK, or OEM key injection. Needed before M3. Answer in [#36](https://github.com/Tsukidy/deployarr/issues/36).
+4. How many PCs deploy at once, and across how many subnets? Needed before M4, to size TFTP and decide between proxyDHCP and DHCP options. Answer in [#37](https://github.com/Tsukidy/deployarr/issues/37).
+5. Should finished deployments write status back to the order database? Needed before M5, if yes. Answer in [#38](https://github.com/Tsukidy/deployarr/issues/38).
+6. How do admins sign in: local accounts, Active Directory, or OIDC? Needed before M9. Answer in [#39](https://github.com/Tsukidy/deployarr/issues/39).

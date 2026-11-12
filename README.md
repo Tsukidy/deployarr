@@ -1,6 +1,6 @@
 # deployarr
 
-deployarr is a self-hosted Windows deployment server written in Rust. A PC network-boots, the server finds the PC's order in your SQL database, and the PC installs that order's Windows edition, drivers, and applications with no technician input. Its design follows Microsoft Deployment Toolkit (MDT), which Microsoft no longer distributes.
+deployarr is a self-hosted Windows deployment server written in Rust. A PC network-boots, the server finds what to install from a pre-staged record, an order in your SQL database, or a technician's pick from a list, and the PC installs that Windows edition, drivers, and applications with no further input. The SQL database is optional. Its design follows Microsoft Deployment Toolkit (MDT), which Microsoft no longer distributes.
 
 The project is in planning. There is no code yet.
 
