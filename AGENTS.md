@@ -6,7 +6,7 @@ This file is for coding agents that work in this repository. Claude Code reads i
 
 deployarr is a planned self-hosted Windows deployment server written in Rust, modeled on Microsoft Deployment Toolkit (MDT). A PC network-boots, the server finds the PC's order in an SQL database, and the PC installs that order's Windows edition, drivers, and applications with no technician input.
 
-The repository holds design documents only. There is no code yet. The next milestone is M0 in `docs/roadmap.md`.
+The repository holds the design documents and the Cargo workspace for M0. There is no feature code yet. The current milestone is M0 in `docs/roadmap.md`.
 
 ## Where things are
 
@@ -14,6 +14,8 @@ The repository holds design documents only. There is no code yet. The next miles
 | --- | --- |
 | `docs/architecture.md` | The design and the reason for each decision. It is the source of truth for design. |
 | `docs/roadmap.md` | Milestones M0 to M9, the check that ends each one, and the open product questions |
+| `crates/` | The workspace crates. See the [crate layout](docs/architecture.md#crate-layout). |
+| `xtask/` | Build tooling, run as `cargo xtask` |
 | `docs/research/mdt-8456.md` | How MDT 8456 scripts and templates implement each feature, with citations |
 | `docs/research/mdt-8450-binaries.md` | What MDT's compiled components do, from the 8450 installer |
 | `docs/research/configmgr-2509.md` | What ConfigMgr 2509 ships for OS deployment, how its steps handle Windows 11, and how its PXE responder boots WinPE without WDS |
@@ -106,11 +108,11 @@ Several agents can work in this repository at once. Each one delivers its work t
 
 ## Code rules
 
-These apply once the M0 workspace exists. They restate invariants from `docs/architecture.md`.
+These rules restate invariants from `docs/architecture.md`.
 
 - Crates live under `crates/` and build tooling under `xtask/`, as listed in the architecture's crate layout.
 - `deployarr-core` does no I/O. It must build for Linux, Windows, and `wasm32`.
-- `deployarr-agent` builds only for `x86_64-pc-windows-msvc` with the static C runtime. It must run in base WinPE, so it cannot use WMI or any DLL that base WinPE lacks.
+- `deployarr-agent` targets `x86_64-pc-windows-msvc` with the static C runtime. On any other target it builds a stub `main` that exits with code 1. It must run in base WinPE, so it cannot use WMI or any DLL that base WinPE lacks.
 - Parse external data into typed values where it enters the system. This covers config files, API requests, SQL rows, INF files, and SMBIOS tables. Code past that point trusts the types.
 - Every step that changes state in the engine or the agent must be safe to run again after a crash.
 - Bind SQL parameters. Never paste values into SQL text.

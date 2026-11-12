@@ -1,0 +1,6 @@
+[alias]
+xtask = "run --package xtask --"
+
+# A RUSTFLAGS or CARGO_ENCODED_RUSTFLAGS environment variable replaces these flags.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
