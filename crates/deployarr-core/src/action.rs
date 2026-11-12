@@ -7,7 +7,6 @@ use crate::template::Template;
 use crate::validated_string::validated_string;
 use crate::variable::VarName;
 
-/// What a step does.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
@@ -64,10 +63,6 @@ pub enum Action {
     },
 }
 
-/// How a command's exit code maps to a result.
-///
-/// An empty `success` list parses. The compiler rejects it when the sequence
-/// is saved, so that the error can name the node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ExitCodes {
@@ -88,7 +83,6 @@ impl Default for ExitCodes {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct StepLimits {
-    /// Never zero, because a zero limit would fail every run.
     pub max_runtime_secs: Option<NonZeroU32>,
     pub rerun_if_interrupted: bool,
 }
@@ -128,11 +122,10 @@ pub enum MissingDriverPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum AppSelection {
     One(AppId),
-    /// The variable that holds the list of applications.
     FromList(VarName),
 }
 
-/// The hardware checks of `CheckReadiness`. The defaults are Microsoft's Windows 11 minimums.
+/// The defaults are Microsoft's Windows 11 minimums.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ReadinessChecks {
@@ -169,7 +162,6 @@ pub enum CheckMode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MemoryCheck {
-    /// Mebibytes, 2^20 bytes, the unit firmware reports memory in.
     pub min_mib: u32,
     pub mode: CheckMode,
 }
@@ -230,10 +222,7 @@ macro_rules! non_empty_id {
 non_empty_id!(DiskLayoutId);
 non_empty_id!(OsImageRef);
 non_empty_id!(UnattendTemplateId);
-non_empty_id!(
-    /// A file in the content store, such as a PowerShell script.
-    ContentRef
-);
+non_empty_id!(ContentRef);
 non_empty_id!(AppId);
 
 fn check_not_empty(text: &str) -> Result<(), EmptyIdError> {

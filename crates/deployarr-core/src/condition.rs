@@ -8,10 +8,6 @@ use uuid::Uuid;
 use crate::template::Template;
 use crate::variable::VarName;
 
-/// A test that decides whether a group or a step runs.
-///
-/// An empty `All` or `Any` parses. The compiler rejects it when the sequence
-/// is saved, so that the error can name the node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Condition {
@@ -60,7 +56,6 @@ pub enum CompareOp {
     Like,
 }
 
-/// An operator and the value it compares the found value against.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Comparison<T> {
@@ -68,7 +63,6 @@ pub struct Comparison<T> {
     pub value: T,
 }
 
-/// Registry data to compare against. JSON writes it as a bare string or integer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged, expecting = "registry data is a string or an integer")]
 pub enum RegData {
@@ -76,7 +70,6 @@ pub enum RegData {
     Integer(i64),
 }
 
-/// A Windows file version. JSON writes it as `major.minor.build.revision`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct FileVersion {
@@ -148,12 +141,10 @@ impl fmt::Display for FileVersionError {
 
 impl std::error::Error for FileVersionError {}
 
-/// A point in time. JSON writes it in RFC 3339, such as `2026-01-31T08:00:00Z`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Timestamp(#[serde(with = "time::serde::rfc3339")] pub OffsetDateTime);
 
-/// The GUID that identifies an installed MSI product.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MsiProduct {

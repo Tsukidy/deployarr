@@ -8,13 +8,11 @@ use crate::condition::Condition;
 use crate::validated_string::validated_string;
 use crate::variable::VarAssignment;
 
-/// The JSON format this build reads and writes, as the top-level `schema_version`.
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSequence {
     pub id: TaskSequenceId,
-    /// Every save creates a new version.
     pub version: u32,
     pub name: String,
     pub default_vars: Vec<VarAssignment>,
@@ -22,7 +20,6 @@ pub struct TaskSequence {
 }
 
 impl TaskSequence {
-    /// Parses a task sequence document. The error names the field that failed.
     pub fn from_json(json: &str) -> Result<Self, ParseError> {
         let mut deserializer = serde_json::Deserializer::from_str(json);
         let sequence =
@@ -38,7 +35,6 @@ impl TaskSequence {
     }
 }
 
-/// Why a task sequence document did not parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParseError {
     path: String,
@@ -186,9 +182,6 @@ impl fmt::Display for TaskSequenceIdError {
 impl std::error::Error for TaskSequenceIdError {}
 
 /// A node's stable ID. It survives a rename or a move.
-///
-/// The crate parses and writes IDs and never generates one, because random
-/// numbers need platform support that `wasm32-unknown-unknown` lacks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct NodeId(pub Uuid);
@@ -221,12 +214,10 @@ pub struct Group {
 #[serde(deny_unknown_fields)]
 pub struct Step {
     pub meta: NodeMeta,
-    /// The compiler checks this against the action when the sequence is saved.
     pub run_in: RunIn,
     pub action: Action,
 }
 
-/// The environment a step runs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunIn {

@@ -1,8 +1,3 @@
-/// Defines a string newtype that only its `validate` function can admit.
-///
-/// The type parses from JSON and from `&str` through the same check, and
-/// serializes as a plain string. The caller supplies the derives, because
-/// `VarName` compares without regard to case and the others do not.
 macro_rules! validated_string {
     (
         $(#[$meta:meta])*

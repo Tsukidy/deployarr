@@ -107,9 +107,6 @@ impl VariantsSeen {
     }
 }
 
-/// The round trip only proves what the sample holds, so the sample must hold
-/// every variant. A new variant fails to compile in the matches above until it
-/// has a name, and then fails here until the sample uses it.
 #[test]
 fn sample_uses_every_action_and_condition_variant() {
     let sequence = TaskSequence::from_json(SAMPLE).expect("the sample parses");
@@ -342,8 +339,6 @@ fn omitted_comparisons_in_a_file_condition_are_none() {
     assert_eq!(modified, None);
 }
 
-/// Turns a JSON pointer such as `/root/children/0/group` into the path that a
-/// parse error reports, `root.children[0].group`.
 fn field_path(pointer: &str) -> String {
     let mut path = String::new();
     for token in pointer.split('/').skip(1) {
