@@ -18,7 +18,7 @@ The scripts in [`tools/lab/`](../tools/lab/) hold these settings in `lab.conf`.
 - 16 GB of memory and 100 GB of free disk. The check runs the three VMs at once, with 4 GB each.
 - Ubuntu 24.04 LTS, desktop or server. The scripts use its package versions and file paths.
 - An account that can run `sudo`.
-- About 6 GB of downloads, most of it the Windows ISO.
+- About 10 GB of downloads. The Windows ISO is 9 GB of it.
 
 The lab bridge has no uplink. The VMs reach only the host, and nothing on your network reaches the VMs.
 
@@ -117,9 +117,15 @@ The last line is `RESULT PASS`. The check writes a folder and a zip named `lab-c
 
 The experiments serve Microsoft's boot programs and WinPE, and the repository never holds them.
 
-1. Download the Windows 11 ISO for x64 devices from Microsoft's [download page](https://www.microsoft.com/software-download/windows11), in English (United States). Microsoft calls it a multi-edition ISO. The PXE experiments use only its WinPE and boot files, which come from `sources\boot.wim`.
-2. Download the BCD stores. In GitHub, open Actions, then the BCD workflow, and choose Run workflow on `main`. When the run finishes, download its `bcd-stores` artifact. The run from the pull request that added the stores also has one, until 2027-02-10: [run 43169481137](https://github.com/Tsukidy/deployarr/actions/runs/43169481137).
-3. Build the TFTP folders. Use the paths of your two downloads:
+1. Download the Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11). Choose Windows 11 (multi-edition ISO for x64 devices), then English, not English International, then 64-bit Download. The PXE experiments use only the ISO's `sources\boot.wim`, which holds WinPE and the boot programs, and its `boot\boot.sdi`.
+2. Check the ISO. Its SHA-256 must match the English 64-bit line under Verify your download on the same page:
+
+	```bash
+	sha256sum ~/Downloads/<Windows ISO>.iso
+	```
+
+3. Download the BCD stores. In GitHub, open Actions, then the BCD workflow, and choose Run workflow on `main`. When the run finishes, download its `bcd-stores` artifact. The run from the pull request that added the stores also has one, until 2027-02-10: [run 43169481137](https://github.com/Tsukidy/deployarr/actions/runs/43169481137).
+4. Build the TFTP folders. Use the paths of your two downloads:
 
 	```bash
 	tools/lab/media.sh ~/Downloads/<Windows ISO>.iso ~/Downloads/bcd-stores.zip
@@ -132,7 +138,18 @@ The script exports index 1 of `sources\boot.wim`, which is WinPE, as a single-im
 | `~/deployarr-lab/tftp/2011` | `bootmgfw.efi` and `wdsmgfw.efi`, signed by the Microsoft Windows Production PCA 2011 | #27 to #31 |
 | `~/deployarr-lab/tftp/2023` | `bootmgfw_EX.efi` and `wdsmgfw_EX.efi`, renamed, signed by the Windows UEFI CA 2023 | #32 |
 
-The last lines show the signer of each boot manager. The `_EX` copies come from `\Windows\Boot\EFI_EX` and `\Windows\Boot\PXE_EX` in the image. Their signers were read with `osslsigncode` in the `winpe.wim` of the ADK WinPE add-on 10.1.26100.9457. The `boot.wim` of the Windows 11 ISO was not checked, and the script says so if it has no `_EX` copies.
+The last lines show the CA that issued each boot manager's signing certificate. The `_EX` copies come from `\Windows\Boot\EFI_EX` and `\Windows\Boot\PXE_EX` in the image. Their signers were first read with `osslsigncode` in the `winpe.wim` of the ADK WinPE add-on 10.1.26100.9457. The script says so if an ISO's `boot.wim` has no `_EX` copies.
+
+A later download can have a different build and hash. The lab was built from this ISO:
+
+| Item | Value |
+| --- | --- |
+| File | `Windows11_Client_x64_en-us_26300_9457.iso`, 9,047,330,816 bytes |
+| SHA-256 | `bd4307df32bc8af33b39ccecb1174aeb345386630f89a2b86c7a4e36b55ea650` |
+| `sources\install.wim` | Build 26300.9457, 11 editions. Index 1 is Windows 11 Home and index 6 is Windows 11 Pro. |
+| `sources\boot.wim` index 1 | Microsoft Windows PE (amd64), build 26100.9457. It has the `_EX` boot managers, and their signers match the table above. |
+
+`media.sh` prints the WinPE build, and `manifest.txt` records the ISO's SHA-256.
 
 Both folders have the same layout:
 
