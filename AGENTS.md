@@ -21,6 +21,8 @@ The repository holds the design documents and the Cargo workspace for M0. There 
 | `docs/research/configmgr-2509.md` | What ConfigMgr 2509 ships for OS deployment, how its steps handle Windows 11, and how its PXE responder boots WinPE without WDS |
 | `docs/research/configmgr-2509-osd/` | The first ConfigMgr 2509 report, the generated step catalog, and the binary inventory |
 | `tools/re/configmgr-osd/` | Scripts that rebuild the ConfigMgr research from the installer |
+| `docs/research/winpe-10.1.26100.9457.md` | Which DLLs and API sets base WinPE x64 provides, with the list the agent's import check reads |
+| `tools/re/winpe/` | The script that rebuilds the WinPE list from the ADK's WinPE add-on |
 | `docs/agents/` | The issue workflow: the tracker operations, the triage labels, and the agent brief and ticket layouts |
 | `.out-of-scope/` | One page per rejected enhancement, with the reason. Its README gives the format. |
 | `tools/check_docs.py` | The docs check that CI runs: links, anchors, em and en dashes, and curly quotes |
@@ -129,6 +131,7 @@ These rules restate invariants from `docs/architecture.md`.
 | MDT 8456 hotfix KB4564442 (`Microsoft.BDD.Utility.dll` only) | `https://download.microsoft.com/download/3/0/6/306AC1B2-59BE-43B8-8C65-E141EF287A5E/KB4564442/MDT_KB4564442.exe` | `cd0bc2ec616ba5f8ddd626d02747b19c90efa1ba159303f2ff41ae693ec10b3f` |
 | MDT 8450 and 8456 scripts and templates | `Source/MDT.8450` and `Source/MDT.8456` in [keithga/DeployShared](https://github.com/keithga/DeployShared) | none |
 | ConfigMgr 2509 installer (`ConfigMgr_2509.exe`) | `https://go.microsoft.com/fwlink/?linkid=2350307&clcid=0x409&culture=en-us&country=us` | `4cb0380e2b1c43f1e0b2da266beddd1b975dd72537f8d8113c702eadf1e6e313` |
+| WinPE add-on for ADK 10.1.26100.9457 (`adkwinpesetup.exe`) | `https://go.microsoft.com/fwlink/?linkid=2289981` | `d4de67acc83de253ccc941dd0590808d83726bdd8ea768a374a7beaff7949d6a` |
 
 The MDT 8456 installer is gone. Its download link returned HTTP 404 on 2026-11-11. The DeployShared copy of the 8450 scripts matches the 8450 installer's scripts file for file.
 
@@ -177,6 +180,23 @@ PYTHON="$SCRATCH/venv/bin/python" bash tools/re/configmgr-osd/reproduce.sh "$SCR
 ```
 
 For a later release, pass the new link and SHA-256 as the second and third arguments. `ildump.py` prints the CIL of console methods that load a matching string, which is how the default disk layouts were read. It needs `dnfile` and `dncil`.
+
+### WinPE
+
+`tools/re/winpe/reproduce.sh` downloads the WinPE add-on setup program and checks its SHA-256. It reads the setup program's manifest and downloads one MSI. The MSI's tables name the CAB that holds the x64 `winpe.wim`, and the script downloads that CAB. It checks the SHA-1 of the MSI and the CAB against the manifest. It needs bash 4.4 or later, `curl`, `7z`, `msiinfo` from msitools, `sha1sum`, `sha256sum`, and Python 3.10 or later with no extra packages:
+
+```bash
+bash tools/re/winpe/reproduce.sh "$SCRATCH/winpe"
+```
+
+It writes four files to `"$SCRATCH/winpe/out"`:
+
+- `winpe-x64-dlls.txt`, the module and API set list
+- `system32-dlls.txt`, the modules in the case the image stores them
+- `apisets.tsv`, every API set and whether it resolves
+- `summary.txt`, the versions, sizes, hashes, and counts
+
+Copy `"$SCRATCH/winpe/out/winpe-x64-dlls.txt"` to `docs/research/winpe-<version>-x64-dlls.txt`. For a later add-on, pass the new link and SHA-256 as the second and third arguments. Then write a new research page for it, and point the import check at the new list.
 
 ### Pitfalls
 
