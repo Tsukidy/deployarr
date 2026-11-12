@@ -81,6 +81,7 @@ A short reader of each DLL's export table checked these names. The rerun script 
   1. Lower-case the import name.
   2. If it starts with `api-` or `ext-`, cut it at its last hyphen. Accept it when an `api-` or `ext-` list entry, cut the same way, is equal.
   3. Otherwise, accept it only when the list holds the same name.
+- `cargo xtask winpe-imports <exe>` applies these steps to the import table and the delay-load import table of an executable. It lists each rejected name with the table it came from. The Windows CI job runs it on the release build of `deployarr-agent`.
 - The check covers module names only. A module that resolves can still lack a function. For example, an API set import whose last number is higher than the stored one resolves to a host that may lack the newer functions (inferred). A stricter check rejects such an import. The M3 lab covers functions.
 - The list covers the image as Microsoft ships it. A boot image built from another add-on, or serviced with a cumulative update, needs its own page and list.
 
