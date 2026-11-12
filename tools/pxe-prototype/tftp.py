@@ -188,6 +188,9 @@ class Transfer:
     is `acked + 1` to `acked + windowsize`. The last block is short, and it
     is empty when the size is a multiple of the block size.
 
+    A repeated ACK for `acked` resends the window only while `acked` is
+    past every block that was sent twice. The timer covers the other cases.
+
     Every method that sends returns the datagrams to send and sets
     `deadline`, the time after which `on_timeout` resends.
     """
@@ -205,6 +208,7 @@ class Transfer:
         self.client_error: ClientError | None = None
         self.acked = 0
         self.sent_upto = 0
+        self._resent_upto = -1
         self.tries_left = limits.retries
         self.deadline = now + limits.timeout
         self.blocks_sent = 0
@@ -241,8 +245,12 @@ class Transfer:
         if index == self.acked:
             # RFC 1123 4.2.3.1: answering a repeated ACK in lock-step mode
             # doubles every later packet (the Sorcerer's Apprentice bug).
-            # With a window, a repeat means the client missed block acked + 1.
-            return self._window(now) if self._negotiated.windowsize > 1 else []
+            # With a window, a repeat means the client missed block acked + 1,
+            # unless a second copy of an earlier block caused it. Answering
+            # that repeat too doubles every later window.
+            if self._negotiated.windowsize > 1 and self.acked > self._resent_upto:
+                return self._window(now)
+            return []
         self.acked = index
         self.tries_left = self._limits.retries
         if index == self.last_block:
@@ -287,7 +295,10 @@ class Transfer:
         first = self.acked + 1
         last = min(self.acked + self._negotiated.windowsize, self.last_block)
         self.blocks_sent += last - first + 1
-        self.retransmits += max(0, min(last, self.sent_upto) - first + 1)
+        resent_upto = min(last, self.sent_upto)
+        if resent_upto >= first:
+            self.retransmits += resent_upto - first + 1
+            self._resent_upto = max(self._resent_upto, resent_upto)
         self.sent_upto = max(self.sent_upto, last)
         self.deadline = now + self._limits.timeout
         return [data_packet(self._wire_number(i), self._read_block(i))

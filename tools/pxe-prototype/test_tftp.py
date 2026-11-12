@@ -1,4 +1,5 @@
 """Tests for the TFTP protocol code. Run with: python3 -m unittest"""
+import collections
 import tempfile
 import unittest
 from pathlib import Path
@@ -195,13 +196,64 @@ class TransferTest(unittest.TestCase):
         self.assertEqual(t.on_ack(1, 100.2), [])
         self.assertEqual((t.blocks_sent, t.retransmits), (2, 0))
 
-    def test_repeated_ack_with_a_window_resends_the_window(self):
+    def test_repeated_ack_with_a_window_resends_the_window_once(self):
         t = transfer(8000, windowsize=4)
         t.start(100.0)
         window = [data(n, chunk(n, 512, 8000)) for n in (5, 6, 7, 8)]
         self.assertEqual(t.on_ack(4, 100.1), window)
         self.assertEqual(t.on_ack(4, 100.2), window)
+        self.assertEqual(t.on_ack(4, 100.3), [])
         self.assertEqual((t.blocks_sent, t.retransmits), (12, 4))
+
+    def test_repeated_ack_that_follows_a_resend_sends_nothing(self):
+        t = transfer(8000, windowsize=4)
+        t.start(100.0)
+        t.on_ack(4, 100.1)
+        t.on_ack(4, 100.2)
+        self.assertEqual(t.on_ack(8, 100.3), [data(n, chunk(n, 512, 8000)) for n in (9, 10, 11, 12)])
+        self.assertEqual(t.on_ack(8, 100.4), [])
+        last_window = [data(n, chunk(n, 512, 8000)) for n in (13, 14, 15, 16)]
+        self.assertEqual(t.on_ack(12, 100.5), last_window)
+        self.assertEqual(t.on_ack(12, 100.6), last_window)
+        self.assertEqual((t.blocks_sent, t.retransmits), (24, 8))
+
+    def test_repeated_ack_after_a_timeout_resend_sends_nothing(self):
+        t = transfer(8000, windowsize=4)
+        first = t.start(100.0)
+        self.assertEqual(t.on_timeout(105.0), first)
+        self.assertEqual(t.on_ack(4, 105.1), [data(n, chunk(n, 512, 8000)) for n in (5, 6, 7, 8)])
+        self.assertEqual(t.on_ack(4, 105.2), [])
+
+    def blocks_sent_when_block_2_is_lost_once(self, windowsize: int, acks_per_gap: int) -> int:
+        """A receiver that gets every packet in order except the first copy
+        of block 2. It answers the first `acks_per_gap` out-of-order blocks
+        in a row with an ACK for its last good block."""
+        t = transfer(10100, windowsize=windowsize)
+        wire = collections.deque(t.start(0.0))
+        expected, in_window, gap_acks, lost = 1, 0, 0, False
+        while wire:
+            self.assertLess(t.blocks_sent, 1000, "retransmit storm")
+            block = int.from_bytes(wire.popleft()[2:4], "big")
+            if block == 2 and not lost:
+                lost = True
+            elif block != expected:
+                in_window = 0
+                if gap_acks < acks_per_gap:
+                    gap_acks += 1
+                    wire.extend(t.on_ack(expected - 1, 0.0))
+            else:
+                expected, in_window, gap_acks = expected + 1, in_window + 1, 0
+                if expected > t.last_block or in_window == windowsize:
+                    in_window = 0
+                    wire.extend(t.on_ack(expected - 1, 0.0))
+        self.assertEqual((t.phase, t.bytes_acked), (Phase.DONE, 10100))
+        return t.blocks_sent
+
+    def test_one_lost_block_costs_about_one_window(self):
+        self.assertEqual(transfer(10100).last_block, 20)
+        for windowsize, acks_per_gap, blocks_sent in ((4, 1, 23), (4, 99, 23), (8, 1, 27), (8, 99, 27)):
+            with self.subTest(windowsize=windowsize, acks_per_gap=acks_per_gap):
+                self.assertEqual(self.blocks_sent_when_block_2_is_lost_once(windowsize, acks_per_gap), blocks_sent)
 
     def test_ack_for_a_block_not_sent_is_ignored(self):
         t = transfer(8000, windowsize=4)
