@@ -48,17 +48,24 @@ MDT 8450 ships the task sequence engine at file version 5.0.8540.1000 ([MDT 8450
 | `OSD/bin/x64/tsmanager.exe` | `eb30ac3109d61fdda5e9609f72b54c68ee706309c5967fff44075a056b30a2d2` |
 | `OSD/bin/x64/tsmbootstrap.exe` | `d2e2a5e313d29e822ae18452d1b347b662f9fb7b93476711f9fcb1eecce691b0` |
 
-`OSD/bin/x64` holds 49 ConfigMgr binaries at that version and 5 Visual C++ runtime DLLs at 14.28.29914.0. All are native x64 code. `OSD/bin` has only `I386` and `x64` folders, with no ARM64 folder. Ten binaries in `OSD/bin/x64` still name `CCM::Utility::IsARM64` in their strings, as text or as a decorated import name, among them `tsmanager.exe`, `tsmbootstrap.exe`, and `OSDUpgradeOS.exe`. The engine therefore checks for ARM64 (inferred from the name).
+`OSD/bin/x64` holds 49 ConfigMgr binaries at that version and 5 Visual C++ runtime DLLs at 14.28.29914.0. All are native x64 code. `OSD/bin` has only `I386` and `x64` folders, with no ARM64 folder.
+
+Ten binaries in `OSD/bin/x64` still name `CCM::Utility::IsARM64`:
+
+- `ccmcore.dll` exports it as a decorated name. `OSDUpgradeOS.exe` and `OsdBitLocker.exe` import it from `ccmcore.dll` (import and export tables, read with pefile).
+- `ccmcore.dll` and seven other binaries hold both the name as text and the log line "Running on ARM64". The seven are `tsmanager.exe`, `tsmbootstrap.exe`, `tsbootshell.exe`, `tsprogressui.exe`, `osdgina.dll`, `OsdSetupHook.exe`, and `OsdBitLocker_wtg.exe`.
+- These eight include the progress UI and the GINA replacement `osdgina.dll`. The text therefore comes from CCM utility code that they share (inferred).
+- `OSDUpgradeOS.exe` uses it to check for an ARM64 OS and upgrade package ([Upgrade Operating System](#upgrade-operating-system)). This analysis did not trace whether `tsmanager.exe` calls it.
 
 ## Steps and their executables
 
 Each step class names the executable it runs in its `CommandLine` qualifier (`_TaskSequenceProvider.mof`). The [step catalog](configmgr-2509-osd/task-sequence-steps.md) lists every class with its full command line. 36 classes carry a command line, and they name 26 executables. Some executables serve several steps. `OSDApplyOS.exe` applies both operating system and data images, and `smsswd.exe` runs both command lines and packages. None of the command lines runs `cscript.exe`.
 
-`tsmanager.exe` names `CCM::Utility::UseCscript` and logs "Adding silent switch to wscript.exe command line", so it changes a `wscript.exe` command line that a step gives it (inferred from strings, not decompiled).
+Eight `OSD/bin/x64` binaries name `CCM::Utility::UseCscript` and log "Adding silent switch to wscript.exe command line". They are the eight that log "Running on ARM64" ([The engine MDT runs is ConfigMgr code](#the-engine-mdt-runs-is-configmgr-code)), including `tsmanager.exe`, the progress UI `tsprogressui.exe`, and `osdgina.dll`. These strings therefore belong to shared CCM utility code (inferred). This analysis did not trace whether `tsmanager.exe` applies the switch to a step's command line.
 
 ### Native counterparts to MDT scripts
 
-Each MDT 8456 script below has a native step in ConfigMgr 2509 with the same purpose. Each pair matches the script's `Purpose:` comment, on lines 14 to 18 of the script, to a step class, so the pairing is inferred.
+Each MDT 8456 script below has a native step in ConfigMgr 2509 with a similar purpose. Each pair matches the script's `Purpose:` comment, on lines 14 to 18 of the script, to a step class. The notes below the table give more evidence for some pairs. The pairing is inferred.
 
 | MDT script | Step class (`SMS_TaskSequence_` prefix) | Executable |
 | --- | --- | --- |
@@ -68,18 +75,23 @@ Each MDT 8456 script below has a native step in ConfigMgr 2509 with the same pur
 | `LTIApply.wsf` | `ApplyOperatingSystemAction`, `ApplyDataImageAction` | `OSDApplyOS.exe` |
 | `LTIApply.wsf` in MDT's upgrade step | `UpgradeOperatingSystemAction` | `OSDUpgradeOS.exe` |
 | `ZTIDrivers.wsf` | `AutoApplyAction`, `ApplyDriverPackageAction` | `osddriverclient.exe` |
-| `ZTIBde.wsf` | `EnableBitLockerAction`, `OfflineEnableBitLockerAction`, `DisableBitLockerAction` | `OSDBitLocker.exe`, `OSDOfflineBitlocker.exe` |
+| `ZTIBde.wsf` | `EnableBitLockerAction`, `OfflineEnableBitLockerAction` | `OSDBitLocker.exe`, `OSDOfflineBitlocker.exe` |
+| `ZTIDisableBDEProtectors.wsf` | `DisableBitLockerAction` | `OSDBitLocker.exe` |
 | `ZTIUserState.wsf` | `CaptureUserStateAction`, `RestoreUserStateAction` | `osdmigrateuserstate.exe` |
 | `ZTIDomainJoin.wsf` | `JoinDomainWorkgroupAction` | `osdjoin.exe` |
 | `ZTIPowerShell.wsf` | `RunPowerShellScriptAction` | `OSDRunPowerShellScript.exe` |
 | `ZTIWindowsUpdate.wsf` | `InstallUpdateAction` | `TSInstallSWUpdate.exe` |
 | `ZTIApplications.wsf` | `InstallApplicationAction`, `InstallSoftwareAction` | `smsappinstall.exe`, `smsswd.exe` |
+| `ZTINICConfig.wsf` | `CaptureNetworkSettingsAction`, `ApplyNetworkSettingsAction` | `osdnetsettings.exe` |
 | `ZTIConfigure.wsf` | `ApplyWindowsSettingsAction`, `ApplyNetworkSettingsAction` | `osdwinsettings.exe`, `osdnetsettings.exe` |
 | `ZTISetVariable.wsf` | `SetVariableAction` | `tsenv.exe` |
 
 - MDT's in-place upgrade template runs `LTIApply.wsf` in a `BDD_UpgradeOS` step with `IsOSUpgrade` set to 1 (`Templates/ClientUpgrade.xml:37-43`).
-- `ZTIDomainJoin.wsf` only verifies and recovers a domain join in the State Restore phase (`ZTIDomainJoin.wsf:15`). It covers part of what `JoinDomainWorkgroupAction` does (inferred).
-- `ZTIConfigure.wsf` writes settings into the answer files (`ZTIConfigure.wsf:16`). The two ConfigMgr steps do the same work for Windows and network settings (inferred from the class names).
+- MDT's client template runs `ZTIBde.wsf` in a step of type `SMS_TaskSequence_EnableBitLockerAction` (`Templates/Client.xml:398-414`). It runs `ZTIDisableBDEProtectors.wsf` in its "Disable BDE Protectors" step (`Templates/Client.xml:85-90`). That script suspends BitLocker by calling `DisableKeyProtectors` (`ZTIDisableBDEProtectors.wsf:96-98`).
+- This analysis did not decompile `OSDBitLocker.exe`. How it handles Windows 11 details, such as the default encryption method, is an open question.
+- `ZTINICConfig.wsf` saves the settings of adapters without DHCP in the State Capture phase of a refresh and restores them in State Restore (`ZTINICConfig.wsf:102-153`). It reads `OSDMigrateAdapterSettings` and writes `OSDAdapterCount` (`ZTINICConfig.wsf:109-110`, `ZTINICConfig.wsf:138`). The [step catalog](configmgr-2509-osd/task-sequence-steps.md) maps these two variables to `CaptureNetworkSettingsAction` and `ApplyNetworkSettingsAction`. MDT's client template runs the script in its "Capture Network Settings" step (`Templates/Client.xml:74-76`).
+- `ZTIDomainJoin.wsf` only verifies and recovers a domain join in the State Restore phase (`ZTIDomainJoin.wsf:15`). The join itself goes through the unattend file, where `ZTIConfigure.wsf` writes `JoinDomain` ([MDT 8456 reference](mdt-8456.md#unattend)). `ZTIDomainJoin.wsf` therefore covers only part of what `JoinDomainWorkgroupAction` does (inferred).
+- `ZTIConfigure.wsf` writes settings into the answer files (`ZTIConfigure.wsf:16`). Its mappings include the computer name, product key, admin password, time zone, and locales, which `ApplyWindowsSettingsAction` also takes. They also include the domain, OU, and workgroup, which `ApplyNetworkSettingsAction` takes (`ZTIConfigure.xml:103-216`, [step catalog](configmgr-2509-osd/task-sequence-steps.md)).
 - Every ConfigMgr executable in the table is native code ([binary inventory](configmgr-2509-osd/osd-x64-inventory.tsv)), so none of these steps needs `cscript.exe` or VBScript.
 
 ## Check Readiness
@@ -108,9 +120,9 @@ One function runs every check in order (`OsdPrestartCheck!0x140001780`):
 - The checks call helpers exported by `tscore.dll`. They are `TS::Utility::GetTotalPhysicalMemory`, `GetProcessorSpeed`, `IsFreeDiskSpaceAvailable`, `GetOsType`, `GetClientVersion`, `IsUEFI`, `GetBatteryStatus`, and `ConnectedNetworkAdapterIsFound`.
 - The disk check falls back to `IsFreeDiskSpaceNoPartitionsAvailable`, so an unpartitioned disk with enough space passes.
 - The power check passes when the PC is on AC power. A `GetBatteryStatus` result of 2 passes with the log line "Device has a battery but is wired".
-- The TPM checks call `TS::BitLocker::Tpm::InitializeEx`, which returns a version string. The step parses it with `swscanf_s("%d.%d")` and fails a major version below 2. It then reads `Tpm::GetInitialState`. Bit 0 means enabled and bit 1 means activated. `tscore.dll` builds its TPM class on WMI `Win32_Tpm` (inferred from its strings).
+- The TPM checks call `TS::BitLocker::Tpm::InitializeEx`, which returns a version string. The step parses it with `swscanf_s("%d.%d")` and fails a major version below 2. In that case it logs "TPM 2.0 or higher is not enabled. Found version of TPM is %d.%d which is less than required 2.0" (`OsdPrestartCheck.exe` strings). It then reads `Tpm::GetInitialState`. Bit 0 means enabled and bit 1 means activated. `tscore.dll` builds its TPM class on WMI `Win32_Tpm` (inferred from its strings).
 - No check covers Secure Boot, processor model, or core count.
-- Two helpers are open questions. Which `Win32_Tpm` property feeds the version string from `InitializeEx` was not traced. `tscore.dll` names `SpecVersion` in its strings, so that property is likely. How `GetProcessorSpeed` measures the speed is also open, because only its call site and strings were read.
+- Two helpers are not yet understood. This analysis did not trace which `Win32_Tpm` property feeds the version string from `InitializeEx`. `tscore.dll` names `SpecVersion` in its strings, so that property is likely. This analysis read only the call site and strings of `GetProcessorSpeed`, so how it measures the speed is open.
 
 Microsoft lists these Windows 11 minimums: a compatible 64-bit processor at 1 GHz with two or more cores, 4 GB of memory, 64 GB of storage, UEFI firmware that is Secure Boot capable, and TPM 2.0 ([Windows 11 requirements](https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements), dated 2026-07-14). Every Check Readiness default is below these, and the UEFI and TPM checks start off.
 
@@ -138,11 +150,12 @@ The console's new task sequence wizard builds these layouts (`NewTaskSequenceWiz
 | UEFI | disk 0, GPT, `GPTBootDisk` true | EFI, FAT32, 500 MB. MSR, 128 MB. Windows, NTFS, 99%. Recovery, NTFS, 100% of what remains |
 | BIOS | disk 0, MBR | System, NTFS, 350 MB, bootable. Windows, NTFS, 99%. Recovery, NTFS, 100% of what remains |
 
-- Each layout's step gets a condition with four expressions. They are `_SMSTSClientCache` `notExists`, `_SMSTSMediaType` `notEquals` `OEMMedia`, `_OSDMigrateUseHardlinks` `notEquals` `true`, and `_SMSTSBootUEFI` `equals` `true` for UEFI or `notEquals` `true` for BIOS (`Utils.GetDefaultPartitionDiskConditionObject`, IL offsets `0x83a0` to `0x84ff`). The BIOS layout sets its `forBios` argument to true through a one-argument overload, and the UEFI layout passes false (`0x87bb`, `0x8add`).
+- Each layout's step gets a condition with four expressions (`Utils.GetDefaultPartitionDiskConditionObject`, IL offsets `0x83a0` to `0x84ff`). Three are the same for both layouts. They are `_SMSTSClientCache` `notExists`, `_SMSTSMediaType` `notEquals` `OEMMedia`, and `_OSDMigrateUseHardlinks` `notEquals` `true`. The fourth is `_SMSTSBootUEFI` `equals` `true` for UEFI and `_SMSTSBootUEFI` `notEquals` `true` for BIOS.
+- The method takes a `forBios` argument. The BIOS layout sets it to true through a one-argument overload (`0x87bb`). The UEFI layout passes false (`0x8add`).
 - The Windows partition gets 100% instead of 99% when the wizard leaves out the Recovery partition. One branch picks the constant and skips the Recovery block (inferred from the IL; the flag's source was not traced).
 - The Recovery partition is about 1% of the disk. That is about 640 MB on a 64 GB disk and about 10 GB on a 1 TB disk.
 - Microsoft sizes the Recovery partition differently. Its minimum is the size of `\Windows\System32\Recovery\winre.wim` in the image, plus any WinRE customizations, plus 250 MB for servicing. Microsoft also sets the EFI partition at 200 MB or more, or 300 MB or more on 4K native disks, and the MSR at 16 MB ([UEFI/GPT-based hard drive partitions](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions?view=windows-11)).
-- `osddiskpart.exe` and `OSDBitLocker.exe` were not decompiled. How they handle Windows 11 details, such as the default BitLocker encryption method, is an open question.
+- This analysis did not decompile `osddiskpart.exe`. How it handles Windows 11 details is an open question.
 
 ## Upgrade Operating System
 
@@ -173,7 +186,8 @@ Other behavior:
 - `OSDSetDynamicVariables.exe` calls `TS::Utility::GatherDataForDynamicVariables`, then reads rules from the variable `OSDSetDynamicVariablesRules`. The rules are XML. Each `Rules/Rule` has an optional `condition` and a list of `Variables/Variable` elements with a `Name` attribute. A condition uses the step condition evaluator, including make and model expressions. For a hidden variable the step also sets `<name>_HiddenValueFlag` to `true`, which keeps the value out of logs (`OSDSetDynamicVariables.exe` strings, the effect inferred).
 - The gathered variables are `_SMSTSMake`, `_SMSTSModel`, `_SMSTSSerialNumber`, `_SMSTSUUID`, `_SMSTSAssetTag`, `_SMSTSMacAddresses`, `_SMSTSIPAddresses`, and `_SMSTSDefaultGateways`. `tscore.dll` reads WMI `Win32_ComputerSystemProduct`, `Win32_BIOS`, `Win32_SystemEnclosure`, and `Win32_NetworkAdapterConfiguration`, and calls `CcmGetIPAddressInformation` (`tscore.dll` strings). Which class feeds which variable is inferred.
 - `tscore.dll` contains no `ChassisTypes` string. ConfigMgr gathers no chassis type and no virtual machine flag. MDT's gather sets `IsLaptop`, `IsDesktop`, and `IsVM` ([MDT 8456 reference](mdt-8456.md#gathered-facts)).
-- MDT's gather also sets `IsServer`, `IsOnBattery`, `Memory`, and `ProcessorSpeed` (`ZTIGather.wsf:631-639`), and its rules can query a database or a web service ([MDT 8456 reference](mdt-8456.md#rules-and-database-lookup)). Set Dynamic Variables gathers none of these values, and its rules have no database or web service lookup (inferred from the gathered variables and the rule format above).
+- MDT's gather also sets `IsServer`, `IsOnBattery`, `Memory`, and `ProcessorSpeed` (`ZTIGather.wsf:631-639`). Set Dynamic Variables gathers none of these values (inferred from the gathered variables above).
+- MDT's rules can query a database or a web service ([MDT 8456 reference](mdt-8456.md#rules-and-database-lookup)). The rules of Set Dynamic Variables have no such lookup (inferred from the rule format above).
 
 ## PXE responder
 
