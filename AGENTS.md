@@ -30,7 +30,7 @@ The repository holds the design documents and the Cargo workspace for M0. There 
 | `tools/check_docs.py` | The docs check that CI runs: links, anchors, em and en dashes, and curly quotes |
 | `.github/` | Issue forms, the pull request template, labels, workflows, and `CODEOWNERS` |
 
-Read `docs/architecture.md`, `docs/roadmap.md`, and the pages under `docs/research/` by outline first and then by section. `python3 tools/doc_section.py <file>` prints a doc's outline, and `python3 tools/doc_section.py <file> <anchor>` prints the section under one heading anchor.
+Read `docs/architecture.md`, `docs/roadmap.md`, and the pages under `docs/research/` by outline first and then by section. `python3 tools/doc_section.py <file>` prints a doc's outline. `python3 tools/doc_section.py <file> <anchor>` prints one section.
 
 ## Rules for changes
 

@@ -11,7 +11,10 @@ its level as `#` marks, and its anchor. A section runs from its heading to the
 next heading of the same or a higher level, so it includes its subsections.
 
 The anchor is the one a link uses, such as `agent` in
-`docs/architecture.md#agent`. That link also works as a single argument.
+`docs/architecture.md#agent`. That link also works as a single argument, and
+so does a GitHub link to a file in this repository, such as
+`https://github.com/Tsukidy/deployarr/blob/main/docs/architecture.md#agent`.
+The second argument is always an anchor, even when it starts with `-`.
 Headings, anchors, and the numbering of repeated anchors come from
 `check_docs.py`, so every anchor the docs check accepts works here. A `#` line
 inside a code fence or an HTML comment is not a heading. When two headings
@@ -21,12 +24,20 @@ An unknown anchor exits with status 1 and lists the file's anchors.
 """
 import argparse
 import os
+import re
 import sys
+import urllib.parse
 from typing import NamedTuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from check_docs import headings  # noqa: E402
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# A link to a file of this repository, or of a fork, on one branch or commit.
+GITHUB_LINK = re.compile(
+    r"^https://github\.com/[^/]+/deployarr/blob/[^/]+/(?P<path>[^?#]+)(?:\?[^#]*)?(?:#(?P<anchor>.*))?$"
+)
 
 
 class Section(NamedTuple):
@@ -74,11 +85,20 @@ def main(argv=None):
         prog="doc_section.py",
         description="Print a Markdown doc's outline, or the section under one heading anchor.",
     )
-    parser.add_argument("file", help="the Markdown file, or FILE#ANCHOR")
+    parser.add_argument("file", help="the Markdown file, FILE#ANCHOR, or a GitHub link to a file in this repository")
     parser.add_argument("anchor", nargs="?", help="the heading anchor whose section to print")
+    argv = list(sys.argv[1:] if argv is None else argv)
+    # The heading `--dry-run` has the anchor --dry-run, so read the second argument as an anchor, not an option.
+    if len(argv) == 2 and not argv[0].startswith("-") and argv[1] != "--":
+        argv.insert(1, "--")
     args = parser.parse_args(argv)
     path, anchor = args.file, args.anchor
-    if anchor is None and "#" in path and not os.path.exists(path):
+    link = GITHUB_LINK.match(path)
+    if link:
+        path = os.path.relpath(os.path.join(ROOT, urllib.parse.unquote(link["path"])))
+        if anchor is None:
+            anchor = link["anchor"]
+    elif anchor is None and "#" in path and not os.path.exists(path):
         path, anchor = path.split("#", 1)
     try:
         with open(path, encoding="utf-8", newline="") as handle:

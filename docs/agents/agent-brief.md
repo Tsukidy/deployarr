@@ -85,6 +85,6 @@ Read first:
 - #<blocking issue number>
 ```
 
-Under "Read first", link each doc to the heading of the section the agent needs, such as `docs/architecture.md#agent`, not to the whole file. Link a doc's title heading only when the agent needs all of it. Write each link as a full URL on `main`, as the layout shows. The agent reads the linked section with `python3 tools/doc_section.py docs/architecture.md agent`.
+Under "Read first", link each doc to the heading of the section the agent needs, such as `docs/architecture.md#agent`, not to the whole file. Link a doc's title heading only when the agent needs all of it. Write each link as a full URL on `main`, as the layout shows. The agent passes the link to `python3 tools/doc_section.py` as written to read that section.
 
 Write `None (can start immediately).` under `## Blocked by` when nothing blocks the ticket. Leave out `## Out of scope` when there is nothing to say. The [Issue tracker](issue-tracker.md#blocking) page explains how the blockers become native links.

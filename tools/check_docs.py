@@ -29,6 +29,8 @@ FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 CODE_SPAN = re.compile(r"(`+).+?\1")
 COMMENT = re.compile(r"<!--.*?-->", re.S)
+# Every character that str.splitlines() does not split on.
+NOT_BREAK = re.compile(r"[^\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]")
 SKIP_DIRS = {".git", "target", "node_modules"}
 
 
@@ -56,8 +58,16 @@ def outside_fences(lines):
     return kept, fence is not None
 
 
-def uncomment(text):
-    return COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), text)
+def uncommented_lines(text):
+    """Return text.splitlines() with HTML comments removed, so line N is still line N of the text.
+
+    Each comment character that is not a line break becomes NUL before the
+    split, and the NULs are dropped after it. Writing a newline for each
+    break in a comment would shift the lines after a comment that holds a
+    lone carriage return or a form feed.
+    """
+    masked = COMMENT.sub(lambda m: NOT_BREAK.sub("\0", m.group(0)), text)
+    return [line.replace("\0", "") for line in masked.splitlines()]
 
 
 def slug(heading):
@@ -78,7 +88,7 @@ def headings(text):
     A repeated anchor gets the suffix -1, -2, and so on, in document order.
     """
     seen = Counter()
-    lines, _ = outside_fences(uncomment(text).splitlines())
+    lines, _ = outside_fences(uncommented_lines(text))
     for number, line in lines:
         match = HEADING.match(line)
         if not match:
@@ -113,7 +123,7 @@ def check(root):
             for char, what in BANNED.items():
                 if char in line:
                     problems.append(f"{path}:{number}: {what}")
-        lines, unclosed = outside_fences(uncomment(text).splitlines())
+        lines, unclosed = outside_fences(uncommented_lines(text))
         if unclosed:
             problems.append(f"{path}: code fence is never closed")
         for number, line in lines:

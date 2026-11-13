@@ -2,14 +2,17 @@
 import contextlib
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import check_docs  # noqa: E402
+import doc_section  # noqa: E402
 from doc_section import find, main, outline  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -144,6 +147,21 @@ class OutlineTest(unittest.TestCase):
         self.assertIsNone(find(self.sections, "commented-out"))
         self.assertIn("## Commented out", self.section("alpha-1"))
 
+    def test_line_breaks_inside_a_comment_keep_later_sections_in_place(self):
+        # str.splitlines() breaks on all of these, so each one inside a comment is a line.
+        for brk in ("\n", "\r\n", "\r", "\v", "\f", "\x1c", "\x85", "\u2028", "\u2029"):
+            with self.subTest(brk=brk):
+                sections = outline(f"# A\n<!-- x{brk}y -->\n## B\nbody b\n## C\nbody c\n")
+                self.assertEqual([(s.anchor, s.line) for s in sections], [("a", 1), ("b", 4), ("c", 6)])
+                self.assertEqual(find(sections, "b").text, "## B\nbody b\n")
+                self.assertEqual(find(sections, "c").text, "## C\nbody c\n")
+
+    def test_a_lone_carriage_return_before_a_comment_keeps_later_sections_in_place(self):
+        for text, line in (("x\r<!--\ny-->\n## B\nbody\n", 4), ("x\r<!-- y -->\n## B\nbody\n", 3)):
+            with self.subTest(text=text):
+                [section] = outline(text)
+                self.assertEqual((section.anchor, section.line, section.text), ("b", line, "## B\nbody\n"))
+
     def test_size_is_the_section_byte_count(self):
         for s in self.sections:
             self.assertEqual(s.size, len(s.text.encode("utf-8")))
@@ -184,6 +202,33 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(run(self.path, "#beta"), expected)
         self.assertEqual(run(f"{self.path}#beta"), expected)
 
+    def test_github_links_resolve_against_the_repository(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root)
+        os.mkdir(os.path.join(root, "docs"))
+        shutil.copy(self.path, os.path.join(root, "docs", "sample.md"))
+        expected = run(self.path, "beta")
+        url = "https://github.com/Tsukidy/deployarr/blob/main/docs/sample.md"
+        with mock.patch.object(doc_section, "ROOT", root):
+            self.assertEqual(run(url + "#beta"), expected)
+            self.assertEqual(run(url + "?plain=1#beta"), expected)
+            self.assertEqual(run(url, "beta"), expected)
+            self.assertEqual(run(url + "#alpha", "beta"), expected)
+            code, out, err = run(url)
+            self.assertEqual((code, err), (0, ""))
+            self.assertIn("8 headings", out.splitlines()[0])
+            code, out, err = run("https://github.com/Tsukidy/deployarr/blob/main/docs/missing.md#beta")
+            self.assertEqual((code, out), (2, ""))
+            self.assertIn("No such file", err)
+
+    def test_an_anchor_can_start_with_a_dash(self):
+        with open(self.path, "w", encoding="utf-8", newline="") as handle:
+            handle.write("# Flags\n\n## `--dry-run`\n\nNo changes.\n\n## `-v`\n\nMore output.\n")
+        self.assertEqual(run(self.path, "--dry-run"), (0, "## `--dry-run`\n\nNo changes.\n\n", ""))
+        self.assertEqual(run(self.path, "-v"), (0, "## `-v`\n\nMore output.\n", ""))
+        self.assertEqual(run(self.path, "--", "-v"), (0, "## `-v`\n\nMore output.\n", ""))
+        self.assertEqual(run(self.path, "#--dry-run"), run(self.path, "--dry-run"))
+
     def test_unknown_anchor_fails_and_lists_anchors(self):
         code, out, err = run(self.path, "gamma")
         self.assertEqual(code, 1)
@@ -207,12 +252,12 @@ class CommandTest(unittest.TestCase):
         self.assertIn("No such file", err)
 
     def test_runs_as_a_command(self):
+        # -I leaves the script's folder off sys.path, so this also checks that it finds check_docs.py.
         result = subprocess.run(
-            [sys.executable, "-I", SCRIPT, os.path.join(ROOT, "docs", "architecture.md"), "agent"],
-            capture_output=True, text=True, encoding="utf-8", check=False,
+            [sys.executable, "-I", SCRIPT, self.path, "beta"],
+            capture_output=True, text=True, encoding="utf-8", check=False, cwd=tempfile.gettempdir(),
         )
-        self.assertEqual((result.returncode, result.stderr), (0, ""))
-        self.assertTrue(result.stdout.startswith("## Agent\n"))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), run(self.path, "beta"))
 
 
 class RepositoryDocsTest(unittest.TestCase):
