@@ -4,7 +4,7 @@
 //! value came from. It does not persist itself. The engine saves it with the
 //! rest of the run state.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -14,7 +14,7 @@ use crate::variable::VarName;
 
 mod redaction;
 
-pub use redaction::{MASK, Redactor};
+pub use redaction::Redactor;
 
 /// A variable's value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,8 +76,12 @@ pub enum Source {
     Fact,
     /// A rule.
     Rule,
-    /// A column of a data source row.
-    DataSource,
+    /// A lookup chain match: a pre-staged record, or a row that a resolver
+    /// returned.
+    ///
+    /// The architecture's trace also names the resolver. `Source` cannot yet,
+    /// because the lookup chain's `Resolver` type is not in `deployarr-core`.
+    Lookup,
     /// A technician's answer to a prompt.
     Prompt,
     /// A step, through `SetVariable` or `deployarr-agent var set`.
@@ -86,6 +90,65 @@ pub enum Source {
     SequenceDefault,
     /// The agent's own bookkeeping, through [`Vars::set_by_agent`].
     Agent,
+}
+
+/// A [`Source`] that [`Vars::set`] accepts.
+///
+/// It leaves out [`Source::SequenceDefault`] and [`Source::Agent`]. A sequence
+/// default goes through [`Vars::apply_default`], which keeps a value that is
+/// already set. The agent writes through [`Vars::set_by_agent`]. So the trace
+/// cannot record a default that replaced a set value, or an agent write that
+/// the agent did not make.
+///
+/// ```
+/// use deployarr_core::store::{Sensitivity, SetSource, Vars};
+///
+/// let mut vars = Vars::new();
+/// vars.set("TimeZone".parse()?, "UTC", Sensitivity::Plain, SetSource::Rule)?;
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
+///
+/// The compiler rejects the two other sources:
+///
+/// ```compile_fail,E0308
+/// use deployarr_core::store::{Sensitivity, Source, Vars};
+///
+/// let mut vars = Vars::new();
+/// vars.set("TimeZone".parse()?, "UTC", Sensitivity::Plain, Source::SequenceDefault)?;
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
+///
+/// ```compile_fail,E0308
+/// use deployarr_core::store::{Sensitivity, Source, Vars};
+///
+/// let mut vars = Vars::new();
+/// vars.set("TimeZone".parse()?, "UTC", Sensitivity::Plain, Source::Agent)?;
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SetSource {
+    /// See [`Source::Fact`].
+    Fact,
+    /// See [`Source::Rule`].
+    Rule,
+    /// See [`Source::Lookup`].
+    Lookup,
+    /// See [`Source::Prompt`].
+    Prompt,
+    /// See [`Source::Step`].
+    Step(NodeId),
+}
+
+impl From<SetSource> for Source {
+    fn from(source: SetSource) -> Self {
+        match source {
+            SetSource::Fact => Self::Fact,
+            SetSource::Rule => Self::Rule,
+            SetSource::Lookup => Self::Lookup,
+            SetSource::Prompt => Self::Prompt,
+            SetSource::Step(node) => Self::Step(node),
+        }
+    }
 }
 
 /// One variable in the store.
@@ -137,12 +200,16 @@ impl fmt::Debug for Var {
 /// A deployment's task sequence variables.
 ///
 /// Names are case-insensitive, by the same rule as [`VarName`]'s equality.
-/// Names that start with `_` belong to the agent. Steps, rules, data sources,
-/// prompts, and sequence defaults can read them but not set them. Only
+/// Names that start with `_` belong to the agent. Facts, rules, lookups,
+/// prompts, steps, and sequence defaults can read them but not set them. Only
 /// [`Vars::set_by_agent`] can.
+///
+/// The store also keeps every value that a secret variable has held, so its
+/// [`Redactor`] still masks a secret after a write replaces it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Vars {
     vars: BTreeMap<Key, Var>,
+    retired: RetiredSecrets,
 }
 
 impl Vars {
@@ -162,6 +229,8 @@ impl Vars {
     /// Sets a variable, replacing any value it had.
     ///
     /// A secret variable stays secret, whatever `sensitivity` says.
+    /// `source` cannot be a sequence default or the agent. See
+    /// [`SetSource`].
     ///
     /// # Errors
     ///
@@ -172,10 +241,10 @@ impl Vars {
         name: VarName,
         value: impl Into<Value>,
         sensitivity: Sensitivity,
-        source: Source,
+        source: SetSource,
     ) -> Result<(), ReadOnlyError> {
         refuse_agent_name(&name)?;
-        self.write(name, value.into(), sensitivity, source);
+        self.write(name, value.into(), sensitivity, source.into());
         Ok(())
     }
 
@@ -220,12 +289,17 @@ impl Vars {
 
     /// A [`Redactor`] that masks the value of every secret variable, and each
     /// item of a secret list.
+    ///
+    /// It also masks every value that a secret variable held before a later
+    /// write replaced or emptied it. A step can copy a secret into a plain
+    /// variable through `%Name%`, and that copy outlives the secret's change.
     pub fn redactor(&self) -> Redactor {
         Redactor::new(
             self.vars
                 .values()
                 .filter(|var| var.is_secret())
                 .flat_map(|var| var.value.texts())
+                .chain(&self.retired.0)
                 .map(String::as_str),
         )
     }
@@ -236,7 +310,7 @@ impl Vars {
             Some(old) if old.is_secret() => Sensitivity::Secret,
             _ => sensitivity,
         };
-        self.vars.insert(
+        let replaced = self.vars.insert(
             key,
             Var {
                 name,
@@ -245,6 +319,29 @@ impl Vars {
                 source,
             },
         );
+        if let Some(old) = replaced.filter(Var::is_secret) {
+            self.retired.keep(&old.value);
+        }
+    }
+}
+
+/// Every non-empty value that a secret variable held before a write replaced
+/// it. Its `Debug` output shows how many it holds, not what they are.
+#[derive(Clone, Default, PartialEq, Eq)]
+struct RetiredSecrets(BTreeSet<String>);
+
+impl RetiredSecrets {
+    fn keep(&mut self, value: &Value) {
+        let texts = value.texts().iter().filter(|text| !text.is_empty());
+        self.0.extend(texts.cloned());
+    }
+}
+
+impl fmt::Debug for RetiredSecrets {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RetiredSecrets")
+            .field("count", &self.0.len())
+            .finish()
     }
 }
 

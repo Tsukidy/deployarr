@@ -3,7 +3,7 @@
 use std::cell::RefCell;
 
 use deployarr_core::sequence::NodeId;
-use deployarr_core::store::{ReadOnlyError, Sensitivity, Source, Value, Vars};
+use deployarr_core::store::{ReadOnlyError, Sensitivity, SetSource, Source, Value, Vars};
 use deployarr_core::substitution::SubstituteError;
 use deployarr_core::template::Template;
 use deployarr_core::variable::VarName;
@@ -15,8 +15,8 @@ fn name(text: &str) -> VarName {
     text.parse().expect("a valid variable name")
 }
 
-fn step() -> Source {
-    Source::Step(NodeId(Uuid::from_u128(0x5e7)))
+fn step() -> SetSource {
+    SetSource::Step(NodeId(Uuid::from_u128(0x5e7)))
 }
 
 fn no_env(_: &str) -> Option<String> {
@@ -39,7 +39,7 @@ fn source(vars: &Vars, text: &str) -> Source {
 fn vars_of(pairs: &[(&str, &str)]) -> Vars {
     let mut vars = Vars::new();
     for &(text, value) in pairs {
-        vars.set(name(text), value, Plain, Source::Rule)
+        vars.set(name(text), value, Plain, SetSource::Rule)
             .expect("a name that does not start with `_`");
     }
     vars
@@ -50,13 +50,13 @@ fn vars_of(pairs: &[(&str, &str)]) -> Vars {
 #[test]
 fn names_ignore_case() {
     let mut vars = Vars::new();
-    vars.set(name("OSDComputerName"), "PC-01", Plain, Source::Rule)
+    vars.set(name("OSDComputerName"), "PC-01", Plain, SetSource::Rule)
         .unwrap();
 
     assert_eq!(value_of(&vars, "osdcomputername"), Some("PC-01".into()));
     assert_eq!(value_of(&vars, "OSDCOMPUTERNAME"), Some("PC-01".into()));
 
-    vars.set(name("OSDCOMPUTERNAME"), "PC-02", Plain, Source::Prompt)
+    vars.set(name("OSDCOMPUTERNAME"), "PC-02", Plain, SetSource::Prompt)
         .unwrap();
 
     assert_eq!(vars.iter().count(), 1);
@@ -77,14 +77,9 @@ fn iterates_in_name_order_without_regard_to_case() {
 fn holds_scalars_and_lists() {
     let mut vars = Vars::new();
     let apps = vec!["7-Zip".to_owned(), "Firefox".to_owned()];
-    vars.set(
-        name("Applications"),
-        apps.clone(),
-        Plain,
-        Source::DataSource,
-    )
-    .unwrap();
-    vars.set(name("Make"), "Contoso", Plain, Source::Fact)
+    vars.set(name("Applications"), apps.clone(), Plain, SetSource::Lookup)
+        .unwrap();
+    vars.set(name("Make"), "Contoso", Plain, SetSource::Fact)
         .unwrap();
 
     assert_eq!(value_of(&vars, "Applications"), Some(Value::List(apps)));
@@ -97,13 +92,13 @@ fn holds_scalars_and_lists() {
 #[test]
 fn records_the_source_of_each_value() {
     let mut vars = Vars::new();
-    vars.set(name("Make"), "Contoso", Plain, Source::Fact)
+    vars.set(name("Make"), "Contoso", Plain, SetSource::Fact)
         .unwrap();
-    vars.set(name("SkipWizard"), "YES", Plain, Source::Rule)
+    vars.set(name("SkipWizard"), "YES", Plain, SetSource::Rule)
         .unwrap();
-    vars.set(name("Role"), "Kiosk", Plain, Source::DataSource)
+    vars.set(name("Role"), "Kiosk", Plain, SetSource::Lookup)
         .unwrap();
-    vars.set(name("ComputerName"), "PC-01", Plain, Source::Prompt)
+    vars.set(name("ComputerName"), "PC-01", Plain, SetSource::Prompt)
         .unwrap();
     vars.set(name("Stage"), "1", Plain, step()).unwrap();
     vars.apply_default(name("TimeZone"), "UTC").unwrap();
@@ -111,14 +106,14 @@ fn records_the_source_of_each_value() {
 
     assert_eq!(source(&vars, "Make"), Source::Fact);
     assert_eq!(source(&vars, "SkipWizard"), Source::Rule);
-    assert_eq!(source(&vars, "Role"), Source::DataSource);
+    assert_eq!(source(&vars, "Role"), Source::Lookup);
     assert_eq!(source(&vars, "ComputerName"), Source::Prompt);
-    assert_eq!(source(&vars, "Stage"), step());
+    assert_eq!(source(&vars, "Stage"), step().into());
     assert_eq!(source(&vars, "TimeZone"), Source::SequenceDefault);
     assert_eq!(source(&vars, "_SMSTSLogPath"), Source::Agent);
 
     vars.set(name("make"), "Fabrikam", Plain, step()).unwrap();
-    assert_eq!(source(&vars, "Make"), step());
+    assert_eq!(source(&vars, "Make"), step().into());
 }
 
 #[test]
@@ -126,7 +121,13 @@ fn only_the_agent_sets_names_that_start_with_an_underscore() {
     let mut vars = Vars::new();
     vars.set_by_agent(name("_SMSTSLogPath"), r"X:\Deployarr\Logs", Plain);
 
-    for source in [step(), Source::Rule, Source::Prompt, Source::Agent] {
+    for source in [
+        SetSource::Fact,
+        SetSource::Rule,
+        SetSource::Lookup,
+        SetSource::Prompt,
+        step(),
+    ] {
         let refused = vars.set(name("_smstslogpath"), r"C:\Temp", Plain, source);
         let error: ReadOnlyError = refused.unwrap_err();
         assert_eq!(error.name().as_str(), "_smstslogpath");
@@ -167,9 +168,9 @@ fn a_set_value_beats_a_sequence_default() {
 #[test]
 fn a_default_fills_a_missing_or_empty_variable() {
     let mut vars = Vars::new();
-    vars.set(name("Empty"), "", Plain, Source::DataSource)
+    vars.set(name("Empty"), "", Plain, SetSource::Lookup)
         .unwrap();
-    vars.set(name("NoApps"), Vec::<String>::new(), Plain, Source::Rule)
+    vars.set(name("NoApps"), Vec::<String>::new(), Plain, SetSource::Rule)
         .unwrap();
 
     assert_eq!(vars.apply_default(name("Missing"), "m"), Ok(true));
@@ -207,9 +208,9 @@ fn a_default_cannot_name_an_agent_variable() {
 #[test]
 fn a_secret_stays_secret() {
     let mut vars = Vars::new();
-    vars.set(name("AdminPassword"), "Hunter2!", Secret, Source::Prompt)
+    vars.set(name("AdminPassword"), "Hunter2!", Secret, SetSource::Prompt)
         .unwrap();
-    vars.set(name("Make"), "Contoso", Plain, Source::Fact)
+    vars.set(name("Make"), "Contoso", Plain, SetSource::Fact)
         .unwrap();
 
     assert!(vars.get(&name("AdminPassword")).unwrap().is_secret());
@@ -231,16 +232,16 @@ fn a_secret_stays_secret() {
 #[test]
 fn debug_output_leaves_out_secret_values() {
     let mut vars = Vars::new();
-    vars.set(name("AdminPassword"), "Hunter2!", Secret, Source::Prompt)
+    vars.set(name("AdminPassword"), "Hunter2!", Secret, SetSource::Prompt)
         .unwrap();
     vars.set(
         name("Keys"),
         vec!["KEY-AAAA".to_owned(), "KEY-BBBB".to_owned()],
         Secret,
-        Source::DataSource,
+        SetSource::Lookup,
     )
     .unwrap();
-    vars.set(name("Make"), "Contoso", Plain, Source::Fact)
+    vars.set(name("Make"), "Contoso", Plain, SetSource::Fact)
         .unwrap();
 
     let printed = format!(
@@ -420,7 +421,7 @@ fn a_list_cannot_be_substituted() {
         name("Applications"),
         vec!["7-Zip".to_owned()],
         Plain,
-        Source::Rule,
+        SetSource::Rule,
     )
     .unwrap();
     // The environment does not answer for a name the store holds.
@@ -444,9 +445,9 @@ fn a_list_cannot_be_substituted() {
 #[test]
 fn a_substituted_secret_is_redacted_from_the_command_line() {
     let mut vars = Vars::new();
-    vars.set(name("JoinPassword"), "s3cr%t!", Secret, Source::Rule)
+    vars.set(name("JoinPassword"), "s3cr%t!", Secret, SetSource::Rule)
         .unwrap();
-    vars.set(name("JoinAccount"), "svc-join", Plain, Source::Rule)
+    vars.set(name("JoinAccount"), "svc-join", Plain, SetSource::Rule)
         .unwrap();
     let template = Template::new("netdom join /ud:%JoinAccount% /pd:%JoinPassword%");
 
@@ -454,6 +455,6 @@ fn a_substituted_secret_is_redacted_from_the_command_line() {
     let logged = vars.redactor().redact(&command).into_owned();
 
     assert_eq!(command, "netdom join /ud:svc-join /pd:s3cr%t!");
-    assert_eq!(logged, "netdom join /ud:svc-join /pd:********");
+    assert_eq!(logged, "netdom join /ud:svc-join /pd:████████");
     assert!(!logged.contains("s3cr%t!"));
 }

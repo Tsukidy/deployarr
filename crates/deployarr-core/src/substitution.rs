@@ -22,8 +22,8 @@ impl Template {
     /// straight to `env`. It can hold any character but `%`, including `=`
     /// and NUL, so `env` must answer `None` for a name it cannot look up.
     ///
-    /// A variable with an empty value substitutes as empty text. It does not
-    /// fall back to `env`.
+    /// An empty variable is defined, so it substitutes as empty text and does
+    /// not fall back to `env`.
     ///
     /// # Errors
     ///
