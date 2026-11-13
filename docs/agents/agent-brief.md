@@ -66,7 +66,11 @@ An agent that breaks work into tickets writes each body in this layout. Each tic
 
 ## What to build
 
-The behavior this ticket makes work, and the docs to read first.
+The behavior this ticket makes work.
+
+Read first:
+
+- [<doc>#<anchor>](https://github.com/Tsukidy/deployarr/blob/main/<doc>#<anchor>)
 
 ## Acceptance criteria
 
@@ -80,5 +84,7 @@ The behavior this ticket makes work, and the docs to read first.
 
 - #<blocking issue number>
 ```
+
+Under "Read first", link each doc to the heading of the section the agent needs, such as `docs/architecture.md#agent`, not to the whole file. Link a doc's title heading only when the agent needs all of it. Write each link as a full URL on `main`, as the layout shows. The agent passes the link to `python3 tools/doc_section.py` as written to read that section.
 
 Write `None (can start immediately).` under `## Blocked by` when nothing blocks the ticket. Leave out `## Out of scope` when there is nothing to say. The [Issue tracker](issue-tracker.md#blocking) page explains how the blockers become native links.

@@ -30,6 +30,8 @@ The repository holds the design documents and the Cargo workspace for M0. There 
 | `tools/check_docs.py` | The docs check that CI runs: links, anchors, em and en dashes, and curly quotes |
 | `.github/` | Issue forms, the pull request template, labels, workflows, and `CODEOWNERS` |
 
+Read `docs/architecture.md`, `docs/roadmap.md`, and the pages under `docs/research/` by outline first and then by section. `python3 tools/doc_section.py <file>` prints a doc's outline. `python3 tools/doc_section.py <file> <anchor>` prints one section.
+
 ## Rules for changes
 
 - Keep the docs in step with decisions. If a change alters the design, update `docs/architecture.md` in the same commit. If it alters the plan, update `docs/roadmap.md`. If it answers an open question in the roadmap, remove the question and record the answer where it applies.
@@ -201,7 +203,7 @@ It writes four files to `"$SCRATCH/winpe/out"`:
 - `apisets.tsv`, every API set and whether it resolves
 - `summary.txt`, the versions, sizes, hashes, and counts
 
-Copy `"$SCRATCH/winpe/out/winpe-x64-dlls.txt"` to `docs/research/winpe-<version>-x64-dlls.txt`. For a later add-on, pass the new link and SHA-256 as the second and third arguments. Then write a new research page for it, and point the import check at the new list.
+Copy `"$SCRATCH/winpe/out/winpe-x64-dlls.txt"` to `docs/research/winpe-<version>-x64-dlls.txt`. Copy `"$SCRATCH/winpe/out/system32-dlls.txt"` to `docs/research/winpe-<version>-system32-dlls.txt`. For a later add-on, pass the new link and SHA-256 as the second and third arguments. Then write a new research page for it, and point the import check at the new list.
 
 ### Pitfalls
 
