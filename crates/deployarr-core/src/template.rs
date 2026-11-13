@@ -3,6 +3,8 @@ use alloc::string::String;
 use serde::{Deserialize, Serialize};
 
 /// Text that can hold `%Name%` variable references.
+///
+/// [`Template::substitute`] fills them in at run time.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Template(String);
