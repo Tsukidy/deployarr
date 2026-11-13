@@ -1,0 +1,825 @@
+Frame 1: Packet, 389 bytes on wire (3112 bits), 389 bytes captured (3112 bits) on interface br-lab, id 0
+    Section number: 1
+    Interface id: 0 (br-lab)
+        Interface name: br-lab
+    Encapsulation type: Ethernet (1)
+    Arrival Time: Nov 13, 2026 10:39:03.111105792 UTC
+    UTC Arrival Time: Nov 13, 2026 10:39:03.111105792 UTC
+    Epoch Arrival Time: 1794566343.111105792
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time since reference or first frame: 0.000000000 seconds]
+    Frame Number: 1
+    Frame Length: 389 bytes (3112 bits)
+    Capture Length: 389 bytes (3112 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: eth:ethertype:ip:udp:dhcp]
+    Character encoding: ASCII (0)
+Ethernet II, Src: 52:54:00:41:00:11 (52:54:00:41:00:11), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+    Destination: Broadcast (ff:ff:ff:ff:ff:ff)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...1 .... .... .... .... = IG bit: Group address (multicast/broadcast)
+    Source: 52:54:00:41:00:11 (52:54:00:41:00:11)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Type: IPv4 (0x0800)
+    [Stream index: 0]
+Internet Protocol Version 4, Src: 0.0.0.0, Dst: 255.255.255.255
+    0100 .... = Version: 4
+    .... 0101 = Header Length: 20 bytes (5)
+    Differentiated Services Field: 0x00 (DSCP: CS0, ECN: Not-ECT)
+        0000 00.. = Differentiated Services Codepoint: Default (0)
+        .... ..00 = Explicit Congestion Notification: Not ECN-Capable Transport (0)
+    Total Length: 375
+    Identification: 0x440b (17419)
+    000. .... = Flags: 0x0
+        0... .... = Reserved bit: Not set
+        .0.. .... = Don't fragment: Not set
+        ..0. .... = More fragments: Not set
+    ...0 0000 0000 0000 = Fragment Offset: 0
+    Time to Live: 64
+    Protocol: UDP (17)
+    Header Checksum: 0x356c [validation disabled]
+    [Header checksum status: Unverified]
+    Source Address: 0.0.0.0
+    Destination Address: 255.255.255.255
+    [Stream index: 0]
+User Datagram Protocol, Src Port: 68, Dst Port: 67
+    Source Port: 68
+    Destination Port: 67
+    Length: 355
+    Checksum: 0x6f2c [unverified]
+    [Checksum Status: Unverified]
+    [Stream index: 0]
+    [Stream Packet Number: 1]
+    [Timestamps]
+        [Time since first frame: 0.000000000 seconds]
+        [Time since previous frame: 0.000000000 seconds]
+    UDP payload (347 bytes)
+Dynamic Host Configuration Protocol (Discover)
+    Message type: Boot Request (1)
+    Hardware type: Ethernet (0x01)
+    Hardware address length: 6
+    Hops: 0
+    Transaction ID: 0x2ee5a6b1
+    Seconds elapsed: 0
+    Bootp flags: 0x8000, Broadcast flag (Broadcast)
+        1... .... .... .... = Broadcast flag: Broadcast
+        .000 0000 0000 0000 = Reserved flags: 0x0000
+    Client IP address: 0.0.0.0
+    Your (client) IP address: 0.0.0.0
+    Next server IP address: 0.0.0.0
+    Relay agent IP address: 0.0.0.0
+    Client MAC address: 52:54:00:41:00:11 (52:54:00:41:00:11)
+    Client hardware address padding: 00000000000000000000
+    Server host name not given
+    Boot file name not given
+    Magic cookie: DHCP
+    Option: (53) DHCP Message Type (Discover)
+        Length: 1
+        DHCP: Discover (1)
+    Option: (57) Maximum DHCP Message Size
+        Length: 2
+        Maximum DHCP Message Size: 1472
+    Option: (55) Parameter Request List
+        Length: 35
+        Parameter Request List Item: (1) Subnet Mask
+        Parameter Request List Item: (2) Time Offset
+        Parameter Request List Item: (3) Router
+        Parameter Request List Item: (4) Time Server
+        Parameter Request List Item: (5) Name Server
+        Parameter Request List Item: (6) Domain Name Server
+        Parameter Request List Item: (12) Host Name
+        Parameter Request List Item: (13) Boot File Size
+        Parameter Request List Item: (15) Domain Name
+        Parameter Request List Item: (17) Root Path
+        Parameter Request List Item: (18) Extensions Path
+        Parameter Request List Item: (22) Maximum Datagram Reassembly Size
+        Parameter Request List Item: (23) Default IP Time-to-Live
+        Parameter Request List Item: (28) Broadcast Address
+        Parameter Request List Item: (40) Network Information Service Domain
+        Parameter Request List Item: (41) Network Information Service Servers
+        Parameter Request List Item: (42) Network Time Protocol Servers
+        Parameter Request List Item: (43) Vendor-Specific Information
+        Parameter Request List Item: (50) Requested IP Address
+        Parameter Request List Item: (51) IP Address Lease Time
+        Parameter Request List Item: (54) DHCP Server Identifier
+        Parameter Request List Item: (58) Renewal Time Value
+        Parameter Request List Item: (59) Rebinding Time Value
+        Parameter Request List Item: (60) Vendor class identifier
+        Parameter Request List Item: (66) TFTP Server Name
+        Parameter Request List Item: (67) Bootfile name
+        Parameter Request List Item: (97) UUID/GUID-based Client Identifier
+        Parameter Request List Item: (128) DOCSIS full security server IP [TODO]
+        Parameter Request List Item: (129) PXE - undefined (vendor specific)
+        Parameter Request List Item: (130) PXE - undefined (vendor specific)
+        Parameter Request List Item: (131) PXE - undefined (vendor specific)
+        Parameter Request List Item: (132) PXE - undefined (vendor specific)
+        Parameter Request List Item: (133) PXE - undefined (vendor specific)
+        Parameter Request List Item: (134) PXE - undefined (vendor specific)
+        Parameter Request List Item: (135) PXE - undefined (vendor specific)
+    Option: (97) UUID/GUID-based Client Identifier
+        Length: 17
+        Client Identifier (UUID): 4c414200-0000-4000-8000-000000000011
+    Option: (94) Client Network Device Interface
+        Length: 3
+        Major Version: 3
+        Minor Version: 0
+    Option: (93) Client System Architecture
+        Length: 2
+        Client System Architecture: EFI x64 (7)
+    Option: (60) Vendor class identifier
+        Length: 32
+        Vendor class identifier: PXEClient:Arch:00007:UNDI:003000
+    Option: (255) End
+        Option End: 255
+
+Frame 2: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits) on interface br-lab, id 0
+    Section number: 1
+    Interface id: 0 (br-lab)
+        Interface name: br-lab
+    Encapsulation type: Ethernet (1)
+    Arrival Time: Nov 13, 2026 10:39:03.111409968 UTC
+    UTC Arrival Time: Nov 13, 2026 10:39:03.111409968 UTC
+    Epoch Arrival Time: 1794566343.111409968
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 304.176 microseconds]
+    [Time delta from previous displayed frame: 304.176 microseconds]
+    [Time since reference or first frame: 304.176 microseconds]
+    Frame Number: 2
+    Frame Length: 342 bytes (2736 bits)
+    Capture Length: 342 bytes (2736 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: eth:ethertype:ip:udp:dhcp]
+    Character encoding: ASCII (0)
+Ethernet II, Src: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+    Destination: Broadcast (ff:ff:ff:ff:ff:ff)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...1 .... .... .... .... = IG bit: Group address (multicast/broadcast)
+    Source: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Type: IPv4 (0x0800)
+    [Stream index: 1]
+Internet Protocol Version 4, Src: 10.41.0.1, Dst: 255.255.255.255
+    0100 .... = Version: 4
+    .... 0101 = Header Length: 20 bytes (5)
+    Differentiated Services Field: 0xc0 (DSCP: CS6, ECN: Not-ECT)
+        1100 00.. = Differentiated Services Codepoint: Class Selector 6 (48)
+        .... ..00 = Explicit Congestion Notification: Not ECN-Capable Transport (0)
+    Total Length: 328
+    Identification: 0x22db (8923)
+    000. .... = Flags: 0x0
+        0... .... = Reserved bit: Not set
+        .0.. .... = Don't fragment: Not set
+        ..0. .... = More fragments: Not set
+    ...0 0000 0000 0000 = Fragment Offset: 0
+    Time to Live: 64
+    Protocol: UDP (17)
+    Header Checksum: 0x4be1 [validation disabled]
+    [Header checksum status: Unverified]
+    Source Address: 10.41.0.1
+    Destination Address: 255.255.255.255
+    [Stream index: 1]
+User Datagram Protocol, Src Port: 67, Dst Port: 68
+    Source Port: 67
+    Destination Port: 68
+    Length: 308
+    Checksum: 0x0b6f [unverified]
+    [Checksum Status: Unverified]
+    [Stream index: 1]
+    [Stream Packet Number: 1]
+    [Timestamps]
+        [Time since first frame: 0.000000000 seconds]
+        [Time since previous frame: 0.000000000 seconds]
+    UDP payload (300 bytes)
+Dynamic Host Configuration Protocol (Offer)
+    Message type: Boot Reply (2)
+    Hardware type: Ethernet (0x01)
+    Hardware address length: 6
+    Hops: 0
+    Transaction ID: 0x2ee5a6b1
+    Seconds elapsed: 0
+    Bootp flags: 0x8000, Broadcast flag (Broadcast)
+        1... .... .... .... = Broadcast flag: Broadcast
+        .000 0000 0000 0000 = Reserved flags: 0x0000
+    Client IP address: 0.0.0.0
+    Your (client) IP address: 10.41.0.176
+    Next server IP address: 10.41.0.1
+    Relay agent IP address: 0.0.0.0
+    Client MAC address: 52:54:00:41:00:11 (52:54:00:41:00:11)
+    Client hardware address padding: 00000000000000000000
+    Server host name not given
+    Boot file name not given
+    Magic cookie: DHCP
+    Option: (53) DHCP Message Type (Offer)
+        Length: 1
+        DHCP: Offer (2)
+    Option: (54) DHCP Server Identifier (10.41.0.1)
+        Length: 4
+        DHCP Server Identifier: 10.41.0.1
+    Option: (51) IP Address Lease Time
+        Length: 4
+        IP Address Lease Time: 12 hours (43200)
+    Option: (58) Renewal Time Value
+        Length: 4
+        Renewal Time Value: 6 hours (21600)
+    Option: (59) Rebinding Time Value
+        Length: 4
+        Rebinding Time Value: 10 hours, 30 minutes (37800)
+    Option: (1) Subnet Mask (255.255.255.0)
+        Length: 4
+        Subnet Mask: 255.255.255.0
+    Option: (28) Broadcast Address (10.41.0.255)
+        Length: 4
+        Broadcast Address: 10.41.0.255
+    Option: (3) Router
+        Length: 4
+        Router: 10.41.0.1
+    Option: (255) End
+        Option End: 255
+    Padding: 0000000000000000000000000000
+
+Frame 3: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits) on interface br-lab, id 0
+    Section number: 1
+    Interface id: 0 (br-lab)
+        Interface name: br-lab
+    Encapsulation type: Ethernet (1)
+    Arrival Time: Nov 13, 2026 10:39:03.111496937 UTC
+    UTC Arrival Time: Nov 13, 2026 10:39:03.111496937 UTC
+    Epoch Arrival Time: 1794566343.111496937
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 86.969 microseconds]
+    [Time delta from previous displayed frame: 86.969 microseconds]
+    [Time since reference or first frame: 391.145 microseconds]
+    Frame Number: 3
+    Frame Length: 342 bytes (2736 bits)
+    Capture Length: 342 bytes (2736 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: eth:ethertype:ip:udp:dhcp]
+    Character encoding: ASCII (0)
+Ethernet II, Src: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+    Destination: Broadcast (ff:ff:ff:ff:ff:ff)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...1 .... .... .... .... = IG bit: Group address (multicast/broadcast)
+    Source: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Type: IPv4 (0x0800)
+    [Stream index: 1]
+Internet Protocol Version 4, Src: 10.41.0.1, Dst: 255.255.255.255
+    0100 .... = Version: 4
+    .... 0101 = Header Length: 20 bytes (5)
+    Differentiated Services Field: 0x00 (DSCP: CS0, ECN: Not-ECT)
+        0000 00.. = Differentiated Services Codepoint: Default (0)
+        .... ..00 = Explicit Congestion Notification: Not ECN-Capable Transport (0)
+    Total Length: 328
+    Identification: 0x22dc (8924)
+    010. .... = Flags: 0x2, Don't fragment
+        0... .... = Reserved bit: Not set
+        .1.. .... = Don't fragment: Set
+        ..0. .... = More fragments: Not set
+    ...0 0000 0000 0000 = Fragment Offset: 0
+    Time to Live: 64
+    Protocol: UDP (17)
+    Header Checksum: 0x0ca0 [validation disabled]
+    [Header checksum status: Unverified]
+    Source Address: 10.41.0.1
+    Destination Address: 255.255.255.255
+    [Stream index: 1]
+User Datagram Protocol, Src Port: 67, Dst Port: 68
+    Source Port: 67
+    Destination Port: 68
+    Length: 308
+    Checksum: 0x0b6f [unverified]
+    [Checksum Status: Unverified]
+    [Stream index: 1]
+    [Stream Packet Number: 2]
+    [Timestamps]
+        [Time since first frame: 86.969 microseconds]
+        [Time since previous frame: 86.969 microseconds]
+    UDP payload (300 bytes)
+Dynamic Host Configuration Protocol (Offer)
+    Message type: Boot Reply (2)
+    Hardware type: Ethernet (0x01)
+    Hardware address length: 6
+    Hops: 0
+    Transaction ID: 0x2ee5a6b1
+    Seconds elapsed: 0
+    Bootp flags: 0x8000, Broadcast flag (Broadcast)
+        1... .... .... .... = Broadcast flag: Broadcast
+        .000 0000 0000 0000 = Reserved flags: 0x0000
+    Client IP address: 0.0.0.0
+    Your (client) IP address: 0.0.0.0
+    Next server IP address: 10.41.0.1
+    Relay agent IP address: 0.0.0.0
+    Client MAC address: 52:54:00:41:00:11 (52:54:00:41:00:11)
+    Client hardware address padding: 00000000000000000000
+    Server host name not given
+    Boot file name not given
+    Magic cookie: DHCP
+    Option: (53) DHCP Message Type (Offer)
+        Length: 1
+        DHCP: Offer (2)
+    Option: (54) DHCP Server Identifier (10.41.0.1)
+        Length: 4
+        DHCP Server Identifier: 10.41.0.1
+    Option: (97) UUID/GUID-based Client Identifier
+        Length: 17
+        Client Identifier (UUID): 4c414200-0000-4000-8000-000000000011
+    Option: (60) Vendor class identifier
+        Length: 9
+        Vendor class identifier: PXEClient
+    Option: (255) End
+        Option End: 255
+    Padding: 0000000000000000000000000000000000000000
+
+Frame 4: Packet, 401 bytes on wire (3208 bits), 401 bytes captured (3208 bits) on interface br-lab, id 0
+    Section number: 1
+    Interface id: 0 (br-lab)
+        Interface name: br-lab
+    Encapsulation type: Ethernet (1)
+    Arrival Time: Nov 13, 2026 10:39:06.836817661 UTC
+    UTC Arrival Time: Nov 13, 2026 10:39:06.836817661 UTC
+    Epoch Arrival Time: 1794566346.836817661
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 3.725320724 seconds]
+    [Time delta from previous displayed frame: 3.725320724 seconds]
+    [Time since reference or first frame: 3.725711869 seconds]
+    Frame Number: 4
+    Frame Length: 401 bytes (3208 bits)
+    Capture Length: 401 bytes (3208 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: eth:ethertype:ip:udp:dhcp]
+    Character encoding: ASCII (0)
+Ethernet II, Src: 52:54:00:41:00:11 (52:54:00:41:00:11), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+    Destination: Broadcast (ff:ff:ff:ff:ff:ff)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...1 .... .... .... .... = IG bit: Group address (multicast/broadcast)
+    Source: 52:54:00:41:00:11 (52:54:00:41:00:11)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Type: IPv4 (0x0800)
+    [Stream index: 0]
+Internet Protocol Version 4, Src: 0.0.0.0, Dst: 255.255.255.255
+    0100 .... = Version: 4
+    .... 0101 = Header Length: 20 bytes (5)
+    Differentiated Services Field: 0x00 (DSCP: CS0, ECN: Not-ECT)
+        0000 00.. = Differentiated Services Codepoint: Default (0)
+        .... ..00 = Explicit Congestion Notification: Not ECN-Capable Transport (0)
+    Total Length: 387
+    Identification: 0x440c (17420)
+    000. .... = Flags: 0x0
+        0... .... = Reserved bit: Not set
+        .0.. .... = Don't fragment: Not set
+        ..0. .... = More fragments: Not set
+    ...0 0000 0000 0000 = Fragment Offset: 0
+    Time to Live: 64
+    Protocol: UDP (17)
+    Header Checksum: 0x355f [validation disabled]
+    [Header checksum status: Unverified]
+    Source Address: 0.0.0.0
+    Destination Address: 255.255.255.255
+    [Stream index: 0]
+User Datagram Protocol, Src Port: 68, Dst Port: 67
+    Source Port: 68
+    Destination Port: 67
+    Length: 367
+    Checksum: 0x209e [unverified]
+    [Checksum Status: Unverified]
+    [Stream index: 0]
+    [Stream Packet Number: 2]
+    [Timestamps]
+        [Time since first frame: 3.725711869 seconds]
+        [Time since previous frame: 3.725711869 seconds]
+    UDP payload (359 bytes)
+Dynamic Host Configuration Protocol (Request)
+    Message type: Boot Request (1)
+    Hardware type: Ethernet (0x01)
+    Hardware address length: 6
+    Hops: 0
+    Transaction ID: 0x2ee5a6b1
+    Seconds elapsed: 0
+    Bootp flags: 0x8000, Broadcast flag (Broadcast)
+        1... .... .... .... = Broadcast flag: Broadcast
+        .000 0000 0000 0000 = Reserved flags: 0x0000
+    Client IP address: 0.0.0.0
+    Your (client) IP address: 0.0.0.0
+    Next server IP address: 0.0.0.0
+    Relay agent IP address: 0.0.0.0
+    Client MAC address: 52:54:00:41:00:11 (52:54:00:41:00:11)
+    Client hardware address padding: 00000000000000000000
+    Server host name not given
+    Boot file name not given
+    Magic cookie: DHCP
+    Option: (53) DHCP Message Type (Request)
+        Length: 1
+        DHCP: Request (3)
+    Option: (54) DHCP Server Identifier (10.41.0.1)
+        Length: 4
+        DHCP Server Identifier: 10.41.0.1
+    Option: (50) Requested IP Address (10.41.0.176)
+        Length: 4
+        Requested IP Address: 10.41.0.176
+    Option: (57) Maximum DHCP Message Size
+        Length: 2
+        Maximum DHCP Message Size: 65280
+    Option: (55) Parameter Request List
+        Length: 35
+        Parameter Request List Item: (1) Subnet Mask
+        Parameter Request List Item: (2) Time Offset
+        Parameter Request List Item: (3) Router
+        Parameter Request List Item: (4) Time Server
+        Parameter Request List Item: (5) Name Server
+        Parameter Request List Item: (6) Domain Name Server
+        Parameter Request List Item: (12) Host Name
+        Parameter Request List Item: (13) Boot File Size
+        Parameter Request List Item: (15) Domain Name
+        Parameter Request List Item: (17) Root Path
+        Parameter Request List Item: (18) Extensions Path
+        Parameter Request List Item: (22) Maximum Datagram Reassembly Size
+        Parameter Request List Item: (23) Default IP Time-to-Live
+        Parameter Request List Item: (28) Broadcast Address
+        Parameter Request List Item: (40) Network Information Service Domain
+        Parameter Request List Item: (41) Network Information Service Servers
+        Parameter Request List Item: (42) Network Time Protocol Servers
+        Parameter Request List Item: (43) Vendor-Specific Information
+        Parameter Request List Item: (50) Requested IP Address
+        Parameter Request List Item: (51) IP Address Lease Time
+        Parameter Request List Item: (54) DHCP Server Identifier
+        Parameter Request List Item: (58) Renewal Time Value
+        Parameter Request List Item: (59) Rebinding Time Value
+        Parameter Request List Item: (60) Vendor class identifier
+        Parameter Request List Item: (66) TFTP Server Name
+        Parameter Request List Item: (67) Bootfile name
+        Parameter Request List Item: (97) UUID/GUID-based Client Identifier
+        Parameter Request List Item: (128) DOCSIS full security server IP [TODO]
+        Parameter Request List Item: (129) PXE - undefined (vendor specific)
+        Parameter Request List Item: (130) PXE - undefined (vendor specific)
+        Parameter Request List Item: (131) PXE - undefined (vendor specific)
+        Parameter Request List Item: (132) PXE - undefined (vendor specific)
+        Parameter Request List Item: (133) PXE - undefined (vendor specific)
+        Parameter Request List Item: (134) PXE - undefined (vendor specific)
+        Parameter Request List Item: (135) PXE - undefined (vendor specific)
+    Option: (97) UUID/GUID-based Client Identifier
+        Length: 17
+        Client Identifier (UUID): 4c414200-0000-4000-8000-000000000011
+    Option: (94) Client Network Device Interface
+        Length: 3
+        Major Version: 3
+        Minor Version: 0
+    Option: (93) Client System Architecture
+        Length: 2
+        Client System Architecture: EFI x64 (7)
+    Option: (60) Vendor class identifier
+        Length: 32
+        Vendor class identifier: PXEClient:Arch:00007:UNDI:003000
+    Option: (255) End
+        Option End: 255
+
+Frame 5: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits) on interface br-lab, id 0
+    Section number: 1
+    Interface id: 0 (br-lab)
+        Interface name: br-lab
+    Encapsulation type: Ethernet (1)
+    Arrival Time: Nov 13, 2026 10:39:06.837133806 UTC
+    UTC Arrival Time: Nov 13, 2026 10:39:06.837133806 UTC
+    Epoch Arrival Time: 1794566346.837133806
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 316.145 microseconds]
+    [Time delta from previous displayed frame: 316.145 microseconds]
+    [Time since reference or first frame: 3.726028014 seconds]
+    Frame Number: 5
+    Frame Length: 342 bytes (2736 bits)
+    Capture Length: 342 bytes (2736 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: eth:ethertype:ip:udp:dhcp]
+    Character encoding: ASCII (0)
+Ethernet II, Src: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d), Dst: Broadcast (ff:ff:ff:ff:ff:ff)
+    Destination: Broadcast (ff:ff:ff:ff:ff:ff)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...1 .... .... .... .... = IG bit: Group address (multicast/broadcast)
+    Source: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Type: IPv4 (0x0800)
+    [Stream index: 1]
+Internet Protocol Version 4, Src: 10.41.0.1, Dst: 255.255.255.255
+    0100 .... = Version: 4
+    .... 0101 = Header Length: 20 bytes (5)
+    Differentiated Services Field: 0xc0 (DSCP: CS6, ECN: Not-ECT)
+        1100 00.. = Differentiated Services Codepoint: Class Selector 6 (48)
+        .... ..00 = Explicit Congestion Notification: Not ECN-Capable Transport (0)
+    Total Length: 328
+    Identification: 0x2a85 (10885)
+    000. .... = Flags: 0x0
+        0... .... = Reserved bit: Not set
+        .0.. .... = Don't fragment: Not set
+        ..0. .... = More fragments: Not set
+    ...0 0000 0000 0000 = Fragment Offset: 0
+    Time to Live: 64
+    Protocol: UDP (17)
+    Header Checksum: 0x4437 [validation disabled]
+    [Header checksum status: Unverified]
+    Source Address: 10.41.0.1
+    Destination Address: 255.255.255.255
+    [Stream index: 1]
+User Datagram Protocol, Src Port: 67, Dst Port: 68
+    Source Port: 67
+    Destination Port: 68
+    Length: 308
+    Checksum: 0x0b6f [unverified]
+    [Checksum Status: Unverified]
+    [Stream index: 1]
+    [Stream Packet Number: 3]
+    [Timestamps]
+        [Time since first frame: 3.725723838 seconds]
+        [Time since previous frame: 3.725636869 seconds]
+    UDP payload (300 bytes)
+Dynamic Host Configuration Protocol (ACK)
+    Message type: Boot Reply (2)
+    Hardware type: Ethernet (0x01)
+    Hardware address length: 6
+    Hops: 0
+    Transaction ID: 0x2ee5a6b1
+    Seconds elapsed: 0
+    Bootp flags: 0x8000, Broadcast flag (Broadcast)
+        1... .... .... .... = Broadcast flag: Broadcast
+        .000 0000 0000 0000 = Reserved flags: 0x0000
+    Client IP address: 0.0.0.0
+    Your (client) IP address: 10.41.0.176
+    Next server IP address: 10.41.0.1
+    Relay agent IP address: 0.0.0.0
+    Client MAC address: 52:54:00:41:00:11 (52:54:00:41:00:11)
+    Client hardware address padding: 00000000000000000000
+    Server host name not given
+    Boot file name not given
+    Magic cookie: DHCP
+    Option: (53) DHCP Message Type (ACK)
+        Length: 1
+        DHCP: ACK (5)
+    Option: (54) DHCP Server Identifier (10.41.0.1)
+        Length: 4
+        DHCP Server Identifier: 10.41.0.1
+    Option: (51) IP Address Lease Time
+        Length: 4
+        IP Address Lease Time: 12 hours (43200)
+    Option: (58) Renewal Time Value
+        Length: 4
+        Renewal Time Value: 6 hours (21600)
+    Option: (59) Rebinding Time Value
+        Length: 4
+        Rebinding Time Value: 10 hours, 30 minutes (37800)
+    Option: (1) Subnet Mask (255.255.255.0)
+        Length: 4
+        Subnet Mask: 255.255.255.0
+    Option: (28) Broadcast Address (10.41.0.255)
+        Length: 4
+        Broadcast Address: 10.41.0.255
+    Option: (3) Router
+        Length: 4
+        Router: 10.41.0.1
+    Option: (255) End
+        Option End: 255
+    Padding: 0000000000000000000000000000
+
+Frame 6: Packet, 389 bytes on wire (3112 bits), 389 bytes captured (3112 bits) on interface br-lab, id 0
+    Section number: 1
+    Interface id: 0 (br-lab)
+        Interface name: br-lab
+    Encapsulation type: Ethernet (1)
+    Arrival Time: Nov 13, 2026 10:39:06.837506452 UTC
+    UTC Arrival Time: Nov 13, 2026 10:39:06.837506452 UTC
+    Epoch Arrival Time: 1794566346.837506452
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 372.646 microseconds]
+    [Time delta from previous displayed frame: 372.646 microseconds]
+    [Time since reference or first frame: 3.726400660 seconds]
+    Frame Number: 6
+    Frame Length: 389 bytes (3112 bits)
+    Capture Length: 389 bytes (3112 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: eth:ethertype:ip:udp:dhcp]
+    Character encoding: ASCII (0)
+Ethernet II, Src: 52:54:00:41:00:11 (52:54:00:41:00:11), Dst: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d)
+    Destination: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Source: 52:54:00:41:00:11 (52:54:00:41:00:11)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Type: IPv4 (0x0800)
+    [Stream index: 2]
+Internet Protocol Version 4, Src: 10.41.0.176, Dst: 10.41.0.1
+    0100 .... = Version: 4
+    .... 0101 = Header Length: 20 bytes (5)
+    Differentiated Services Field: 0x00 (DSCP: CS0, ECN: Not-ECT)
+        0000 00.. = Differentiated Services Codepoint: Default (0)
+        .... ..00 = Explicit Congestion Notification: Not ECN-Capable Transport (0)
+    Total Length: 375
+    Identification: 0x440d (17421)
+    010. .... = Flags: 0x2, Don't fragment
+        0... .... = Reserved bit: Not set
+        .1.. .... = Don't fragment: Set
+        ..0. .... = More fragments: Not set
+    ...0 0000 0000 0000 = Fragment Offset: 0
+    Time to Live: 64
+    Protocol: UDP (17)
+    Header Checksum: 0xe066 [validation disabled]
+    [Header checksum status: Unverified]
+    Source Address: 10.41.0.176
+    Destination Address: 10.41.0.1
+    [Stream index: 2]
+User Datagram Protocol, Src Port: 4011, Dst Port: 4011
+    Source Port: 4011
+    Destination Port: 4011
+    Length: 355
+    Checksum: 0xc624 [unverified]
+    [Checksum Status: Unverified]
+    [Stream index: 2]
+    [Stream Packet Number: 1]
+    [Timestamps]
+        [Time since first frame: 0.000000000 seconds]
+        [Time since previous frame: 0.000000000 seconds]
+    UDP payload (347 bytes)
+Dynamic Host Configuration Protocol (Request)
+    Message type: Boot Request (1)
+    Hardware type: Ethernet (0x01)
+    Hardware address length: 6
+    Hops: 0
+    Transaction ID: 0x3ea517b6
+    Seconds elapsed: 0
+    Bootp flags: 0x0000 (Unicast)
+        0... .... .... .... = Broadcast flag: Unicast
+        .000 0000 0000 0000 = Reserved flags: 0x0000
+    Client IP address: 10.41.0.176
+    Your (client) IP address: 0.0.0.0
+    Next server IP address: 0.0.0.0
+    Relay agent IP address: 0.0.0.0
+    Client MAC address: 52:54:00:41:00:11 (52:54:00:41:00:11)
+    Client hardware address padding: 00000000000000000000
+    Server host name not given
+    Boot file name not given
+    Magic cookie: DHCP
+    Option: (53) DHCP Message Type (Request)
+        Length: 1
+        DHCP: Request (3)
+    Option: (55) Parameter Request List
+        Length: 35
+        Parameter Request List Item: (1) Subnet Mask
+        Parameter Request List Item: (2) Time Offset
+        Parameter Request List Item: (3) Router
+        Parameter Request List Item: (4) Time Server
+        Parameter Request List Item: (5) Name Server
+        Parameter Request List Item: (6) Domain Name Server
+        Parameter Request List Item: (12) Host Name
+        Parameter Request List Item: (13) Boot File Size
+        Parameter Request List Item: (15) Domain Name
+        Parameter Request List Item: (17) Root Path
+        Parameter Request List Item: (18) Extensions Path
+        Parameter Request List Item: (22) Maximum Datagram Reassembly Size
+        Parameter Request List Item: (23) Default IP Time-to-Live
+        Parameter Request List Item: (28) Broadcast Address
+        Parameter Request List Item: (40) Network Information Service Domain
+        Parameter Request List Item: (41) Network Information Service Servers
+        Parameter Request List Item: (42) Network Time Protocol Servers
+        Parameter Request List Item: (43) Vendor-Specific Information
+        Parameter Request List Item: (50) Requested IP Address
+        Parameter Request List Item: (51) IP Address Lease Time
+        Parameter Request List Item: (54) DHCP Server Identifier
+        Parameter Request List Item: (58) Renewal Time Value
+        Parameter Request List Item: (59) Rebinding Time Value
+        Parameter Request List Item: (60) Vendor class identifier
+        Parameter Request List Item: (66) TFTP Server Name
+        Parameter Request List Item: (67) Bootfile name
+        Parameter Request List Item: (97) UUID/GUID-based Client Identifier
+        Parameter Request List Item: (128) DOCSIS full security server IP [TODO]
+        Parameter Request List Item: (129) PXE - undefined (vendor specific)
+        Parameter Request List Item: (130) PXE - undefined (vendor specific)
+        Parameter Request List Item: (131) PXE - undefined (vendor specific)
+        Parameter Request List Item: (132) PXE - undefined (vendor specific)
+        Parameter Request List Item: (133) PXE - undefined (vendor specific)
+        Parameter Request List Item: (134) PXE - undefined (vendor specific)
+        Parameter Request List Item: (135) PXE - undefined (vendor specific)
+    Option: (57) Maximum DHCP Message Size
+        Length: 2
+        Maximum DHCP Message Size: 1472
+    Option: (60) Vendor class identifier
+        Length: 32
+        Vendor class identifier: PXEClient:Arch:00007:UNDI:003000
+    Option: (93) Client System Architecture
+        Length: 2
+        Client System Architecture: EFI x64 (7)
+    Option: (94) Client Network Device Interface
+        Length: 3
+        Major Version: 3
+        Minor Version: 0
+    Option: (97) UUID/GUID-based Client Identifier
+        Length: 17
+        Client Identifier (UUID): 4c414200-0000-4000-8000-000000000011
+    Option: (255) End
+        Option End: 255
+
+Frame 7: Packet, 342 bytes on wire (2736 bits), 342 bytes captured (2736 bits) on interface br-lab, id 0
+    Section number: 1
+    Interface id: 0 (br-lab)
+        Interface name: br-lab
+    Encapsulation type: Ethernet (1)
+    Arrival Time: Nov 13, 2026 10:39:06.837773148 UTC
+    UTC Arrival Time: Nov 13, 2026 10:39:06.837773148 UTC
+    Epoch Arrival Time: 1794566346.837773148
+    [Time shift for this packet: 0.000000000 seconds]
+    [Time delta from previous captured frame: 266.696 microseconds]
+    [Time delta from previous displayed frame: 266.696 microseconds]
+    [Time since reference or first frame: 3.726667356 seconds]
+    Frame Number: 7
+    Frame Length: 342 bytes (2736 bits)
+    Capture Length: 342 bytes (2736 bits)
+    [Frame is marked: False]
+    [Frame is ignored: False]
+    [Protocols in frame: eth:ethertype:ip:udp:dhcp]
+    Character encoding: ASCII (0)
+Ethernet II, Src: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d), Dst: 52:54:00:41:00:11 (52:54:00:41:00:11)
+    Destination: 52:54:00:41:00:11 (52:54:00:41:00:11)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Source: 66:c4:0e:81:82:8d (66:c4:0e:81:82:8d)
+        .... ..1. .... .... .... .... = LG bit: Locally administered address (this is NOT the factory default)
+        .... ...0 .... .... .... .... = IG bit: Individual address (unicast)
+    Type: IPv4 (0x0800)
+    [Stream index: 2]
+Internet Protocol Version 4, Src: 10.41.0.1, Dst: 10.41.0.176
+    0100 .... = Version: 4
+    .... 0101 = Header Length: 20 bytes (5)
+    Differentiated Services Field: 0x00 (DSCP: CS0, ECN: Not-ECT)
+        0000 00.. = Differentiated Services Codepoint: Default (0)
+        .... ..00 = Explicit Congestion Notification: Not ECN-Capable Transport (0)
+    Total Length: 328
+    Identification: 0xf88e (63630)
+    010. .... = Flags: 0x2, Don't fragment
+        0... .... = Reserved bit: Not set
+        .1.. .... = Don't fragment: Set
+        ..0. .... = More fragments: Not set
+    ...0 0000 0000 0000 = Fragment Offset: 0
+    Time to Live: 64
+    Protocol: UDP (17)
+    Header Checksum: 0x2c14 [validation disabled]
+    [Header checksum status: Unverified]
+    Source Address: 10.41.0.1
+    Destination Address: 10.41.0.176
+    [Stream index: 2]
+User Datagram Protocol, Src Port: 4011, Dst Port: 4011
+    Source Port: 4011
+    Destination Port: 4011
+    Length: 308
+    Checksum: 0x1648 [unverified]
+    [Checksum Status: Unverified]
+    [Stream index: 2]
+    [Stream Packet Number: 2]
+    [Timestamps]
+        [Time since first frame: 266.696 microseconds]
+        [Time since previous frame: 266.696 microseconds]
+    UDP payload (300 bytes)
+Dynamic Host Configuration Protocol (ACK)
+    Message type: Boot Reply (2)
+    Hardware type: Ethernet (0x01)
+    Hardware address length: 6
+    Hops: 0
+    Transaction ID: 0x3ea517b6
+    Seconds elapsed: 0
+    Bootp flags: 0x0000 (Unicast)
+        0... .... .... .... = Broadcast flag: Unicast
+        .000 0000 0000 0000 = Reserved flags: 0x0000
+    Client IP address: 10.41.0.176
+    Your (client) IP address: 0.0.0.0
+    Next server IP address: 10.41.0.1
+    Relay agent IP address: 0.0.0.0
+    Client MAC address: 52:54:00:41:00:11 (52:54:00:41:00:11)
+    Client hardware address padding: 00000000000000000000
+    Server host name not given
+    Boot file name: boot\x64\bootmgfw.efi
+    Magic cookie: DHCP
+    Option: (53) DHCP Message Type (ACK)
+        Length: 1
+        DHCP: ACK (5)
+    Option: (54) DHCP Server Identifier (10.41.0.1)
+        Length: 4
+        DHCP Server Identifier: 10.41.0.1
+    Option: (97) UUID/GUID-based Client Identifier
+        Length: 17
+        Client Identifier (UUID): 4c414200-0000-4000-8000-000000000011
+    Option: (60) Vendor class identifier
+        Length: 9
+        Vendor class identifier: PXEClient
+    Option: (252) Private/Proxy autodiscovery
+        Length: 13
+        Private/Proxy autodiscovery: boot\uefi.bcd
+    Option: (255) End
+        Option End: 255
+    Padding: 0000000000
+
