@@ -23,5 +23,5 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 
 ## Research tools
 
-- Read `tools/re/README.md` before you use `rea`, `ilspycmd`, or the other research tools. Claude Code then loads `tools/re/CLAUDE.md`, which lists the installed tools and their limits.
+- Before you use `rea`, `ilspycmd`, or the other research tools, read `tools/re/README.md` and `tools/re/CLAUDE.md`. The first gives the sources, steps, and pitfalls. The second lists the installed tools and their limits.
 - Use the `mcp__rea__*` tools only from the main conversation, because the `rea` MCP server holds one open binary that every subagent shares. Subagents run the `rea` command instead, each on its own binary.
