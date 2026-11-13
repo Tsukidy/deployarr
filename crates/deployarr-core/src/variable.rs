@@ -1,7 +1,8 @@
 use core::fmt;
 use core::hash::{Hash, Hasher};
+use core::str::FromStr;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 
 use crate::template::Template;
 use crate::validated_string::validated_string;
@@ -74,10 +75,88 @@ impl fmt::Display for VarNameError {
 
 impl core::error::Error for VarNameError {}
 
+/// A variable name that a task sequence can set: a `VarName` that does not
+/// start with `_`.
+///
+/// Names that start with `_` belong to the agent. Conditions and steps can
+/// read them, so those take a `VarName`. A `SetVariable` step and a sequence
+/// default take this type, so they cannot name one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "VarName")]
+pub struct SettableVarName(VarName);
+
+impl SettableVarName {
+    pub fn as_var_name(&self) -> &VarName {
+        &self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl TryFrom<VarName> for SettableVarName {
+    type Error = SettableVarNameError;
+
+    fn try_from(name: VarName) -> Result<Self, Self::Error> {
+        if name.as_str().starts_with('_') {
+            Err(SettableVarNameError::Reserved)
+        } else {
+            Ok(Self(name))
+        }
+    }
+}
+
+impl FromStr for SettableVarName {
+    type Err = SettableVarNameError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let name: VarName = text.parse().map_err(SettableVarNameError::Invalid)?;
+        Self::try_from(name)
+    }
+}
+
+impl From<SettableVarName> for VarName {
+    fn from(name: SettableVarName) -> Self {
+        name.0
+    }
+}
+
+impl fmt::Display for SettableVarName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Serialize for SettableVarName {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettableVarNameError {
+    Invalid(VarNameError),
+    Reserved,
+}
+
+impl fmt::Display for SettableVarNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Invalid(error) => error.fmt(f),
+            Self::Reserved => f.write_str(
+                "a variable name that starts with `_` belongs to the agent, so a sequence cannot set it",
+            ),
+        }
+    }
+}
+
+impl core::error::Error for SettableVarNameError {}
+
 /// One default that a task sequence gives a variable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VarAssignment {
-    pub name: VarName,
+    pub name: SettableVarName,
     pub value: Template,
 }

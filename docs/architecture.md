@@ -69,7 +69,7 @@ pub struct TaskSequence {
 	pub id: TaskSequenceId,   // upper-case, like "W11-PRO-STD"
 	pub version: u32,         // every save creates a new version
 	pub name: String,
-	pub default_vars: Vec<VarAssignment>,
+	pub default_vars: DefaultVars,   // no two entries name the same variable
 	pub root: Group,
 }
 
@@ -100,7 +100,7 @@ pub struct Step {
 pub enum Action {
 	RunCommand { command: Template, working_dir: Option<Template>, exit: ExitCodes, limits: StepLimits },
 	RunPowerShell { script: ContentRef, args: Vec<Template>, exit: ExitCodes, limits: StepLimits },
-	SetVariable { name: VarName, value: Template },
+	SetVariable { name: SettableVarName, value: Template },   // the name cannot start with `_`
 	Restart { into: RestartTarget },
 	PartitionDisk { layout: DiskLayoutId, disk: DiskSelector },
 	ApplyOsImage { image: OsImageRef },
@@ -112,9 +112,9 @@ pub enum Action {
 	ActivateWindows { online: bool },   // full OS only. Installs the product key typed in WinPE
 }
 
-pub struct ExitCodes {
-	pub success: Vec<i32>,    // never empty. Default [0]
-	pub reboot: Vec<i32>,     // success, then a reboot. Default [3010, 1641]
+pub struct ExitCodes {          // read with success() and reboot(). No code is in both lists
+	success: NonEmpty<i32>,   // Default [0]
+	reboot: Vec<i32>,         // success, then a reboot. Default [3010, 1641]
 }
 
 pub struct StepLimits {
@@ -123,18 +123,21 @@ pub struct StepLimits {
 }
 
 pub enum Condition {
-	All(Vec<Condition>),
-	Any(Vec<Condition>),
+	All(NonEmpty<Condition>),
+	Any(NonEmpty<Condition>),
 	Not(Box<Condition>),
-	Var { name: VarName, op: CompareOp, value: Template },
-	Registry { key: Template, value: Option<String>, op: CompareOp, data: Option<RegData> },
+	Var { name: VarName, test: Test<NonEmptyTemplate> },
+	Registry { key: Template, value: Option<String>, test: Test<RegData> },   // REG_DWORD, REG_QWORD, REG_SZ, or REG_EXPAND_SZ
 	File { path: Template, version: Option<Comparison<FileVersion>>, modified: Option<Comparison<Timestamp>> },
 	Folder { path: Template, modified: Option<Comparison<Timestamp>> },
 	InstalledMsi(MsiProduct),   // ProductCode or UpgradeCode. Full OS only
 	Wmi { namespace: String, query: Template, ignore_failure: bool },   // full OS only
 }
 
-pub enum CompareOp { Exists, NotExists, Equals, NotEquals, Less, LessEqual, Greater, GreaterEqual, Like }
+// An operator with its operand. Exists and NotExists take none, and every other operator takes one
+pub enum Test<T> { Exists, NotExists, Equals(T), NotEquals(T), Less(T), LessEqual(T), Greater(T), GreaterEqual(T), Like(T) }
+
+pub enum CompareOp { Equals, NotEquals, Less, LessEqual, Greater, GreaterEqual }   // for file versions and timestamps
 ```
 
 Each MDT step type that does real work becomes a typed `Action` variant with typed parameters. `RunCommand` and `RunPowerShell` cover everything else. MDT passes every step's settings as untyped variables and command lines, so a typo becomes a runtime failure. With typed actions, the editor and the server reject a bad step when you save it.
@@ -145,8 +148,12 @@ The condition types match what MDT's engine evaluates. MDT also has make, model,
 
 ```rust
 pub struct NodeId(pub Uuid);
-pub struct Template(String);   // the text as written. Substitution happens at run time
-pub struct VarAssignment { pub name: VarName, pub value: Template }
+pub struct Template(String);              // the text as written. Substitution happens at run time
+pub struct NonEmptyTemplate(Template);    // a Template that is not empty
+pub struct SettableVarName(VarName);      // a VarName that does not start with `_`
+pub struct VarAssignment { pub name: SettableVarName, pub value: Template }
+pub struct DefaultVars(Vec<VarAssignment>);   // read with as_slice(). No two names are equal in any case
+pub struct NonEmpty<T>(Vec<T>);           // a list with at least one item
 
 pub enum RunIn { WinPe, FullOs, Either }
 pub enum RestartTarget { WinPe, InstalledOs }
@@ -174,22 +181,30 @@ pub struct Comparison<T> { pub op: CompareOp, pub value: T }
 pub struct FileVersion { pub major: u16, pub minor: u16, pub build: u16, pub revision: u16 }
 pub struct Timestamp(pub OffsetDateTime);
 pub enum MsiProduct { ProductCode(Uuid), UpgradeCode(Uuid) }
-pub enum RegData { String(String), Integer(i64) }   // compared by the `Var` rules
+pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rules
 ```
 
 - `NodeId` wraps a UUID. The core crate parses and writes IDs and never generates one, so it leaves out the `uuid` crate's `v4` feature. On `wasm32-unknown-unknown`, `uuid` stops a build that has `v4` unless the build also turns on one of its randomness features: `js`, `rng-getrandom`, or `rng-rand`.
 - `TaskSequenceId` holds one or more of `A` to `Z`, digits, `_`, or `-`.
 - `VarName` holds 1 to 256 ASCII letters, digits, `_`, or `-`. Two names that differ only in case are equal. The name keeps the spelling its author wrote. The length, the character classes, and the case rule are MDT's. The ASCII limit is deployarr's choice. See [Variables](#variables).
+- `SettableVarName` is a `VarName` that does not start with `_`. `SetVariable` and the entries of `default_vars` take it, so a sequence cannot set a name that belongs to the agent. Conditions and `FromList` take a `VarName`, so they can still read one.
+- `DefaultVars` keeps its list private, and `DefaultVars::new` rejects two entries whose names are equal in any case. Code that builds a sequence, such as an importer or the editor, therefore cannot write a `default_vars` list that the parser would reject. The JSON is a plain array of entries.
+- `NonEmpty<T>` holds at least one item. `All`, `Any`, and the success list of `ExitCodes` use it, so none of them can be empty.
 - `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, and `AppId` are strings that reject an empty value.
 - `DiskSelector` has one rule so far, the first internal, non-removable disk.
 - `MemoryCheck`, `DiskCheck`, and `ProcessorCheck` each hold a minimum and a `mode`, so the JSON for one is an object such as `{"min_mib": 4096, "mode": "fail"}`. The `uefi`, `tpm_2_0`, and `secure_boot` checks have no minimum, so each is a bare `CheckMode`, such as `"warn"`.
 - `min_mib` is in mebibytes of 2^20 bytes, so the default 4096 is 4 GiB. `min_gb` is in decimal gigabytes of 10^9 bytes, the unit that disks are sold in, because a disk sold as 64 GB holds less than 64 GiB. `min_cores` counts processor cores.
 - `max_runtime_secs` is a whole number of seconds and is never zero, because a zero limit fails every run. An earlier sketch had `max_runtime: Option<Duration>`. serde writes a `Duration` as an object with `secs` and `nanos`. deployarr limits a step in whole seconds, so the limit is one JSON integer and the field name carries the unit.
+- `ExitCodes` holds `i32` values. Windows returns a process's exit code as a 32-bit `DWORD` ([GetExitCodeProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess)), and an `i32` holds those 32 bits. An exit code at or above `0x80000000` is written as its signed value, so `0x80070005` is `-2147024891`. The unsigned spelling fails to parse. An HRESULT is a `LONG`, a 32-bit signed integer ([Windows Data Types](https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types)), so the signed value is also the HRESULT's own value.
+- `ExitCodes` keeps its fields private, and `ExitCodes::new` rejects a code that is in both `success` and `reboot`. A code means success, or success and then a reboot, never both.
+- `Test<T>` carries an operator together with its operand. `Exists` and `NotExists` take no operand, and every other operator takes one, so a `Var` or `Registry` condition can neither lack the operand it needs nor carry one that it ignores. A `Var` condition compares against a `NonEmptyTemplate`, because `NotExists` is the test for an empty variable.
+- `Comparison<T>` takes only the six operators of `CompareOp`, so a file version or timestamp comparison cannot use `Like`, `Exists`, or `NotExists`.
 - `Comparison<T>` has named `op` and `value` fields. An earlier sketch had the tuple `(CompareOp, T)`. serde writes a tuple as a JSON array, so a parse error would point at `version[1]`. With named fields it points at `version.value`.
 - `FileVersion` is written as `a.b.c.d` and orders by its four fields.
 - `Timestamp` is written in RFC 3339, such as `2026-01-31T08:00:00Z`. An earlier sketch had `DateTime` and named no format. RFC 3339 requires a UTC offset, so every value names one instant.
 - The core crate parses a `Timestamp` with the `time` crate and writes the text itself, because `time`'s formatter needs `std`. It writes the same text that `time` writes. A fraction of a second loses its trailing zeros, and a zero offset is `Z`.
 - `MsiProduct` is written as a GUID without braces. `RegData` is written as a bare JSON string or integer.
+- A `Registry` condition reads `REG_DWORD`, `REG_QWORD`, `REG_SZ`, and `REG_EXPAND_SZ` values. `REG_DWORD` is a 32-bit number and `REG_QWORD` a 64-bit number ([Registry value types](https://learn.microsoft.com/en-us/windows/win32/sysinfo/registry-value-types)), and Windows declares `DWORD` and `QWORD` as unsigned ([Windows Data Types](https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types)). `RegData::Integer` therefore holds a `u64`, which holds every value of both types, and a negative number fails to parse.
 
 ### JSON format
 
@@ -202,8 +217,18 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 - An unknown field is an error, so a misspelled field name never passes as a default.
 - The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
 - A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
-- A value that is valid but not in canonical form still parses, and the serializer writes it back in canonical form. A GUID in upper case or in braces is written in lower case without braces. A file version part with leading zeros, such as `010`, is written as `10`. A timestamp with a lower-case `t` or `z`, a space in place of `T`, or a `+00:00` offset is written with `T` and `Z`. Any other offset is kept.
-- The parser checks each value by itself. It accepts an empty success list, an empty `All` or `Any`, and a `run_in` that the action cannot honor. The compiler rejects those when the sequence is saved, so that each error names the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
+- A value that is valid but not in canonical form still parses, and the serializer writes it back in canonical form. A GUID in upper case or in braces is written in lower case without braces. A file version part with leading zeros, such as `010`, is written as `10`. A timestamp with a lower-case `t` or `z`, a space in place of `T`, or a `+00:00` offset is written with `T` and `Z`. Any other offset is kept. A `Var` or `Registry` test of `{"exists": null}` is written as `"exists"`, and `{"not_exists": null}` as `"not_exists"`.
+- A `Var` or `Registry` condition writes its operator and operand under `test`, by the variant rule above. `"test": "exists"` takes no operand, and `"test": {"greater_equal": 26100}` takes one. A file version or timestamp comparison keeps the `op` and `value` fields.
+- The parser also rejects the states below. Each error path names the field that holds the state:
+  - An empty success list, at `exit.success`. MDT's engine has no default, so an empty `successCodeList` fails every exit code, including 0 ([MDT 8450 binaries reference](research/mdt-8450-binaries.md#instruction-table-and-failure-handling)).
+  - A code in both `success` and `reboot`, at the code in the list that comes second, such as `exit.reboot[0]`. An omitted list takes its default first. `{"success": [0, 3010]}` with no `reboot` therefore fails at `exit`, because the default `reboot` holds 3010.
+  - An empty `All` or `Any`, at `all` or `any`. MDT treats an empty OR as true, which is rarely what the author meant ([MDT 8450 binaries reference](research/mdt-8450-binaries.md#conditions)).
+  - An operand on `exists` or `not_exists`, a missing operand on any other operator, or an empty `Var` operand, at the operator, such as `test.exists`.
+  - `Like`, `Exists`, or `NotExists` in a file version or timestamp comparison, at `op`.
+  - A negative registry integer, at the operator that holds it.
+  - A `SetVariable` step or a `default_vars` entry that names a variable that starts with `_`, at its `name`.
+  - Two `default_vars` entries that name the same variable, in any case, at the second entry's name, such as `default_vars[1].name`.
+- The compiler rejects a `run_in` that the action cannot honor when the sequence is saved, so that the error names the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
 
 `crates/deployarr-core/tests/data/windows-11-pro.json` is a sample that uses every action and every condition.
 
@@ -238,10 +263,10 @@ Like MDT, deployarr checks a group's condition only when it reaches the group, a
 
 The compiler also rejects these mistakes when you save, which MDT finds only at run time or never:
 
-- An empty success list. MDT's engine has no default, so an empty `successCodeList` fails every exit code, including 0.
 - A step whose `run_in` its action cannot honor, such as `ApplyOsImage` in the full OS. MDT fails such a step with error 50 when the engine reaches it.
 - A `Restart` in WinPE before the state has moved to disk. See [State on disk and resume](#state-on-disk-and-resume).
-- An empty `All`, `Any`, or `Not`. MDT treats an empty OR as true, which is rarely what the author meant.
+
+The parser rejects other mistakes before the compiler runs, such as an empty success list or an empty `All` or `Any`. See [JSON format](#json-format).
 
 ### Conditions
 
@@ -285,7 +310,7 @@ The engine is a pure state machine over an `Executor` trait, so it is tested on 
 
 ### Variables
 
-- A name is 1 to 256 letters, digits, `_`, or `-`, and names are case-insensitive. These are MDT's rules. deployarr also limits the letters and digits to ASCII. That limit is deployarr's choice, because the [MDT 8450 binaries reference](research/mdt-8450-binaries.md#variables) does not say whether MDT accepts other letters. A strict set can loosen later without breaking a stored sequence. Names that start with `_` belong to the agent, and steps can read them but not set them.
+- A name is 1 to 256 letters, digits, `_`, or `-`, and names are case-insensitive. These are MDT's rules. deployarr also limits the letters and digits to ASCII. That limit is deployarr's choice, because the [MDT 8450 binaries reference](research/mdt-8450-binaries.md#variables) does not say whether MDT accepts other letters. A strict set can loosen later without breaking a stored sequence. Names that start with `_` belong to the agent, and steps can read them but not set them. A sequence default cannot name a variable that starts with `_` either.
 - A value is a scalar or a list. MDT's `Applications001`-style lists become real lists.
 - A value that is already set beats a sequence default. MDT's `globalVarList` follows the same rule.
 - `%Name%` inside a `Template` substitutes a value, and `%%` stands for a literal `%`. Substitution makes one pass from left to right and never scans inserted text again. A name that is not a task sequence variable falls back to the process environment, as in MDT. A name that neither defines fails the step. MDT leaves such a name in the text, and its expander scans inserted text again, so one stored value can make it loop forever.
@@ -561,7 +586,7 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 1. WinPE gets the network and storage drivers it needs to reach the disk and the server, such as Intel VMD/RST, from the boot image. The default set is every driver of class Net, SCSIAdapter, or HDC, which is MDT's default. Display and System drivers are optional. The agent loads them at start with `drvload` and reports any that fail. MDT ignores WinPE driver failures.
 2. The agent downloads the selected packages and injects them one at a time with `dism /Image:W:\ /Add-Driver /Driver:<package> /Recurse`. A failing package is recorded and skipped. MDT injects all drivers in one DISM call, so one bad driver fails the deployment.
 3. Windows Setup installs the injected drivers while it detects devices.
-4. Late in the sequence, `VerifyDrivers` lists every device with a problem code through `CM_Get_DevNode_Status`. The agent sends each device's hardware IDs to the server. If the library has a matching package that was not injected, the agent installs it with `pnputil /add-driver <inf> /install`, then checks again. This catches devices that WinPE could not see. A policy can also try Windows Update drivers.
+4. Late in the sequence, `VerifyDrivers` lists every device with a problem code through `CM_Get_DevNode_Status`. The agent sends each device's hardware IDs to the server. If the library has a matching package that was not injected, the agent installs it with `pnputil /add-driver <inf> /install`, then checks again. This catches devices that WinPE could not see. Windows Update drivers are later work. The first release does not try them, and `MissingDriverPolicy` holds `Fail`, `Warn`, and `Ignore`.
 5. The step then applies its policy: fail the deployment, warn, or ignore. The UI lists missing drivers by PC type, with hardware IDs, so the next deployment of that model succeeds.
 
 ## OS images
