@@ -1,15 +1,17 @@
 use alloc::borrow::ToOwned;
+use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
+use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
 use crate::action::Action;
 use crate::condition::Condition;
 use crate::validated_string::validated_string;
-use crate::variable::VarAssignment;
+use crate::variable::{SettableVarName, VarAssignment};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
@@ -68,8 +70,129 @@ struct Document {
     id: TaskSequenceId,
     version: u32,
     name: String,
-    default_vars: Vec<VarAssignment>,
+    default_vars: DefaultVars,
     root: Group,
+}
+
+/// `default_vars` as written. Two entries that name the same variable, in any
+/// case, fail, and the error path names the second entry's name, such as
+/// `default_vars[1].name`.
+struct DefaultVars(Vec<VarAssignment>);
+
+impl<'de> Deserialize<'de> for DefaultVars {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_seq(DefaultVarsVisitor).map(Self)
+    }
+}
+
+struct DefaultVarsVisitor;
+
+impl<'de> Visitor<'de> for DefaultVarsVisitor {
+    type Value = Vec<VarAssignment>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a list of variable defaults")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        let mut defaults = Vec::new();
+        let mut seen = BTreeMap::new();
+        while let Some(default) = seq.next_element_seed(DefaultVar {
+            earlier: &defaults,
+            seen: &seen,
+        })? {
+            seen.insert(name_key(&default.name), defaults.len());
+            defaults.push(default);
+        }
+        Ok(defaults)
+    }
+}
+
+/// The key under which `DefaultVarsVisitor` records a name. A `VarName` holds
+/// only ASCII, so two names are equal exactly when their keys are.
+fn name_key(name: &SettableVarName) -> String {
+    name.as_str().to_ascii_lowercase()
+}
+
+/// One entry of `default_vars`, read with the entries before it. `seen` maps
+/// each earlier name's key to its index in `earlier`.
+struct DefaultVar<'a> {
+    earlier: &'a [VarAssignment],
+    seen: &'a BTreeMap<String, usize>,
+}
+
+const DEFAULT_VAR_FIELDS: &[&str] = &["name", "value"];
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "snake_case")]
+enum DefaultVarField {
+    Name,
+    Value,
+}
+
+impl<'de> DeserializeSeed<'de> for DefaultVar<'_> {
+    type Value = VarAssignment;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        deserializer.deserialize_struct("VarAssignment", DEFAULT_VAR_FIELDS, self)
+    }
+}
+
+impl<'de> Visitor<'de> for DefaultVar<'_> {
+    type Value = VarAssignment;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a variable default, an object with `name` and `value`")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        let mut name = None;
+        let mut value = None;
+        while let Some(field) = map.next_key()? {
+            match field {
+                DefaultVarField::Name => {
+                    if name.is_some() {
+                        return Err(de::Error::duplicate_field("name"));
+                    }
+                    name = Some(map.next_value_seed(UniqueName {
+                        earlier: self.earlier,
+                        seen: self.seen,
+                    })?);
+                }
+                DefaultVarField::Value => {
+                    if value.is_some() {
+                        return Err(de::Error::duplicate_field("value"));
+                    }
+                    value = Some(map.next_value()?);
+                }
+            }
+        }
+        Ok(VarAssignment {
+            name: name.ok_or_else(|| de::Error::missing_field("name"))?,
+            value: value.ok_or_else(|| de::Error::missing_field("value"))?,
+        })
+    }
+}
+
+/// A default's name, which must differ from every earlier default's name.
+struct UniqueName<'a> {
+    earlier: &'a [VarAssignment],
+    seen: &'a BTreeMap<String, usize>,
+}
+
+impl<'de> DeserializeSeed<'de> for UniqueName<'_> {
+    type Value = SettableVarName;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        let name = SettableVarName::deserialize(deserializer)?;
+        match self.seen.get(&name_key(&name)) {
+            Some(&index) => Err(de::Error::custom(format_args!(
+                "default_vars[{index}] already names this variable, as `{}`, and variable names ignore case",
+                self.earlier[index].name
+            ))),
+            None => Ok(name),
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -96,7 +219,7 @@ impl<'de> Deserialize<'de> for TaskSequence {
             id,
             version,
             name,
-            default_vars,
+            default_vars: default_vars.0,
             root,
         })
     }

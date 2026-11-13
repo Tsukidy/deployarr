@@ -3,11 +3,13 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::num::NonZeroU32;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::non_empty::{NonEmpty, NonEmptySeed};
 use crate::template::Template;
 use crate::validated_string::validated_string;
-use crate::variable::VarName;
+use crate::variable::{SettableVarName, VarName};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -30,7 +32,7 @@ pub enum Action {
         limits: StepLimits,
     },
     SetVariable {
-        name: VarName,
+        name: SettableVarName,
         value: Template,
     },
     Restart {
@@ -65,19 +67,185 @@ pub enum Action {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+/// The exit codes that end a command step with success.
+///
+/// A code at or above `0x80000000`, such as an HRESULT, is written as its
+/// signed value, so `0x80070005` is `-2147024891`. `success` is never empty,
+/// and no code is in both lists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ExitCodes {
-    pub success: Vec<i32>,
+    success: NonEmpty<i32>,
     /// Codes that mean success, then a reboot.
-    pub reboot: Vec<i32>,
+    reboot: Vec<i32>,
+}
+
+impl ExitCodes {
+    pub fn new(success: NonEmpty<i32>, reboot: Vec<i32>) -> Result<Self, ExitCodesError> {
+        let sorted_success = sorted(&success);
+        match reboot
+            .iter()
+            .find(|code| sorted_success.binary_search(code).is_ok())
+        {
+            Some(&code) => Err(ExitCodesError { code }),
+            None => Ok(Self { success, reboot }),
+        }
+    }
+
+    pub fn success(&self) -> &[i32] {
+        &self.success
+    }
+
+    pub fn reboot(&self) -> &[i32] {
+        &self.reboot
+    }
 }
 
 impl Default for ExitCodes {
     fn default() -> Self {
         Self {
-            success: vec![0],
+            success: NonEmpty::new(0),
             reboot: vec![3010, 1641],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExitCodesError {
+    pub code: i32,
+}
+
+impl fmt::Display for ExitCodesError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { code } = self;
+        write!(
+            f,
+            "exit code {code} is in both `success` and `reboot`, and a code means only one of them"
+        )
+    }
+}
+
+impl core::error::Error for ExitCodesError {}
+
+/// Reads `ExitCodes` from a map. An omitted list takes its default.
+///
+/// Each code is checked against the other list as it is read, so a code that
+/// is in both fails at the second one, such as `exit.reboot[0]`. A code that is
+/// in a written list and in the other list's default fails at `exit`.
+impl<'de> Deserialize<'de> for ExitCodes {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_struct("ExitCodes", EXIT_CODES_FIELDS, ExitCodesVisitor)
+    }
+}
+
+const EXIT_CODES_FIELDS: &[&str] = &["success", "reboot"];
+
+#[derive(Deserialize)]
+#[serde(field_identifier, rename_all = "snake_case")]
+enum ExitCodesField {
+    Success,
+    Reboot,
+}
+
+struct ExitCodesVisitor;
+
+impl<'de> Visitor<'de> for ExitCodesVisitor {
+    type Value = ExitCodes;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("exit codes, an object with `success` and `reboot` lists")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<ExitCodes, A::Error> {
+        let mut success: Option<NonEmpty<i32>> = None;
+        let mut reboot: Option<Vec<i32>> = None;
+        while let Some(field) = map.next_key()? {
+            match field {
+                ExitCodesField::Success => {
+                    if success.is_some() {
+                        return Err(de::Error::duplicate_field("success"));
+                    }
+                    let other = reboot.as_deref().map(sorted);
+                    let other = other.as_deref();
+                    success = Some(map.next_value_seed(NonEmptySeed(CodeList { other }))?);
+                }
+                ExitCodesField::Reboot => {
+                    if reboot.is_some() {
+                        return Err(de::Error::duplicate_field("reboot"));
+                    }
+                    let other = success.as_deref().map(sorted);
+                    let other = other.as_deref();
+                    reboot = Some(map.next_value_seed(CodeList { other })?);
+                }
+            }
+        }
+        let defaults = ExitCodes::default();
+        let (success, reboot, default_note) = match (success, reboot) {
+            (Some(success), Some(reboot)) => (success, reboot, ""),
+            (Some(success), None) => (
+                success,
+                defaults.reboot,
+                ". An omitted `reboot` is [3010, 1641]",
+            ),
+            (None, Some(reboot)) => (defaults.success, reboot, ". An omitted `success` is [0]"),
+            (None, None) => return Ok(defaults),
+        };
+        ExitCodes::new(success, reboot)
+            .map_err(|error| de::Error::custom(format_args!("{error}{default_note}")))
+    }
+}
+
+/// A sorted copy of a list of codes, so a lookup in it takes a binary search
+/// and a document with long lists cannot make the check quadratic.
+fn sorted(codes: &[i32]) -> Vec<i32> {
+    let mut codes = codes.to_vec();
+    codes.sort_unstable();
+    codes
+}
+
+/// One list of exit codes, checked code by code against the list read before
+/// it. `other` is that list, sorted.
+struct CodeList<'a> {
+    other: Option<&'a [i32]>,
+}
+
+impl<'de> DeserializeSeed<'de> for CodeList<'_> {
+    type Value = Vec<i32>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Vec<i32>, D::Error> {
+        deserializer.deserialize_seq(self)
+    }
+}
+
+impl<'de> Visitor<'de> for CodeList<'_> {
+    type Value = Vec<i32>;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a list of exit codes")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<i32>, A::Error> {
+        let mut codes = Vec::new();
+        while let Some(code) = seq.next_element_seed(Code { other: self.other })? {
+            codes.push(code);
+        }
+        Ok(codes)
+    }
+}
+
+struct Code<'a> {
+    other: Option<&'a [i32]>,
+}
+
+impl<'de> DeserializeSeed<'de> for Code<'_> {
+    type Value = i32;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<i32, D::Error> {
+        let code = i32::deserialize(deserializer)?;
+        match self.other {
+            Some(other) if other.binary_search(&code).is_ok() => {
+                Err(de::Error::custom(ExitCodesError { code }))
+            }
+            _ => Ok(code),
         }
     }
 }

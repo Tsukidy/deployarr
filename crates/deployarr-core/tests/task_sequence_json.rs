@@ -2,12 +2,12 @@ use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
 use deployarr_core::action::{
-    Action, CheckMode, DiskCheck, DiskSelector, ExitCodes, MemoryCheck, ProcessorCheck,
-    ReadinessChecks, StepLimits,
+    Action, AppSelection, CheckMode, DiskCheck, DiskSelector, ExitCodes, MemoryCheck,
+    ProcessorCheck, ReadinessChecks, StepLimits,
 };
-use deployarr_core::condition::{Comparison, Condition, FileVersion};
-use deployarr_core::sequence::{Node, NodeMeta, TaskSequence, TaskSequenceId};
-use deployarr_core::variable::VarName;
+use deployarr_core::condition::{Comparison, Condition, FileVersion, RegData, Test};
+use deployarr_core::sequence::{Node, NodeMeta, ParseError, TaskSequence, TaskSequenceId};
+use deployarr_core::variable::{SettableVarName, VarName};
 use serde_json::{Value, json};
 
 const SAMPLE: &str = include_str!("data/windows-11-pro.json");
@@ -20,7 +20,7 @@ fn sample() -> Value {
     serde_json::from_str(SAMPLE).expect("the sample is JSON")
 }
 
-fn parse(document: &Value) -> Result<TaskSequence, deployarr_core::sequence::ParseError> {
+fn parse(document: &Value) -> Result<TaskSequence, ParseError> {
     TaskSequence::from_json(&document.to_string())
 }
 
@@ -202,13 +202,9 @@ fn omitted_exit_codes_and_limits_take_the_documented_defaults() {
         panic!("expected RunCommand, found {action:?}");
     };
     assert_eq!(working_dir, None);
-    assert_eq!(
-        exit,
-        ExitCodes {
-            success: vec![0],
-            reboot: vec![3010, 1641],
-        }
-    );
+    assert_eq!(exit, ExitCodes::default());
+    assert_eq!(exit.success(), [0]);
+    assert_eq!(exit.reboot(), [3010, 1641]);
     assert_eq!(
         limits,
         StepLimits {
@@ -389,7 +385,7 @@ fn a_bad_value_fails_and_the_error_names_its_field() {
             install("/1/step/action/set_variable/name"),
             json!("%AssetTag%"),
         ),
-        (install("/1/step/meta/condition/var/op"), json!("equal")),
+        (install("/1/step/meta/condition/var/test"), json!("equal")),
         (install("/2/step/action/partition_disk/layout"), json!("")),
         (install("/2/step/action/partition_disk/disk"), json!("usb")),
         (install("/3/step/action/apply_os_image/image"), json!("")),
@@ -446,7 +442,7 @@ fn a_bad_value_fails_and_the_error_names_its_field() {
             json!("true"),
         ),
         (
-            format!("{FINISH_CONDITION}/all/0/any/0/registry/data"),
+            format!("{FINISH_CONDITION}/all/0/any/0/registry/test/greater_equal"),
             json!(true),
         ),
         (
@@ -578,4 +574,341 @@ fn text_that_is_not_one_json_document_fails() {
     assert!(TaskSequence::from_json("").is_err());
     assert!(TaskSequence::from_json("{\"schema_version\": 1,").is_err());
     assert!(TaskSequence::from_json(&format!("{SAMPLE} {SAMPLE}")).is_err());
+}
+
+// States that the JSON once allowed but that cannot run. Each one fails to
+// parse, and the error path locates the field. The owner's answer on #62 lists
+// them.
+
+const STEP: &str = "root.children[0].step";
+
+fn sequence_with_condition(condition: Value) -> Value {
+    let mut document = sequence_with_action(json!({ "activate_windows": { "online": false } }));
+    document["root"]["children"][0]["step"]["meta"]["condition"] = condition;
+    document
+}
+
+#[track_caller]
+fn assert_fails_at(document: &Value, path: &str) -> ParseError {
+    match parse(document) {
+        Ok(sequence) => panic!("expected an error at {path}, and it parsed: {sequence:?}"),
+        Err(error) => {
+            assert_eq!(error.path(), path, "{error}");
+            error
+        }
+    }
+}
+
+const OPS_WITH_OPERAND: [&str; 7] = [
+    "equals",
+    "not_equals",
+    "less",
+    "less_equal",
+    "greater",
+    "greater_equal",
+    "like",
+];
+
+fn registry(test: Value) -> Value {
+    json!({
+        "registry": {
+            "key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Deployarr",
+            "value": "Marker",
+            "test": test,
+        },
+    })
+}
+
+#[test]
+fn a_registry_exists_test_with_data_fails() {
+    for op in ["exists", "not_exists"] {
+        for data in [json!(1), json!("1")] {
+            let document = sequence_with_condition(registry(json!({ op: data })));
+
+            assert_fails_at(
+                &document,
+                &format!("{STEP}.meta.condition.registry.test.{op}"),
+            );
+        }
+    }
+}
+
+#[test]
+fn a_registry_equals_test_without_data_fails() {
+    for op in OPS_WITH_OPERAND {
+        let bare = sequence_with_condition(registry(json!(op)));
+        assert_fails_at(&bare, &format!("{STEP}.meta.condition.registry.test.{op}"));
+
+        let null = sequence_with_condition(registry(json!({ op: null })));
+        assert_fails_at(&null, &format!("{STEP}.meta.condition.registry.test.{op}"));
+    }
+}
+
+fn var(name: &str, test: Value) -> Value {
+    json!({ "var": { "name": name, "test": test } })
+}
+
+#[test]
+fn a_var_exists_test_with_a_value_fails() {
+    for op in ["exists", "not_exists"] {
+        let document = sequence_with_condition(var("AssetTag", json!({ op: "x" })));
+
+        assert_fails_at(&document, &format!("{STEP}.meta.condition.var.test.{op}"));
+    }
+}
+
+#[test]
+fn a_var_equals_test_with_an_empty_value_fails() {
+    for op in OPS_WITH_OPERAND {
+        let empty = sequence_with_condition(var("AssetTag", json!({ op: "" })));
+        let error = assert_fails_at(&empty, &format!("{STEP}.meta.condition.var.test.{op}"));
+        assert!(error.to_string().contains("not_exists"), "{error}");
+
+        let bare = sequence_with_condition(var("AssetTag", json!(op)));
+        assert_fails_at(&bare, &format!("{STEP}.meta.condition.var.test.{op}"));
+    }
+}
+
+#[test]
+fn file_version_and_timestamp_comparisons_admit_only_equality_and_order() {
+    let conditions = [
+        ("file", "version", "10.0.26100.0"),
+        ("file", "modified", "2024-10-01T00:00:00Z"),
+        ("folder", "modified", "2024-10-01T00:00:00Z"),
+    ];
+    for (kind, field, value) in conditions {
+        for op in ["like", "exists", "not_exists"] {
+            let document = sequence_with_condition(json!({
+                kind: { "path": "C:\\Windows", field: { "op": op, "value": value } },
+            }));
+
+            assert_fails_at(
+                &document,
+                &format!("{STEP}.meta.condition.{kind}.{field}.op"),
+            );
+        }
+        for op in [
+            "equals",
+            "not_equals",
+            "less",
+            "less_equal",
+            "greater",
+            "greater_equal",
+        ] {
+            let document = sequence_with_condition(json!({
+                kind: { "path": "C:\\Windows", field: { "op": op, "value": value } },
+            }));
+
+            parse(&document).unwrap_or_else(|error| panic!("{kind}.{field} {op}: {error}"));
+        }
+    }
+}
+
+#[test]
+fn an_empty_all_or_any_fails() {
+    let marker = json!({ "folder": { "path": "C:\\Deployarr" } });
+    let cases = [
+        (json!({ "all": [] }), "all"),
+        (json!({ "any": [] }), "any"),
+        (json!({ "not": { "all": [] } }), "not.all"),
+        (json!({ "all": [marker, { "any": [] }] }), "all[1].any"),
+    ];
+
+    for (condition, path) in cases {
+        let document = sequence_with_condition(condition);
+
+        assert_fails_at(&document, &format!("{STEP}.meta.condition.{path}"));
+    }
+}
+
+#[test]
+fn negative_registry_data_fails() {
+    for data in [json!(-1), json!(i64::MIN)] {
+        let document = sequence_with_condition(registry(json!({ "equals": data })));
+
+        assert_fails_at(
+            &document,
+            &format!("{STEP}.meta.condition.registry.test.equals"),
+        );
+    }
+}
+
+#[test]
+fn registry_data_holds_every_qword() {
+    let document = sequence_with_condition(registry(json!({
+        "equals": 18_446_744_073_709_551_615_u64,
+    })));
+
+    let sequence = parse(&document).expect("the document parses");
+
+    let [Node::Step(step)] = sequence.root.children.as_slice() else {
+        panic!("expected one step");
+    };
+    let Some(Condition::Registry { test, .. }) = &step.meta.condition else {
+        panic!("expected a Registry condition");
+    };
+    assert_eq!(*test, Test::Equals(RegData::Integer(u64::MAX)));
+}
+
+#[test]
+fn a_sequence_cannot_set_a_variable_that_starts_with_an_underscore() {
+    let step = sequence_with_action(json!({ "set_variable": { "name": "_Foo", "value": "x" } }));
+    let error = assert_fails_at(&step, &format!("{STEP}.action.set_variable.name"));
+    assert!(
+        error.to_string().contains("belongs to the agent"),
+        "{error}"
+    );
+
+    let mut default = sequence_with_action(json!({ "activate_windows": { "online": false } }));
+    default["default_vars"] = json!([{ "name": "_Foo", "value": "x" }]);
+    assert_fails_at(&default, "default_vars[0].name");
+
+    assert!("_Foo".parse::<SettableVarName>().is_err());
+    assert!("Foo_".parse::<SettableVarName>().is_ok());
+}
+
+#[test]
+fn conditions_and_application_lists_can_read_a_variable_that_starts_with_an_underscore() {
+    let mut document = sequence_with_action(json!({
+        "install_applications": { "apps": { "from_list": "_Foo" } },
+    }));
+    document["root"]["children"][0]["step"]["meta"]["condition"] =
+        var("_Foo", json!({ "equals": "x" }));
+
+    let sequence = parse(&document).expect("the document parses");
+
+    let [Node::Step(step)] = sequence.root.children.as_slice() else {
+        panic!("expected one step");
+    };
+    let Action::InstallApplications {
+        apps: AppSelection::FromList(list),
+    } = &step.action
+    else {
+        panic!(
+            "expected InstallApplications from a list, found {:?}",
+            step.action
+        );
+    };
+    assert_eq!(list.as_str(), "_Foo");
+    let Some(Condition::Var { name, .. }) = &step.meta.condition else {
+        panic!("expected a Var condition");
+    };
+    assert_eq!(name.as_str(), "_Foo");
+}
+
+#[test]
+fn two_defaults_for_one_variable_fail_at_the_second() {
+    let cases = [
+        (
+            vec!["OSDComputerName", "osdcomputername"],
+            "default_vars[1].name",
+            "default_vars[0] already names this variable, as `OSDComputerName`",
+        ),
+        (
+            vec!["A", "A"],
+            "default_vars[1].name",
+            "default_vars[0] already names this variable, as `A`",
+        ),
+        (
+            vec!["A", "B", "b"],
+            "default_vars[2].name",
+            "default_vars[1] already names this variable, as `B`",
+        ),
+    ];
+
+    for (names, path, message) in cases {
+        let mut document = sequence_with_action(json!({ "activate_windows": { "online": false } }));
+        document["default_vars"] = names
+            .iter()
+            .map(|name| json!({ "name": name, "value": "x" }))
+            .collect();
+
+        let error = assert_fails_at(&document, path);
+
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+fn run_command_with_exit(exit: Value) -> Value {
+    sequence_with_action(json!({ "run_command": { "command": "setup.exe", "exit": exit } }))
+}
+
+const EXIT: &str = "root.children[0].step.action.run_command.exit";
+
+#[test]
+fn an_empty_success_list_fails() {
+    for exit in [
+        json!({ "success": [] }),
+        json!({ "success": [], "reboot": [] }),
+    ] {
+        assert_fails_at(&run_command_with_exit(exit), &format!("{EXIT}.success"));
+    }
+
+    let powershell = sequence_with_action(json!({
+        "run_powershell": { "script": "scripts/a.ps1", "args": [], "exit": { "success": [] } },
+    }));
+    assert_fails_at(
+        &powershell,
+        "root.children[0].step.action.run_powershell.exit.success",
+    );
+}
+
+#[test]
+fn a_code_in_both_success_and_reboot_fails() {
+    // `Value` sorts object keys, so the cases are text, to keep the field order.
+    let cases = [
+        (
+            r#"{"success": [0, 3010], "reboot": [3010]}"#,
+            format!("{EXIT}.reboot[0]"),
+        ),
+        (
+            r#"{"reboot": [1641, 3010], "success": [0, 1641]}"#,
+            format!("{EXIT}.success[1]"),
+        ),
+        // The omitted list takes its default, which holds the code.
+        (r#"{"success": [0, 3010]}"#, EXIT.to_owned()),
+        (r#"{"reboot": [0]}"#, EXIT.to_owned()),
+    ];
+
+    for (exit, path) in cases {
+        let text = run_command_with_exit(json!("EXIT"))
+            .to_string()
+            .replace(r#""EXIT""#, exit);
+
+        let error = TaskSequence::from_json(&text).expect_err(exit);
+
+        assert_eq!(error.path(), path, "{exit}: {error}");
+        assert!(error.to_string().contains("in both"), "{exit}: {error}");
+    }
+}
+
+#[test]
+fn an_exit_code_at_or_above_0x80000000_is_written_as_its_signed_value() {
+    let action = only_step_action(run_command_with_exit(json!({
+        "success": [0, -2_147_024_891],
+        "reboot": [],
+    })));
+
+    let Action::RunCommand { exit, .. } = action else {
+        panic!("expected RunCommand, found {action:?}");
+    };
+    assert_eq!(exit.success(), [0, -2_147_024_891]);
+    assert_eq!(
+        exit.success()[1],
+        i32::from_ne_bytes(0x8007_0005_u32.to_ne_bytes())
+    );
+
+    let unsigned = run_command_with_exit(json!({ "success": [2_147_942_405_u32] }));
+    assert_fails_at(&unsigned, &format!("{EXIT}.success[0]"));
+}
+
+#[test]
+fn an_omitted_list_in_exit_takes_its_default() {
+    let action = only_step_action(run_command_with_exit(json!({ "success": [0, 1] })));
+
+    let Action::RunCommand { exit, .. } = action else {
+        panic!("expected RunCommand, found {action:?}");
+    };
+    assert_eq!(exit.success(), [0, 1]);
+    assert_eq!(exit.reboot(), [3010, 1641]);
 }
