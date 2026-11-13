@@ -4,7 +4,7 @@
   {"name": "needs-triage", "color": "fbca04", "description": "State: the maintainer needs to evaluate this issue"},
   {"name": "needs-info", "color": "d876e3", "description": "State: waiting on the reporter for more information. Closes after 14 days."},
   {"name": "ready-for-agent", "color": "0e8a16", "description": "State: fully specified, ready for an AFK agent"},
-  {"name": "ready-for-human", "color": "1d76db", "description": "State: needs a human, for judgment, the lab, hardware, or access"},
+  {"name": "ready-for-human", "color": "1d76db", "description": "State: needs a human, for judgment, hardware, or access"},
   {"name": "wontfix", "color": "ffffff", "description": "State: will not be actioned"},
   {"name": "epic", "color": "5319e7", "description": "A roadmap milestone. Its sub-issues are the tickets. Has no category or state."},
   {"name": "area:core", "color": "ededed", "description": "deployarr-core: task sequence model, compiler, conditions, variables"},
