@@ -1,6 +1,6 @@
 # WinPE add-on 10.1.26100.9457 reference
 
-This page records which DLLs and API sets base WinPE x64 provides. The source is the Windows PE add-on for the Windows ADK 10.1.26100.9457. `deployarr-agent` runs in base WinPE, so a module it imports must be on this page. The CI check reads the same names from [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt). Use this page when you add an import to the agent.
+This page records which DLLs and API sets base WinPE x64 provides. The source is the Windows PE add-on for the Windows ADK 10.1.26100.9457. `deployarr-agent` runs in base WinPE, so a module it imports must match a name in [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) by the rule in [The list file](#the-list-file). The CI check reads that file. Use this page when you add an import to the agent.
 
 ## Sources
 
@@ -67,7 +67,7 @@ A short reader of each DLL's export table checked these names. The rerun script 
 ## API sets
 
 - `Windows\System32\apisetschema.dll` holds API set schema version 6 in its `.apiset` section. The schema has 974 entries. 363 names start with `api-` and 611 start with `ext-`.
-- 577 entries resolve, because their default host is a module in the list. 316 of them are `api-` sets and 261 are `ext-` sets. [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) names each one as the schema stores it, with `.dll` added.
+- 577 entries resolve, because their default host is a module in the list. 316 of them are `api-` sets and 261 are `ext-` sets. The schema stores each of their names in lower case. [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) names each one with `.dll` added.
 - 397 entries do not resolve. 135 have no host. 44 have a kernel-mode `.sys` host, such as `win32kfull.sys`. 218 name one of 153 DLLs that `System32` lacks, such as `comctl32.dll` and `twinapi.appcore.dll`. The image keeps `comctl32.dll` only under `WinSxS`.
 - Six entries map to a different host for one importing module. `api-ms-win-core-io-l1-1-1` maps to `kernel32.dll`, except for imports from `kernel32.dll` itself, which map to `kernelbase.dll`. The list follows the default host.
 - Each entry stores a full versioned name, such as `api-ms-win-core-synch-l1-2-1`. In all 974 entries, the hashed length ends at the last hyphen, as in `api-ms-win-core-synch-l1-2`. Each of the 974 values in the schema's hash table is the hash of that prefix, and none is the hash of a full name.
