@@ -6,8 +6,11 @@ use deployarr_core::action::{
     ProcessorCheck, ReadinessChecks, StepLimits,
 };
 use deployarr_core::condition::{Comparison, Condition, FileVersion, RegData, Test};
-use deployarr_core::sequence::{Node, NodeMeta, ParseError, TaskSequence, TaskSequenceId};
-use deployarr_core::variable::{SettableVarName, VarName};
+use deployarr_core::sequence::{
+    DefaultVars, DefaultVarsError, Node, NodeMeta, ParseError, TaskSequence, TaskSequenceId,
+};
+use deployarr_core::template::Template;
+use deployarr_core::variable::{SettableVarName, VarAssignment, VarName};
 use serde_json::{Value, json};
 
 const SAMPLE: &str = include_str!("data/windows-11-pro.json");
@@ -658,6 +661,27 @@ fn a_var_exists_test_with_a_value_fails() {
 }
 
 #[test]
+fn a_null_operand_on_exists_is_written_back_as_the_bare_operator() {
+    for op in ["exists", "not_exists"] {
+        for (kind, condition) in [
+            ("var", var("AssetTag", json!({ op: null }))),
+            ("registry", registry(json!({ op: null }))),
+        ] {
+            let sequence = parse(&sequence_with_condition(condition))
+                .unwrap_or_else(|error| panic!("{kind} {op}: {error}"));
+
+            let written = serde_json::to_value(&sequence).expect("a task sequence serializes");
+
+            assert_eq!(
+                written["root"]["children"][0]["step"]["meta"]["condition"][kind]["test"],
+                json!(op),
+                "{kind} {op}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_var_equals_test_with_an_empty_value_fails() {
     for op in OPS_WITH_OPERAND {
         let empty = sequence_with_condition(var("AssetTag", json!({ op: "" })));
@@ -829,6 +853,49 @@ fn two_defaults_for_one_variable_fail_at_the_second() {
     }
 }
 
+fn default_var(name: &str) -> VarAssignment {
+    VarAssignment {
+        name: name.parse().expect("a settable name"),
+        value: Template::new("x"),
+    }
+}
+
+#[test]
+fn default_vars_built_in_code_cannot_name_one_variable_twice() {
+    let error = DefaultVars::new(vec![
+        default_var("OSDComputerName"),
+        default_var("osdcomputername"),
+    ])
+    .expect_err("two defaults for one variable");
+
+    assert_eq!(
+        error,
+        DefaultVarsError {
+            first: 0,
+            second: 1,
+            name: "OSDComputerName".parse().expect("a settable name"),
+        }
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("default_vars[0] already names this variable, as `OSDComputerName`"),
+        "{error}"
+    );
+
+    let defaults = DefaultVars::new(vec![
+        default_var("OSDComputerName"),
+        default_var("TimeZone"),
+    ])
+    .expect("distinct names");
+    let mut names = Vec::new();
+    for default in &defaults {
+        names.push(default.name.as_str());
+    }
+    assert_eq!(names, ["OSDComputerName", "TimeZone"]);
+    assert!(DefaultVars::default().as_slice().is_empty());
+}
+
 fn run_command_with_exit(exit: Value) -> Value {
     sequence_with_action(json!({ "run_command": { "command": "setup.exe", "exit": exit } }))
 }
@@ -860,17 +927,27 @@ fn a_code_in_both_success_and_reboot_fails() {
         (
             r#"{"success": [0, 3010], "reboot": [3010]}"#,
             format!("{EXIT}.reboot[0]"),
+            "",
         ),
         (
             r#"{"reboot": [1641, 3010], "success": [0, 1641]}"#,
             format!("{EXIT}.success[1]"),
+            "",
         ),
         // The omitted list takes its default, which holds the code.
-        (r#"{"success": [0, 3010]}"#, EXIT.to_owned()),
-        (r#"{"reboot": [0]}"#, EXIT.to_owned()),
+        (
+            r#"{"success": [0, 3010]}"#,
+            EXIT.to_owned(),
+            ". An omitted `reboot` is [3010, 1641]",
+        ),
+        (
+            r#"{"reboot": [0]}"#,
+            EXIT.to_owned(),
+            ". An omitted `success` is [0]",
+        ),
     ];
 
-    for (exit, path) in cases {
+    for (exit, path, note) in cases {
         let text = run_command_with_exit(json!("EXIT"))
             .to_string()
             .replace(r#""EXIT""#, exit);
@@ -879,6 +956,12 @@ fn a_code_in_both_success_and_reboot_fails() {
 
         assert_eq!(error.path(), path, "{exit}: {error}");
         assert!(error.to_string().contains("in both"), "{exit}: {error}");
+        assert_eq!(
+            error.to_string().contains("An omitted"),
+            !note.is_empty(),
+            "{exit}: {error}"
+        );
+        assert!(error.to_string().contains(note), "{exit}: {error}");
     }
 }
 

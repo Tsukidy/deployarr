@@ -179,18 +179,27 @@ impl<'de> Visitor<'de> for ExitCodesVisitor {
             }
         }
         let defaults = ExitCodes::default();
-        let (success, reboot, default_note) = match (success, reboot) {
-            (Some(success), Some(reboot)) => (success, reboot, ""),
+        // The list the document omits, if it omits one, and that list's default.
+        let (success, reboot, omitted) = match (success, reboot) {
+            (Some(success), Some(reboot)) => (success, reboot, None),
             (Some(success), None) => (
                 success,
-                defaults.reboot,
-                ". An omitted `reboot` is [3010, 1641]",
+                defaults.reboot.clone(),
+                Some(("reboot", defaults.reboot())),
             ),
-            (None, Some(reboot)) => (defaults.success, reboot, ". An omitted `success` is [0]"),
+            (None, Some(reboot)) => (
+                defaults.success.clone(),
+                reboot,
+                Some(("success", defaults.success())),
+            ),
             (None, None) => return Ok(defaults),
         };
-        ExitCodes::new(success, reboot)
-            .map_err(|error| de::Error::custom(format_args!("{error}{default_note}")))
+        ExitCodes::new(success, reboot).map_err(|error| match omitted {
+            Some((list, codes)) => {
+                de::Error::custom(format_args!("{error}. An omitted `{list}` is {codes:?}"))
+            }
+            None => de::Error::custom(error),
+        })
     }
 }
 

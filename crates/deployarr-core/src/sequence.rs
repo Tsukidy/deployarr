@@ -20,7 +20,7 @@ pub struct TaskSequence {
     pub id: TaskSequenceId,
     pub version: u32,
     pub name: String,
-    pub default_vars: Vec<VarAssignment>,
+    pub default_vars: DefaultVars,
     pub root: Group,
 }
 
@@ -74,10 +74,108 @@ struct Document {
     root: Group,
 }
 
-/// `default_vars` as written. Two entries that name the same variable, in any
-/// case, fail, and the error path names the second entry's name, such as
+/// A task sequence's variable defaults. No two entries name the same
+/// variable, in any case.
+///
+/// It is written as a JSON array of entries. When two entries name one
+/// variable, the parse error path names the second entry's name, such as
 /// `default_vars[1].name`.
-struct DefaultVars(Vec<VarAssignment>);
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DefaultVars(Vec<VarAssignment>);
+
+impl DefaultVars {
+    /// Fails at the first entry whose name an earlier entry already holds.
+    pub fn new(defaults: Vec<VarAssignment>) -> Result<Self, DefaultVarsError> {
+        let mut seen = SeenNames::default();
+        for (index, default) in defaults.iter().enumerate() {
+            if let Some(first) = seen.find(&default.name) {
+                return Err(DefaultVarsError {
+                    first,
+                    second: index,
+                    name: defaults[first].name.clone(),
+                });
+            }
+            seen.insert(&default.name, index);
+        }
+        Ok(Self(defaults))
+    }
+
+    pub fn as_slice(&self) -> &[VarAssignment] {
+        &self.0
+    }
+
+    pub fn into_vec(self) -> Vec<VarAssignment> {
+        self.0
+    }
+}
+
+impl TryFrom<Vec<VarAssignment>> for DefaultVars {
+    type Error = DefaultVarsError;
+
+    fn try_from(defaults: Vec<VarAssignment>) -> Result<Self, Self::Error> {
+        Self::new(defaults)
+    }
+}
+
+impl<'a> IntoIterator for &'a DefaultVars {
+    type Item = &'a VarAssignment;
+    type IntoIter = core::slice::Iter<'a, VarAssignment>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+/// Two entries of `default_vars` name the same variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultVarsError {
+    /// The index of the earlier entry.
+    pub first: usize,
+    /// The index of the later entry. A parse error path names this entry.
+    pub second: usize,
+    /// The earlier entry's name, as its author wrote it.
+    pub name: SettableVarName,
+}
+
+impl fmt::Display for DefaultVarsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { first, name, .. } = self;
+        write!(
+            f,
+            "default_vars[{first}] already names this variable, as `{name}`, and variable names ignore case"
+        )
+    }
+}
+
+impl core::error::Error for DefaultVarsError {}
+
+/// The names of the defaults read so far, each with its index. The key is the
+/// name in lower case. A `VarName` holds only ASCII, so two names are equal
+/// exactly when their keys are. A lookup is a tree search, so a long list
+/// cannot make the check quadratic.
+#[derive(Default)]
+struct SeenNames(BTreeMap<String, usize>);
+
+impl SeenNames {
+    /// The index of the earlier default that holds `name`, if one does.
+    fn find(&self, name: &SettableVarName) -> Option<usize> {
+        self.0.get(&Self::key(name)).copied()
+    }
+
+    fn insert(&mut self, name: &SettableVarName, index: usize) {
+        self.0.insert(Self::key(name), index);
+    }
+
+    fn key(name: &SettableVarName) -> String {
+        name.as_str().to_ascii_lowercase()
+    }
+}
+
+impl Serialize for DefaultVars {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
 
 impl<'de> Deserialize<'de> for DefaultVars {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
@@ -96,29 +194,23 @@ impl<'de> Visitor<'de> for DefaultVarsVisitor {
 
     fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
         let mut defaults = Vec::new();
-        let mut seen = BTreeMap::new();
+        let mut seen = SeenNames::default();
         while let Some(default) = seq.next_element_seed(DefaultVar {
             earlier: &defaults,
             seen: &seen,
         })? {
-            seen.insert(name_key(&default.name), defaults.len());
+            seen.insert(&default.name, defaults.len());
             defaults.push(default);
         }
         Ok(defaults)
     }
 }
 
-/// The key under which `DefaultVarsVisitor` records a name. A `VarName` holds
-/// only ASCII, so two names are equal exactly when their keys are.
-fn name_key(name: &SettableVarName) -> String {
-    name.as_str().to_ascii_lowercase()
-}
-
-/// One entry of `default_vars`, read with the entries before it. `seen` maps
-/// each earlier name's key to its index in `earlier`.
+/// One entry of `default_vars`, read with the entries before it. `seen` holds
+/// the names in `earlier`.
 struct DefaultVar<'a> {
     earlier: &'a [VarAssignment],
-    seen: &'a BTreeMap<String, usize>,
+    seen: &'a SeenNames,
 }
 
 const DEFAULT_VAR_FIELDS: &[&str] = &["name", "value"];
@@ -177,7 +269,7 @@ impl<'de> Visitor<'de> for DefaultVar<'_> {
 /// A default's name, which must differ from every earlier default's name.
 struct UniqueName<'a> {
     earlier: &'a [VarAssignment],
-    seen: &'a BTreeMap<String, usize>,
+    seen: &'a SeenNames,
 }
 
 impl<'de> DeserializeSeed<'de> for UniqueName<'_> {
@@ -185,11 +277,12 @@ impl<'de> DeserializeSeed<'de> for UniqueName<'_> {
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         let name = SettableVarName::deserialize(deserializer)?;
-        match self.seen.get(&name_key(&name)) {
-            Some(&index) => Err(de::Error::custom(format_args!(
-                "default_vars[{index}] already names this variable, as `{}`, and variable names ignore case",
-                self.earlier[index].name
-            ))),
+        match self.seen.find(&name) {
+            Some(first) => Err(de::Error::custom(DefaultVarsError {
+                first,
+                second: self.earlier.len(),
+                name: self.earlier[first].name.clone(),
+            })),
             None => Ok(name),
         }
     }
@@ -201,7 +294,7 @@ struct DocumentRef<'a> {
     id: &'a TaskSequenceId,
     version: u32,
     name: &'a str,
-    default_vars: &'a [VarAssignment],
+    default_vars: &'a DefaultVars,
     root: &'a Group,
 }
 
@@ -219,7 +312,7 @@ impl<'de> Deserialize<'de> for TaskSequence {
             id,
             version,
             name,
-            default_vars: default_vars.0,
+            default_vars,
             root,
         })
     }

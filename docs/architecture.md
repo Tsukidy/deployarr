@@ -69,7 +69,7 @@ pub struct TaskSequence {
 	pub id: TaskSequenceId,   // upper-case, like "W11-PRO-STD"
 	pub version: u32,         // every save creates a new version
 	pub name: String,
-	pub default_vars: Vec<VarAssignment>,
+	pub default_vars: DefaultVars,   // no two entries name the same variable
 	pub root: Group,
 }
 
@@ -152,6 +152,7 @@ pub struct Template(String);              // the text as written. Substitution h
 pub struct NonEmptyTemplate(Template);    // a Template that is not empty
 pub struct SettableVarName(VarName);      // a VarName that does not start with `_`
 pub struct VarAssignment { pub name: SettableVarName, pub value: Template }
+pub struct DefaultVars(Vec<VarAssignment>);   // read with as_slice(). No two names are equal in any case
 pub struct NonEmpty<T>(Vec<T>);           // a list with at least one item
 
 pub enum RunIn { WinPe, FullOs, Either }
@@ -187,6 +188,7 @@ pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rul
 - `TaskSequenceId` holds one or more of `A` to `Z`, digits, `_`, or `-`.
 - `VarName` holds 1 to 256 ASCII letters, digits, `_`, or `-`. Two names that differ only in case are equal. The name keeps the spelling its author wrote. The length, the character classes, and the case rule are MDT's. The ASCII limit is deployarr's choice. See [Variables](#variables).
 - `SettableVarName` is a `VarName` that does not start with `_`. `SetVariable` and the entries of `default_vars` take it, so a sequence cannot set a name that belongs to the agent. Conditions and `FromList` take a `VarName`, so they can still read one.
+- `DefaultVars` keeps its list private, and `DefaultVars::new` rejects two entries whose names are equal in any case. Code that builds a sequence, such as an importer or the editor, therefore cannot write a `default_vars` list that the parser would reject. The JSON is a plain array of entries.
 - `NonEmpty<T>` holds at least one item. `All`, `Any`, and the success list of `ExitCodes` use it, so none of them can be empty.
 - `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, and `AppId` are strings that reject an empty value.
 - `DiskSelector` has one rule so far, the first internal, non-removable disk.
@@ -215,7 +217,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 - An unknown field is an error, so a misspelled field name never passes as a default.
 - The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
 - A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
-- A value that is valid but not in canonical form still parses, and the serializer writes it back in canonical form. A GUID in upper case or in braces is written in lower case without braces. A file version part with leading zeros, such as `010`, is written as `10`. A timestamp with a lower-case `t` or `z`, a space in place of `T`, or a `+00:00` offset is written with `T` and `Z`. Any other offset is kept.
+- A value that is valid but not in canonical form still parses, and the serializer writes it back in canonical form. A GUID in upper case or in braces is written in lower case without braces. A file version part with leading zeros, such as `010`, is written as `10`. A timestamp with a lower-case `t` or `z`, a space in place of `T`, or a `+00:00` offset is written with `T` and `Z`. Any other offset is kept. A `Var` or `Registry` test of `{"exists": null}` is written as `"exists"`, and `{"not_exists": null}` as `"not_exists"`.
 - A `Var` or `Registry` condition writes its operator and operand under `test`, by the variant rule above. `"test": "exists"` takes no operand, and `"test": {"greater_equal": 26100}` takes one. A file version or timestamp comparison keeps the `op` and `value` fields.
 - The parser also rejects the states below. Each error path names the field that holds the state:
   - An empty success list, at `exit.success`. MDT's engine has no default, so an empty `successCodeList` fails every exit code, including 0 ([MDT 8450 binaries reference](research/mdt-8450-binaries.md#instruction-table-and-failure-handling)).
