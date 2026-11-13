@@ -11,7 +11,7 @@ This folder holds files that `tools/re/configmgr-osd/reproduce.sh` generates fro
 
 ## Rebuild them
 
-The script needs `7z`, `msiextract`, and a Python with `pefile`, as [ConfigMgr 2509 in the agent guide](../../../AGENTS.md#configmgr-2509) lists. Run these from the repository root, with `SCRATCH` set to a directory outside the repository.
+The script needs `7z`, `msiextract`, and a Python with `pefile`, as [ConfigMgr 2509 in `tools/re/README.md`](../../../tools/re/README.md#configmgr-2509) lists. Run these from the repository root, with `SCRATCH` set to a directory outside the repository.
 
 1. Make a virtual environment with the Python packages:
 

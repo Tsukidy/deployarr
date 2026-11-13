@@ -13,7 +13,7 @@ This page records which DLLs and API sets base WinPE x64 provides. The source is
 - The WIM's XML describes one image, `Microsoft Windows PE (amd64)`, with edition `WindowsPE`, version 10.0.26100.1, and branch `ge_release`. The XML gives a creation date of 2024-04-01.
 - All 3,772 component manifests under `Windows\WinSxS\Manifests` have version 10.0.26100.1. The September 2026 add-on therefore ships the 24H2 image with no cumulative update applied (inferred from those versions).
 - 7-Zip 23.01 read the CABs and the WIM. msitools 0.103 read the MSI tables.
-- `tools/re/winpe/reproduce.sh` repeats the download, the checks, and the lists. See [WinPE in the agent guide](../../AGENTS.md#winpe). Two parsers written separately produced the same list file, byte for byte, with SHA-256 `d7bd783a0a3a046bbbe9eacccbdee82ca875f950e1cc1768e257f29a5f25fe66`.
+- `tools/re/winpe/reproduce.sh` repeats the download, the checks, and the lists. See [WinPE in `tools/re/README.md`](../../tools/re/README.md#winpe). Two parsers written separately produced the same list file, byte for byte, with SHA-256 `d7bd783a0a3a046bbbe9eacccbdee82ca875f950e1cc1768e257f29a5f25fe66`.
 
 ## Modules in System32
 

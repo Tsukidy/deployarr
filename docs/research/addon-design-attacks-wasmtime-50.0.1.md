@@ -21,7 +21,7 @@ Each source has a short label. Citations name the label, then a path, a line ran
 | run | `$SCRATCH/t82/run.out` and the build logs in `$SCRATCH/t82/run/` | 2026-11-13 | `bash tools/addon-design-attacks/reproduce.sh $SCRATCH/t82/run`, run from a `git archive` of commit `9f11bf9`, which holds the lever's final probes and scripts. The pull request's Evidence section holds the whole output. |
 | crates | crate sources under `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/` | the versions named below | downloaded by Cargo |
 
-`$SCRATCH` is a scratch directory outside the repository, as in [Reproduce the MDT research](../../AGENTS.md#reproduce-the-mdt-research). Each `### [N]` heading in reruns and each section heading in run names the finding it holds.
+`$SCRATCH` is a scratch directory outside the repository, as in [`tools/re/README.md`](../../tools/re/README.md). Each `### [N]` heading in reruns and each section heading in run names the finding it holds.
 
 The design session ran its probes in folders named `opus`, `fable`, `sonnet`, and `haiku`, one per adversarial run (findings listing). This page names each finding's run by its folder.
 
