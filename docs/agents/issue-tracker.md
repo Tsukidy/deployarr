@@ -85,6 +85,8 @@ To find it, list the open `ready-for-agent` issues. Check the unassigned ones fi
 
 When your prompt names a label, such as `bookkeeping`, the frontier holds only the tickets that carry it.
 
+A ticket labeled `lab` needs the VM lab. It is on the frontier only for the session on the lab host, whose prompt names `lab`. Every other session skips it.
+
 A `ready-for-agent` issue with no `## Blocked by` section did not finish triage. Skip it.
 
 ## Claim
@@ -106,14 +108,14 @@ To claim a ticket:
 1. Read every comment. If a session holds the ticket, pick another one.
 2. Comment `Claimed by branch <branch>`.
 3. Read every comment again. If you do not hold the ticket now, another session got there first. Comment `Claim withdrawn by branch <branch>`, leave the assignee alone, and pick another ticket.
-4. Read the issue again with `issue_read`, `method: get`. If it is closed, is no longer labeled `ready-for-agent`, or an issue in its `## Blocked by` section is open, it changed after you found it. Remove the assignee, then comment `Claim released by branch <branch>`, and pick another ticket. You hold the ticket at this point, so any assignee is left over from a session that is gone. Skip the label test for an issue that your prompt names.
+4. Read the issue again with `issue_read`, `method: get`. If it is closed, is no longer labeled `ready-for-agent`, gained or lost the `lab` label, or an issue in its `## Blocked by` section is open, it changed after you found it. Remove the assignee, then comment `Claim released by branch <branch>`, and pick another ticket. You hold the ticket at this point, so any assignee is left over from a session that is gone. Skip the label test for an issue that your prompt names.
 5. Assign yourself. With MCP, call `get_me` for your login, then `issue_write` with `method: update` and `assignees`. With `gh`, run `gh issue edit <number> --add-assignee @me`.
 
 For an issue that your prompt names, each step that says to pick another ticket means stop and tell the owner instead.
 
 Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone. A session that triages an issue or breaks an epic into tickets does not claim it.
 
-`tools/claim_model.py` checks every interleaving of these steps, the release steps below, and the hand-off steps under Take a ticket in `AGENTS.md`: not planned, waiting on a question, and ready-for-human. It covers two and three sessions, crashes, an owner who answers questions and frees stale claims, and a session named in a prompt that frees a gone branch. It finds no state where two sessions hold a ticket, where a session works a ticket it should not, or where a ticket stays held or assigned after every session released it. It assumes the claim comments are never edited or deleted, and it does not cover reopening an issue or a pull request that waits for review. The Tools workflow runs it on every pull request. Change the model in the same pull request as any of these steps.
+`tools/claim_model.py` checks every interleaving of these steps, the release steps below, and the hand-off steps under Take a ticket in `AGENTS.md`: not planned, waiting on a question, ready-for-human, and the hand-off to the lab. It covers two and three sessions, crashes, an owner who answers questions and frees stale claims, a session named in a prompt that frees a gone branch, and a session on the lab host beside sessions that are not. It finds no state where two sessions hold a ticket, where a session works a ticket it should not, or where a ticket stays held or assigned after every session released it. It assumes the claim comments are never edited or deleted, and it does not cover reopening an issue or a pull request that waits for review. The Tools workflow runs it on every pull request. Change the model in the same pull request as any of these steps.
 
 ### Release a claim
 

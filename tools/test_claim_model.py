@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from claim_model import CLAIM, HELD_BY_GONE, RELEASE, WITHDRAW, Model, holder, run_all  # noqa: E402
+from claim_model import CLAIM, HELD_BY_GONE, RELEASE, WITHDRAW, WORK, Model, holder, run_all  # noqa: E402
 
 
 class HolderTest(unittest.TestCase):
@@ -46,6 +46,24 @@ class ProtocolTest(unittest.TestCase):
 
     def test_catches_commenting_before_the_unassign(self):
         self.assertCaught("e", unassign_first=False)
+
+    def test_catches_a_session_that_does_not_skip_lab_tickets(self):
+        states, failure = Model(2, 2, owner=False, lab=True, lab_host=True, lab_skip=False).check()
+        self.assertIsNotNone(failure)
+        self.assertIn("d", failure[0])
+
+    def test_lab_host_works_the_ticket_after_a_lab_hand_off(self):
+        """A session off the lab host adds lab, and then the session on the lab host can work the ticket."""
+        model = Model(2, 1, owner=False, lab_host=True)
+        seen, queue = {model.initial}, [model.initial]
+        while queue:
+            state = queue.pop()
+            for new_state, _ in model.successors(state):
+                if new_state not in seen:
+                    seen.add(new_state)
+                    queue.append(new_state)
+        lab_host_works = [s for s in seen if s[3] and s[6][1][0] == WORK]
+        self.assertTrue(lab_host_works)
 
     def test_catches_a_lost_claim_that_keeps_a_stale_assignee(self):
         model = Model(2, 1, owner=False, log=HELD_BY_GONE, assigned=True, blocked=True, named=True,
