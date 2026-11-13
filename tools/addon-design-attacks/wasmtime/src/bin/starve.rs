@@ -1,6 +1,6 @@
 //! Finding 8: add-on calls that share the server's tokio runtime can starve it.
 //!
-//!   starve <guest.wasm> <calls> [trap|yield|yield-now|separate]
+//!   starve <guest.wasm> <calls> [trap|yield|yield-now|separate|separate-yield]
 //!
 //! The server's runtime has 4 worker threads. A heartbeat task on it sleeps 50 ms in a loop
 //! and records the longest gap between two of its wake-ups. After 300 ms, `calls` tasks each
@@ -16,6 +16,8 @@
 //!   `UpdateDeadline::YieldCustom`, as the wasmtime 50.0.1 docs recommend for tokio.
 //! - `separate`: as `yield-now`, but the calls run on a second runtime with its own 4 worker
 //!   threads. This is the design's change. The heartbeat stays on the server's runtime.
+//! - `separate-yield`: as `yield`, but the calls run on the second runtime. Each call prints
+//!   when it ended, which shows whether its 3 s timeout fired on time.
 
 use attack_wasmtime::WasiState;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,6 +39,7 @@ enum Mode {
     Yield,
     YieldNow,
     Separate,
+    SeparateYield,
 }
 
 fn runtime() -> std::io::Result<tokio::runtime::Runtime> {
@@ -59,7 +62,7 @@ async fn one_call(pre: CommandPre<WasiState>, engine: Engine, mode: Mode) -> (Du
             ticks += 1;
             Ok(match (ticks >= DEADLINE_TICKS, mode) {
                 (true, _) => UpdateDeadline::Interrupt,
-                (false, Mode::Yield) => UpdateDeadline::Yield(1),
+                (false, Mode::Yield | Mode::SeparateYield) => UpdateDeadline::Yield(1),
                 (false, _) => UpdateDeadline::YieldCustom(1, Box::pin(tokio::task::yield_now())),
             })
         });
@@ -75,13 +78,17 @@ async fn one_call(pre: CommandPre<WasiState>, engine: Engine, mode: Mode) -> (Du
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let guest = args.get(1).expect("usage: starve <guest.wasm> <calls> [trap|yield|yield-now|separate]").clone();
+    let guest = args
+        .get(1)
+        .expect("usage: starve <guest.wasm> <calls> [trap|yield|yield-now|separate|separate-yield]")
+        .clone();
     let calls: usize = args.get(2).and_then(|a| a.parse().ok()).unwrap_or(1);
     let (mode, label) = match args.get(3).map(String::as_str).unwrap_or("trap") {
         "trap" => (Mode::Trap, "same runtime, epoch trap at 3 s, no yield"),
         "yield" => (Mode::Yield, "same runtime, UpdateDeadline::Yield every 100 ms"),
         "yield-now" => (Mode::YieldNow, "same runtime, tokio::task::yield_now every 100 ms"),
         "separate" => (Mode::Separate, "calls on a second 4-worker runtime, tokio::task::yield_now every 100 ms"),
+        "separate-yield" => (Mode::SeparateYield, "calls on a second 4-worker runtime, UpdateDeadline::Yield every 100 ms"),
         other => panic!("unknown mode {other}"),
     };
 
@@ -102,7 +109,10 @@ fn main() -> Result<()> {
 
     let server = runtime()?;
     let addons = runtime()?;
-    let addon_handle = if mode == Mode::Separate { addons.handle().clone() } else { server.handle().clone() };
+    let addon_handle = match mode {
+        Mode::Separate | Mode::SeparateYield => addons.handle().clone(),
+        _ => server.handle().clone(),
+    };
     server.block_on(async move {
         let done = Arc::new(AtomicBool::new(false));
         let heartbeat = {

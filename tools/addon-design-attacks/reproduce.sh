@@ -5,6 +5,9 @@
 #   bash tools/addon-design-attacks/reproduce.sh <output-dir>
 #
 # The SQL probes need PostgreSQL and MariaDB on this machine. setup-servers.sh starts them.
+#
+# The script runs every section even when one fails. It exits 1 at the end when a probe
+# failed, a section was skipped, or the finding 21 grep found nothing.
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -15,12 +18,15 @@ out=$(cd "$out" && pwd)
 jobs=${JOBS:-2}
 cd "$here" || exit 1
 
+failed=()
+skipped=()
+
 section() {
 	printf '\n### %s\n' "$1"
 }
 
 # Prints the command with the output folder as $out and paths relative to this folder,
-# then runs it.
+# then runs it. A nonzero exit is printed and counted as a failure.
 run() {
 	local shown="$*"
 	shown=${shown//$out/\$out}
@@ -28,6 +34,12 @@ run() {
 	shown=${shown//$repo\//}
 	printf '$ %s\n' "$shown"
 	"$@" 2>&1
+	local rc=$?
+	if ((rc != 0)); then
+		echo "exit=$rc"
+		failed+=("$shown")
+	fi
+	return "$rc"
 }
 
 section "environment"
@@ -86,6 +98,7 @@ if [[ $have_mariadb == yes ]]; then
 	run bash sql/mysql-ro-outfile.sh
 else
 	echo "skipped: MariaDB is not running. Run setup-servers.sh first."
+	skipped+=("finding 2")
 fi
 
 section "findings 3 and 10: a settings migration replaces the admin's statement"
@@ -105,6 +118,7 @@ run "$W/starve" "$G" 8
 run "$W/starve" "$G" 8 yield
 run "$W/starve" "$G" 8 yield-now
 run "$W/starve" "$G" 8 separate
+run "$W/starve" "$G" 8 separate-yield
 
 section "finding 11: an add-on reads its own secret file"
 run python3 -I model/secret_step_file.py
@@ -119,12 +133,19 @@ run "$W/wasi" pure "$G"
 section "finding 16: compile time and memory of a small hostile component"
 run "$W/compile" 4000 4000
 run "$W/compile" 8000 8000
+# This case should abort, so here a zero exit is the failure.
 printf '$ (ulimit -v 3000000; %s 12000 12000)\n' "\$out/${W#"$out"/}/compile"
 (
 	ulimit -v 3000000
 	"$W/compile" 12000 12000
-	echo "exit=$?"
+	rc=$?
+	echo "exit=$rc"
+	exit "$rc"
 ) 2>&1 | grep -v -e '^stack backtrace:' -e '^note: Some details'
+if ((PIPESTATUS[0] == 0)); then
+	echo "expected an abort under the 3 GB limit, but the compile finished"
+	failed+=("compile 12000 12000 under ulimit -v 3000000")
+fi
 
 section "finding 17: a guest path changes the host"
 run "$P/urljoin"
@@ -133,7 +154,9 @@ section "finding 18: a waiting upgrade, and one open operation per add-on"
 run python3 -I model/waiting_op.py
 
 section "finding 21: the architecture's SQL Server sentence"
-run grep -n "On SQL Server, deployarr relies on the read-only account alone" "$repo/docs/architecture.md"
+# Only the phrase, so that a rewording around it still matches.
+run grep -n "relies on the read-only account alone" "$repo/docs/architecture.md" ||
+	echo "docs/architecture.md no longer says that SQL Server relies on the read-only account alone"
 
 section "finding 22: a blocking host function and a tokio timeout"
 run "$W/blocking-host-fn"
@@ -154,7 +177,22 @@ run "$P/minisign-check"
 section "supported claims: PostgreSQL read-only transaction"
 if [[ $have_postgres == yes ]]; then
 	# The postgres user cannot always enter this folder, so the script runs from /.
-	(cd / && run bash "$here/sql/pg-ro.sh")
+	# The subshell's list of failures is lost when it exits, so its status is counted here.
+	(cd / && run bash "$here/sql/pg-ro.sh") || failed+=("bash sql/pg-ro.sh")
 else
 	echo "skipped: PostgreSQL is not running. Run setup-servers.sh first."
+	skipped+=("supported claims: PostgreSQL")
 fi
+
+section "result"
+if ((${#failed[@]} == 0 && ${#skipped[@]} == 0)); then
+	echo "every section ran, and every probe gave the exit status it should"
+	exit 0
+fi
+for f in "${failed[@]}"; do
+	echo "failed: $f"
+done
+for s in "${skipped[@]}"; do
+	echo "skipped: $s"
+done
+exit 1

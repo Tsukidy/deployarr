@@ -1,6 +1,6 @@
 # Rerun the attacks on the add-on design
 
-These probes rerun the 23 findings that four adversarial runs raised against the add-on design. [Add-on design attacks on wasmtime 50.0.1](../../docs/research/addon-design-attacks-wasmtime-50.0.1.md) records each finding, its result, and the design change it caused. The probes are throwaway, and deployarr shares no code with them.
+These probes rerun 17 of the 23 findings that four adversarial runs raised against the add-on design. [Add-on design attacks on wasmtime 50.0.1](../../docs/research/addon-design-attacks-wasmtime-50.0.1.md) records each finding, its result, and the design change it caused. The probes are throwaway, and deployarr shares no code with them.
 
 ## What it contains
 
@@ -60,6 +60,6 @@ sudo bash tools/addon-design-attacks/setup-servers.sh
 bash tools/addon-design-attacks/reproduce.sh "$SCRATCH/addon-attacks" | tee "$SCRATCH/addon-attacks.out"
 ```
 
-The script prints a section for each finding. Each section shows the command and its output. Without the servers, the script skips the SQL sections and says so. Each build uses 2 jobs. Set `JOBS` to change it.
+The script prints a section for each finding. Each section shows the command and its output. Without the servers, the script skips the SQL sections and says so. It runs every section even when a probe fails. The last section, `### result`, lists each probe that failed and each section that was skipped, and then the script exits 1. Each build uses 2 jobs. Set `JOBS` to change it.
 
 The MariaDB scripts connect as `root` through the local socket and use a database named `opus_ro`. `pg-ro.sh` makes the role `fable_rw` and the database `fable_ro`. Both scripts drop and remake their own database on each run.

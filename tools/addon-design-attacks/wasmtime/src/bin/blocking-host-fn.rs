@@ -3,7 +3,7 @@
 //
 // Finding 22. Cases A to D follow the surviving text of haiku/probe-timeout/src/main.rs
 // (lines 1 to 120, recovered on #82). Case E is rewritten from its surviving start and its
-// output line. wasmtime 50 removed `Config::async_support`, which is now a deprecated no-op,
+// output line. wasmtime 50 deprecated `Config::async_support` and made it a no-op,
 // so the engine no longer calls it.
 use std::time::{Duration, Instant};
 use wasmtime::*;
