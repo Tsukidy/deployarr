@@ -48,7 +48,6 @@ fi
 
 seconds=${LAB_CHECK_SECONDS:-60}
 out=$LAB_DIR/checks/lab-check-$(date -u +%Y%m%dT%H%M%SZ)
-mkdir -p "$out"
 root=$(mktemp -d)
 pids=()
 cleanup() {
@@ -56,8 +55,13 @@ cleanup() {
         kill "$pid" 2>/dev/null || true
     done
     rm -rf "$root"
+    # The evidence belongs to the user who ran sudo, also after a failed run.
+    # The chown in Ubuntu 26.04, from uutils, leaves the group unchanged for
+    # "user:", so the group is named.
+    chown -R "$user:$(id -gn "$user")" "$LAB_DIR/checks" 2>/dev/null || true
 }
 trap cleanup EXIT
+mkdir -p "$out"
 
 # The two-stage chain sends wdsmgfw.efi to UEFI and wdsnbp.com to BIOS. Only
 # the unsigned program is served, so a BIOS VM gets a TFTP error at that point.
@@ -66,7 +70,10 @@ python3 -I "$here/unsigned_efi.py" "$root/boot/x64/wdsmgfw.efi"
 chmod -R a+rX "$root"
 
 echo "Writing the evidence to $out"
-dumpcap -q -i "$BRIDGE" -f 'udp and udp[8:2] != 3' -w "$out/capture.pcapng" >"$out/dumpcap.log" 2>&1 &
+# dumpcap drops root's capabilities once it opens the interface, so it cannot
+# open a file in a home folder that only its owner can enter. It writes the
+# capture to stdout, and this script opens the file.
+dumpcap -q -i "$BRIDGE" -f 'udp and udp[8:2] != 3' -w - >"$out/capture.pcapng" 2>"$out/dumpcap.log" &
 pids+=($!)
 python3 "$repo/tools/pxe-prototype/pxe_prototype.py" \
     --server-ip "$SERVER_IP" --interface "$BRIDGE" --root "$root" \
@@ -99,11 +106,18 @@ for vm in "${VMS[@]}"; do
     cp "$LAB_DIR/$vm/serial.log" "$out/serial-$vm.log" 2>/dev/null || true
 done
 cp "$RUN_DIR/dnsmasq.log" "$out/dnsmasq.log"
-tshark -r "$out/capture.pcapng" -Y dhcp -V >"$out/dhcp-decode.txt" 2>/dev/null
-tshark -r "$out/capture.pcapng" -Y dhcp -T fields -E separator=/t -E occurrence=f \
+# Ubuntu 26.04's AppArmor profile for tshark lets it open capture files only in
+# temporary folders such as /tmp. tshark reads the capture from stdin, which
+# this script opens.
+read_capture() {
+    tshark -r - "$@" <"$out/capture.pcapng" 2>>"$out/tshark.log" ||
+        echo "tshark could not read the capture. See $out/tshark.log." >&2
+}
+read_capture -Y dhcp -V >"$out/dhcp-decode.txt"
+read_capture -Y dhcp -T fields -E separator=/t -E occurrence=f \
     -e dhcp.hw.mac_addr -e dhcp.option.dhcp -e dhcp.option.client_system_architecture \
     -e dhcp.client_id.uuid -e dhcp.ip.your \
-    >"$out/dhcp-fields.tsv" 2>/dev/null
+    >"$out/dhcp-fields.tsv"
 
 {
     echo "date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -126,6 +140,5 @@ python3 -I "$here/check_summary.py" "$out" >"$summary" || true
 cat "$summary"
 
 python3 -I -m zipfile -c "$out.zip" "$out"
-chown -R "$user:" "$LAB_DIR/checks" 2>/dev/null || true
 echo "Attach $out.zip to issue #25."
 grep -q '^RESULT PASS' "$summary"
