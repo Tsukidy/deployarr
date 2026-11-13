@@ -95,7 +95,10 @@ Triage is for issues the owner or anyone else files by hand. They arrive with `n
 Several agents can work in this repository at once. Each one delivers its work through a pull request, and GitHub cleans up the branches.
 
 - Do not commit to `main` directly. Work on your own branch, made from the latest `main`.
-- When the work is ready, push the branch and open a pull request into `main`. Keep each pull request to one change.
+- Open your pull request into `main` as a draft. Keep each pull request to one change. CI runs on drafts, and GitHub does not merge a draft.
+- Mark the pull request ready for review as your last step. Before that, run every review you planned and push its fixes, fill in the template for the final diff, and wait for CI to pass on the last commit. The owner reads ready for review as ready to merge.
+- To change a pull request after you mark it ready, convert it back to a draft first. Mark it ready again when you finish.
+- If your session ends before the work is done, leave the pull request as a draft and say in its body what remains.
 - Fill in the pull request template. Summary shows the change with the smallest view that makes it clear, such as a diff sketch, a tree, or pseudocode. Evidence shows a before and an after, such as a failing and then passing test. Merge danger says whether the change is a one-way or a two-way door, and names its blast radius. The template comes from the `pr` skill in mattpocock/skills.
 - The repository owner merges pull requests with squash and merge. The repository setting "Automatically delete head branches" is on, so GitHub deletes a pull request's branch when it is merged. Do not delete branches yourself. An agent's GitHub access may not allow it anyway. If a merged branch is still there, tell the owner.
 - After your pull request is merged, start any follow-up work on a new branch from the latest `main`. If your session can push only to one branch, merge the latest `main` into that branch first, then open a new pull request. Do not rebase or force-push a branch that others may have fetched.

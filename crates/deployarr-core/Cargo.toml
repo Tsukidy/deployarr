@@ -19,5 +19,7 @@ uuid = { version = "1", default-features = false, features = ["serde"] }
 
 [dev-dependencies]
 # `tests/timestamp_json.rs` checks that `Timestamp` reads and writes the same
-# JSON as `time::serde::rfc3339`.
+# JSON as `time::serde::rfc3339`. Test and clippy builds turn these features on
+# for the library too. Only the `wasm32` and `x86_64-unknown-none` builds catch
+# library code that needs them.
 time = { version = "0.3", features = ["serde-well-known"] }

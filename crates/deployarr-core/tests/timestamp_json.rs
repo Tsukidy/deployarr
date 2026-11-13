@@ -88,12 +88,15 @@ fn values() -> Vec<OffsetDateTime> {
     // 0000-01-02 to 9999-12-30 in UTC, so every offset below keeps the year in range.
     let first = at(0, Month::January, 2, Time::MIDNIGHT, UtcOffset::UTC).unix_timestamp_nanos();
     let last = at(9999, Month::December, 30, Time::MIDNIGHT, UtcOffset::UTC).unix_timestamp_nanos();
+    // splitmix64. Every output bit is mixed, so `% 4` and `% 1_000` draw evenly.
+    // A plain 64-bit LCG repeats its low bits, and `% 4` then picks one branch.
     let mut state: u64 = 0x2545_f491_4f6c_dd1d;
     let mut next = || {
-        state = state
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        state
+        state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+        z ^ (z >> 31)
     };
     for _ in 0..20_000 {
         let span = u128::try_from(last - first).expect("last is after first");
@@ -120,9 +123,21 @@ fn values() -> Vec<OffsetDateTime> {
 
 #[test]
 fn timestamps_write_the_same_json_as_time() {
+    let values = values();
+    // The fixed grid gives 1,950 values with a fraction. The random set must add
+    // many more, or the generator has stopped drawing fractions.
+    let fractions = values
+        .iter()
+        .filter(|value| value.nanosecond() != 0)
+        .count();
+    assert!(
+        fractions > 10_000,
+        "only {fractions} values have a fraction"
+    );
+
     let mut written = 0;
     let mut refused = 0;
-    for value in values() {
+    for value in values {
         let before = serde_json::to_string(&Before(value));
         let after = serde_json::to_string(&Timestamp(value));
         match before {

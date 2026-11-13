@@ -18,6 +18,7 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 - The MCP tools cannot create GitHub's native blocking links or delete comments. Write blockers in the ticket's `## Blocked by` section, and the Blocked by workflow creates the links.
 - `issue_read` does not return an issue's database `id`, which `sub_issue_write` needs. The result of an `issue_write` call on the issue does.
 - These tools cannot create labels or milestones or change repository settings. Labels come from `.github/labels.json` through the Labels workflow.
+- Open a pull request with `create_pull_request` and `draft: true`. Mark it ready for review with `update_pull_request` and `draft: false`, and convert it back to a draft with `draft: true`.
 - A push that deletes a branch is refused with HTTP 403, and auto mode blocks force-pushes. Leave branch deletion to GitHub, which deletes a pull request's branch when it is merged.
 
 # Reverse-engineering tools (REA)
