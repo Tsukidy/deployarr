@@ -29,7 +29,7 @@ Say what is out of scope, so the agent does not gold-plate or guess at nearby fe
 
 ## Brief template
 
-Triage posts this as a comment. For `ready-for-human`, use the same layout and add why an agent cannot do it: a judgment call, external access, a design decision, the lab, hardware, or manual testing.
+Triage posts this as a comment. For `ready-for-human`, use the same layout and add why an agent cannot do it: a judgment call, external access, a design decision, hardware, or manual testing. For a ticket with the `lab` label, say that it needs the VM lab.
 
 The brief holds no blockers. Triage adds a `## Blocked by` section to the end of the issue body instead, because the frontier and the Blocked by workflow read only the body.
 

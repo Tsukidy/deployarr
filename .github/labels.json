@@ -4,7 +4,7 @@
   {"name": "needs-triage", "color": "fbca04", "description": "State: the maintainer needs to evaluate this issue"},
   {"name": "needs-info", "color": "d876e3", "description": "State: waiting on the reporter for more information. Closes after 14 days."},
   {"name": "ready-for-agent", "color": "0e8a16", "description": "State: fully specified, ready for an AFK agent"},
-  {"name": "ready-for-human", "color": "1d76db", "description": "State: needs a human, for judgment, the lab, hardware, or access"},
+  {"name": "ready-for-human", "color": "1d76db", "description": "State: needs a human, for judgment, hardware, or access"},
   {"name": "wontfix", "color": "ffffff", "description": "State: will not be actioned"},
   {"name": "epic", "color": "5319e7", "description": "A roadmap milestone. Its sub-issues are the tickets. Has no category or state."},
   {"name": "area:core", "color": "ededed", "description": "deployarr-core: task sequence model, compiler, conditions, variables"},
@@ -16,5 +16,6 @@
   {"name": "area:ui", "color": "ededed", "description": "deployarr-ui: the web UI"},
   {"name": "area:docs", "color": "ededed", "description": "Docs in docs/ and the agent guides"},
   {"name": "area:ci", "color": "ededed", "description": "CI, GitHub workflows, and repository tooling"},
-  {"name": "bookkeeping", "color": "c5def5", "description": "Upkeep of the docs and agent guides, kept apart from milestone work"}
+  {"name": "bookkeeping", "color": "c5def5", "description": "Upkeep of the docs and agent guides, kept apart from milestone work"},
+  {"name": "lab", "color": "f9d0c4", "description": "Needs the VM lab. Only a session on the lab host takes it."}
 ]
