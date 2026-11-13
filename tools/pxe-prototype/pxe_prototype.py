@@ -61,8 +61,9 @@ def parse_args(argv: list[str] | None = None) -> server.Config:
     parser.add_argument("--no-block-log", action="store_true",
                         help="leave the line for each DATA and ACK out of the log")
     parser.add_argument("--answer-without-guid", action="store_true",
-                        help="also answer a request that has no option 97, as QEMU's iPXE ROM sends, "
-                             "with a reply that has no option 97")
+                        help="also answer a request that has no option 97, with a reply that has no "
+                             "option 97 (ipxe-qemu 1.21.1 sends no option 97 from a BIOS guest with only "
+                             "a 64-bit SMBIOS entry point)")
     parser.add_argument("--log-file", metavar="FILE", help="append the log to FILE (default: stderr)")
     args = parser.parse_args(argv)
     try:
