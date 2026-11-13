@@ -119,6 +119,7 @@ Scope:
 
 Check:
 - Integration tests pass against SQL Server, PostgreSQL, and MySQL containers.
+- On PostgreSQL and on MySQL, the integration tests check the [write guards](architecture.md#write-guards) with an account that may write. Named queries that run `INSERT`, `TRUNCATE`, and `DROP TABLE` each fail and leave the data unchanged. A named query that sets the session to read-write, or one that starts a read-write transaction, does not let the next named query on the same connection write. A named query that holds two statements fails and changes nothing.
 - A VM whose baseboard serial is in the test order table deploys the order's OS with no input.
 - A VM with an unknown serial stops at the order number prompt, deploys after the number is typed, and does not touch its disk before that.
 - With no data source configured, a VM with no pre-staged record shows the manual list and deploys the task sequence picked there. The server opens no connection to an order database.
