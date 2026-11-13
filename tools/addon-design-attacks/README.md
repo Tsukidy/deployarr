@@ -46,7 +46,7 @@ Finding 21 reruns as a `grep` of `docs/architecture.md`. Findings 4, 7, 13, 15, 
 - Python 3 with no extra packages. It was run with Python 3.13.
 - Root and `apt-get` for `setup-servers.sh`. It was run on Ubuntu 24.04.
 - About 4 GB of free memory. The largest probes hold 1.8 GiB, 2.3 GiB, and up to 2.9 GiB for a few seconds.
-- About 1.5 GB of disk in the output folder. A full run from a clean copy took 7 minutes 30 seconds on a 4-CPU cloud VM, including 5 minutes 51 seconds to build the `wasmtime` probes with 2 jobs.
+- About 1.5 GB of disk in the output folder. A full run from a clean copy took 8 minutes 58 seconds on a 4-CPU cloud VM, including 6 minutes 33 seconds to build the `wasmtime` probes with 2 jobs.
 
 ## Run the probes
 
@@ -60,6 +60,6 @@ sudo bash tools/addon-design-attacks/setup-servers.sh
 bash tools/addon-design-attacks/reproduce.sh "$SCRATCH/addon-attacks" | tee "$SCRATCH/addon-attacks.out"
 ```
 
-The script prints a section for each finding. Each section shows the command and its output. Without the servers, the script skips the SQL sections and says so. It runs every section even when a probe fails. The last section, `### result`, lists each probe that failed and each section that was skipped, and then the script exits 1. Each build uses 2 jobs. Set `JOBS` to change it.
+The script prints a section for each finding. Each section shows the command and its output. Without the servers, the script skips the SQL sections and says so. It runs every section even when a probe fails. The last section, `### result`, lists each probe that failed and each section that was skipped. The script then exits 1. When every probe gave the exit status it should, the section says so and the script exits 0. The 12000-locals compile in the finding 16 section should abort, so there an exit of 0 counts as a failure. Each build uses 2 jobs. Set `JOBS` to change it.
 
 The MariaDB scripts connect as `root` through the local socket and use a database named `opus_ro`. `pg-ro.sh` makes the role `fable_rw` and the database `fable_ro`. Both scripts drop and remake their own database on each run.
