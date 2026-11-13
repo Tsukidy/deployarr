@@ -14,7 +14,7 @@ Each source has a short label. Citations name the label, then a path and a line 
 | crates | `wasmtime` 50.0.1 and `wasmtime-wasi` 50.0.1 | 50.0.1 | the Cargo registry under `~/.cargo/registry/src/` |
 | reqwest | `reqwest` 0.12.28, the version in spin's `Cargo.lock` | 0.12.28 | `https://static.crates.io/crates/reqwest/reqwest-0.12.28.crate`, unpacked into `$SCRATCH/fc-spin/rq` |
 
-`$SCRATCH` is a scratch directory outside the repository, as in [Reproduce the MDT research](../../AGENTS.md#reproduce-the-mdt-research). `git ls-remote --tags` on 2026-11-12 listed `v4.3.0` as the newest Spin tag and `v8.0.0` as the newest SDK tag.
+`$SCRATCH` is a scratch directory outside the repository, as in [`tools/re/README.md`](../../tools/re/README.md). `git ls-remote --tags` on 2026-11-12 listed `v4.3.0` as the newest Spin tag and `v8.0.0` as the newest SDK tag.
 
 ## Runtime and platforms
 

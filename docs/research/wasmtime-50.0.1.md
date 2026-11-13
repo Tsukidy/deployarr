@@ -15,7 +15,7 @@ Each source has a short label. Citations name the label, then a path and a line 
 | crates | crate sources under `~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/` | the versions named in each citation | downloaded by Cargo from crates.io |
 | wasi-pg-client | `README.md` of `wasi-pg-client` 0.2.1 | 0.2.1 | crates |
 
-`$SCRATCH` is a scratch directory outside the repository, as in [Reproduce the MDT research](../../AGENTS.md#reproduce-the-mdt-research).
+`$SCRATCH` is a scratch directory outside the repository, as in [`tools/re/README.md`](../../tools/re/README.md).
 
 The probes resolved these versions. Each probe's `Cargo.lock` is in the lever, and run2 prints them.
 
