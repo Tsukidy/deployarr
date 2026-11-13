@@ -27,7 +27,7 @@ The add-on system adds one milestone, M-A, and scope and checks to M0, M1, M3, M
 ### M0. Workspace and core model
 
 Scope:
-- Cargo workspace with the crates listed in [Crate layout](architecture.md#crate-layout), except `deployarr-addons`, `deployarr-addon-sdk`, `wit/`, and the crates under `addons/`, which M-A adds.
+- Cargo workspace with the crates listed in [Crate layout](architecture.md#crate-layout), except `deployarr-addons`, `deployarr-addon-sdk`, `wit/`, and `addons/`, which M-A and later milestones add.
 - CI on Linux and Windows. `rustfmt` and `clippy -D warnings` must pass.
 - `deployarr-core`: the task sequence model, its JSON format with a schema version, the compiler, the condition evaluator, and variable substitution.
 - A CI check that fails if the agent imports a DLL that base WinPE lacks.
@@ -266,7 +266,7 @@ Check:
 - The BIOS VM, which runs Home, has no pre-staged record, so lookup reaches its order row by baseboard serial. The row sets a `Domain` profile. The deployment stops before the disk changes, and its error names the edition ID and the profile.
 - A human checks Entra ID join and Autopilot registration on Pro against a test tenant, because the lab has no tenant. Home supports neither (see [Directory join](architecture.md#directory-join)).
 - The lowered program for `deployarr.entra-join` holds one `AddProvisioningPackage` step and no command. Planning refuses a test add-on that expands to a `RunCommand` naming the enrollment package (item 9).
-- A step that sets `JoinProfile` from a `Workgroup` profile to a join profile from an add-on fails, and so does one that sets it from an add-on's profile to `Domain`. A step that switches from `Workgroup` to `Domain` passes. See [Directory join](architecture.md#directory-join).
+- On the UEFI VM, which runs Pro, a step that sets `JoinProfile` from a `Workgroup` profile to a join profile from an add-on fails, and so does one that sets it from an add-on's profile to `Domain`. A step that switches from `Workgroup` to `Domain` passes. See [Directory join](architecture.md#directory-join).
 - Disable `deployarr.entra-join`. The sequence that uses it opens, shows the step read-only, exports, and imports on a second server that never had the add-on. A deployment with it stops at the lookup screen with the reason, and its disk is untouched. Disable the step, and the sequence deploys.
 - Upgrade `deployarr.autopilot` from a version with step config version 1 to one with version 2 while a deployment runs. The running deployment finishes on its frozen program. The next one deploys with the migrated config. The saved task sequence version is byte for byte the same before and after.
 - Roll the upgrade back. The add-on's store matches its snapshot.
