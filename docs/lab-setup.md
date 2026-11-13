@@ -64,7 +64,7 @@ The `uefi` VM uses Ubuntu's `/usr/share/OVMF/OVMF_VARS_4M.ms.fd`. Its `db` holds
 
 The `uefi2023` VM needs a store whose `db` holds only the Windows UEFI CA 2023. Ubuntu's `python3-virt-firmware` 25.12 cannot make one, because it has no `--enroll-microsoft` option. So install version 26.10 in its own environment.
 
-On Python 3.13 and later, `virt-firmware` needs `crypt_r`. PyPI has no wheel for `crypt_r`, so pip compiles it. Install a C compiler, the Python headers, and the `crypt` headers first:
+On Python 3.13 and later, `virt-firmware` needs `crypt_r`. PyPI has no wheel for `crypt_r`, so `pip` compiles it. Install a C compiler, the Python headers, and the `crypt` headers first:
 
 ```bash
 sudo apt-get install -y gcc python3-dev libcrypt-dev
@@ -117,7 +117,7 @@ The check takes about a minute. It starts a packet capture and the [PXE prototyp
 - The PXE prototype answers each VM on port 4011.
 - Each UEFI VM refuses the unsigned program with `Access Denied`, so Secure Boot is on.
 
-The last line is `RESULT PASS`. The check writes a folder and a zip named `lab-check-<time>` in `~/deployarr-lab/checks`. The zip holds the capture, a `tshark -V` decode of the DHCP packets, the logs, and `versions.txt` with the version of each component. The capture filter drops TFTP data, so the zip holds no file contents. The folder and the zip belong to you, also when the check fails.
+The last line is `RESULT PASS`. The check writes a folder and a zip named `lab-check-<time>` in `~/deployarr-lab/checks`. The zip holds the capture, a `tshark -V` decode of the DHCP packets, the logs, and `versions.txt` with the version of each component. The capture filter drops TFTP data, so the zip holds no file contents. The folder and any zip belong to you, also when the check fails. A check that stops early, such as when `dumpcap` or the PXE prototype fails to start, writes the folder and no zip.
 
 ## 6. Get the Windows files
 
@@ -179,15 +179,13 @@ Never attach the Windows files or a capture that holds file data.
 
 ## Run an experiment
 
-Start a VM:
+An experiment runs the PXE prototype, a capture, and a VM, each in its own terminal. Start them in that order. On the lab host, the `uefi` VM sent its first DHCP Discover 1.4 seconds after `vm.sh` started, so the prototype and the capture must already run.
+
+Run the PXE prototype with one of the TFTP folders. Its [README](../tools/pxe-prototype/README.md) gives the command for each experiment. In the lab, the address is `10.41.0.1`, the interface is `br-lab`, and the root is `~/deployarr-lab/tftp/2011` or `~/deployarr-lab/tftp/2023`. For example:
 
 ```bash
-tools/lab/vm.sh uefi
+sudo python3 tools/pxe-prototype/pxe_prototype.py --server-ip 10.41.0.1 --interface br-lab --root ~/deployarr-lab/tftp/2011 --chain two-stage --log-file two-stage.log
 ```
-
-Use `uefi2023` or `bios` for the other VMs. On a desktop, the VM opens a window. On a server, the script prints a VNC address on `127.0.0.1`. Reach it through SSH, for example with `ssh -L 5901:127.0.0.1:5901 <host>`, and a VNC viewer. The firmware's console text goes to `~/deployarr-lab/<vm>/serial.log`. Close the window or press Ctrl-C to stop the VM.
-
-The VMs use the host's CPU model, because QEMU's default model lacks processor features that Windows 11 requires (#75). The SeaBIOS VM runs with `smbios-entry-point-type=32`, so its iPXE ROM sends option 97 (#56). The UEFI VMs use a virtio network card with no option ROM, so OVMF's own PXE client runs with Secure Boot on.
 
 Capture on the bridge, as the experiment issues ask. The captures go in `~/deployarr-lab/captures`, outside the repository, until you check them:
 
@@ -199,15 +197,29 @@ mkdir -p ~/deployarr-lab/captures
 sudo dumpcap -i br-lab -f 'udp and udp[8:2] != 3' -w - > ~/deployarr-lab/captures/<name>.pcapng
 ```
 
-Press Ctrl-C to stop the capture, or add `-a duration:<seconds>` to stop it after that time. The filter drops TFTP DATA packets and IP fragments, so the capture holds no file bytes.
+The filter drops TFTP DATA packets and IP fragments, so the capture holds no file bytes.
 
 `dumpcap` writes the capture to standard output, and your shell writes the file, so the file belongs to you. `dumpcap` cannot open a file in your home folder itself. It drops root's capabilities once it opens the interface, and Ubuntu's home folders are closed to other users.
+
+Start a VM:
+
+```bash
+tools/lab/vm.sh uefi
+```
+
+Use `uefi2023` or `bios` for the other VMs. On a desktop, the VM opens a window. On a server, the script prints a VNC address on `127.0.0.1`. Reach it through SSH, for example with `ssh -L 5901:127.0.0.1:5901 <host>`, and a VNC viewer. The firmware's console text goes to `~/deployarr-lab/<vm>/serial.log`. Close the window or press Ctrl-C to stop the VM.
+
+The VMs use the host's CPU model, because QEMU's default model lacks processor features that Windows 11 requires (#75). The SeaBIOS VM runs with `smbios-entry-point-type=32`, so its iPXE ROM sends option 97 (#56). The UEFI VMs use a virtio network card with no option ROM, so OVMF's own PXE client runs with Secure Boot on.
+
+Wait a few seconds after the last packet you need. Then press Ctrl-C in the capture's terminal to stop the capture, and in the prototype's terminal to stop the prototype. To stop the capture after a set time instead, add `-a duration:<seconds>` to the `dumpcap` command before `-w`.
 
 Ubuntu 26.04 confines `tshark` with an AppArmor profile, `/etc/apparmor.d/tshark`. The profile lets `tshark` open capture files only in temporary folders such as `/tmp`, even as root. So give `tshark` the capture on standard input with `-r -`, and let your shell open the file. On the lab host's Linux 7.0 kernel, AppArmor does not recheck a file that your shell opened. To list the packets:
 
 ```bash
 tshark -r - < ~/deployarr-lab/captures/<name>.pcapng
 ```
+
+Each `tshark` run still adds an `apparmor="DENIED"` line for `/proc/sys/vm/nr_hugepages` to the kernel log, and a `ptrace` line when it runs as root. They do not stop `tshark`, and no line names the capture.
 
 An experiment commits its captures with its research page, in `docs/research/pxe-lab/captures/`. Start each capture's name with the page's name, such as `single-stage-chain-uefi.pcapng` for `single-stage-chain.md`.
 
@@ -234,12 +246,6 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/<name>.pcapng > docs/res
 ```
 
 Never commit a capture that holds file data, or any of the Windows files.
-
-Run the PXE prototype with one of the TFTP folders. Its [README](../tools/pxe-prototype/README.md) gives the command for each experiment. In the lab, the address is `10.41.0.1`, the interface is `br-lab`, and the root is `~/deployarr-lab/tftp/2011` or `~/deployarr-lab/tftp/2023`. For example:
-
-```bash
-sudo python3 tools/pxe-prototype/pxe_prototype.py --server-ip 10.41.0.1 --interface br-lab --root ~/deployarr-lab/tftp/2011 --chain two-stage --log-file two-stage.log
-```
 
 To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. That removes its disk, its firmware variables, and its TPM state. The next start creates them again.
 
