@@ -13,6 +13,8 @@ extern crate alloc;
 pub mod action;
 pub mod condition;
 pub mod sequence;
+pub mod store;
+pub mod substitution;
 pub mod template;
 pub mod variable;
 
