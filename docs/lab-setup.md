@@ -189,6 +189,22 @@ Capture on the bridge, as the experiment issues ask:
 sudo dumpcap -i br-lab -f 'udp and udp[8:2] != 3' -w <name>.pcapng
 ```
 
+The filter drops TFTP DATA packets and IP fragments, so the capture holds no file bytes. An experiment commits its captures with its research page, in `docs/research/pxe-lab/captures/`. Start each capture's name with the page's name, such as `single-stage-chain-uefi.pcapng` for `single-stage-chain.md`.
+
+Before you commit a capture, check that it holds no TFTP data and no fragments. For a capture made with the filter above, this command prints nothing:
+
+```bash
+tshark -r <name>.pcapng -Y 'tftp.opcode == 3 or ip.flags.mf == 1 or ip.frag_offset > 0'
+```
+
+Commit a decode of the capture's DHCP packets next to it, as `<name>-dhcp.txt`:
+
+```bash
+tshark -r <name>.pcapng -Y dhcp -V > <name>-dhcp.txt
+```
+
+Never commit a capture that holds file data, or any of the Windows files.
+
 Run the PXE prototype with one of the TFTP folders. Its [README](../tools/pxe-prototype/README.md) gives the command for each experiment. In the lab, the address is `10.41.0.1`, the interface is `br-lab`, and the root is `~/deployarr-lab/tftp/2011` or `~/deployarr-lab/tftp/2023`. For example:
 
 ```bash
