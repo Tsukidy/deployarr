@@ -14,7 +14,7 @@ This page records what Configuration Manager (ConfigMgr) 2509 ships for operatin
 - Every result is static. Nothing ran on Windows.
 - One agent wrote each claim and re-opened its citation before writing it. Claims marked "inferred" come from names, strings, or partial code.
 - MDT citations come from `Source/MDT.8456` in [keithga/DeployShared](https://github.com/keithga/DeployShared), as on the [MDT 8456 reference](mdt-8456.md#sources). Script citations such as `ZTIValidate.wsf:16` point into its `scripts` folder, and template citations such as `Templates/ClientUpgrade.xml:37-43` are relative to `Source/MDT.8456`. None of these files is on the ConfigMgr media.
-- `tools/re/configmgr-osd/reproduce.sh` repeats the download, the MDT search, the binary inventory, and the step catalog. See [ConfigMgr 2509 in the agent guide](../../AGENTS.md#configmgr-2509). Whether a later ConfigMgr release changes any of these findings is open. Rerun the script against the next installer to find out.
+- `tools/re/configmgr-osd/reproduce.sh` repeats the download, the MDT search, the binary inventory, and the step catalog. See [ConfigMgr 2509 in `tools/re/README.md`](../../tools/re/README.md#configmgr-2509). Whether a later ConfigMgr release changes any of these findings is open. Rerun the script against the next installer to find out.
 - [configmgr-2509-osd](configmgr-2509-osd/README.md) holds the generated [step catalog](configmgr-2509-osd/task-sequence-steps.md) and [binary inventory](configmgr-2509-osd/osd-x64-inventory.tsv), and says how to rebuild them.
 
 ### Evidence IDs

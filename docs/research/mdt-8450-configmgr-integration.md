@@ -4,7 +4,7 @@ This page records how Microsoft Deployment Toolkit (MDT) 8450 adds its own task 
 
 ## Sources
 
-- The installer is `MicrosoftDeploymentToolkit_x64.msi`, product version 6.3.8450.1000, from `https://download.microsoft.com/download/0/7/b/07b3b260-f008-4b1c-8eaa-74bcc5c7d646/MicrosoftDeploymentToolkit_x64.msi`. It is 20,529,152 bytes, and its SHA-256 is `e73823db601b06e9c222ae816bbddd491ecb823a1f8cce0f73eec9de51c1690e`, which matches [the agent guide](../../AGENTS.md#reproduce-the-mdt-research). Its summary information gives a creation date of 2017-12-01. It was downloaded on 2026-11-12.
+- The installer is `MicrosoftDeploymentToolkit_x64.msi`, product version 6.3.8450.1000, from `https://download.microsoft.com/download/0/7/b/07b3b260-f008-4b1c-8eaa-74bcc5c7d646/MicrosoftDeploymentToolkit_x64.msi`. It is 20,529,152 bytes, and its SHA-256 is `e73823db601b06e9c222ae816bbddd491ecb823a1f8cce0f73eec9de51c1690e`, which matches [`tools/re/README.md`](../../tools/re/README.md#sources). Its summary information gives a creation date of 2017-12-01. It was downloaded on 2026-11-12.
 - MDT 8456 is the last release, but its installer link returns HTTP 404 ([MDT 8450 binaries reference](mdt-8450-binaries.md#sources)). 8450 is therefore the pinned version. The 8456 hotfix replaces only `Microsoft.BDD.Utility.dll`, which plays no part in the integration.
 - `msiextract` 0.103 unpacked the MSI. Paths such as `SCCM/Microsoft.BDD.CM12Actions.mof` are relative to the extracted `Microsoft Deployment Toolkit` folder. Line numbers count lines after CRLF line endings are stripped.
 - `ilspycmd` 8.2.0.7535 decompiled these .NET assemblies from `Bin`. Citations such as `Microsoft.BDD.Wizards!SCCM_ConfigureRemove.CompileActionsMOF` name the type and method.
