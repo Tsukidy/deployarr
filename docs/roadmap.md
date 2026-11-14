@@ -34,7 +34,8 @@ Check:
 - `cargo test --workspace` passes on Linux and Windows.
 - A test rebuilds the group, condition, and phase structure of MDT's `Client.xml` in the deployarr model and compiles it. This proves the model can express everything MDT's standard sequence uses.
 - Table tests cover the condition rules listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#conditions): integer versus string comparison, `Like` wildcards, `Exists` on an empty value, and missing files and registry values. Each place where deployarr differs from MDT on purpose has its own test.
-- The compiler rejects an empty success list, a `run_in` the action cannot honor, a WinPE `Restart` before the state moves to disk, and an empty `All`, `Any`, or `Not`.
+- The parser rejects an empty success list and an empty `All` or `Any`.
+- The compiler rejects a `run_in` the action cannot honor, a WinPE `Restart` before the state moves to disk, and a duplicate `NodeId`.
 
 ### M1. Engine and agent in a running Windows
 
