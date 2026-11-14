@@ -18,7 +18,8 @@ VMS = {
 DISCOVER, ACK = "1", "5"
 
 # The processor features that Windows 11 needs, with their flags in
-# /proc/cpuinfo. The Test lab section of docs/roadmap.md lists them.
+# /proc/cpuinfo. The Test lab section of docs/roadmap.md lists the features.
+# Linux names the flags in arch/x86/include/asm/cpufeatures.h.
 CPU_FEATURES = {
     "PAE": "pae",
     "NX": "nx",

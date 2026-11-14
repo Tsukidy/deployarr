@@ -126,8 +126,8 @@ class CheckSummaryTest(unittest.TestCase):
         self.assertIn("FAIL host CPU: lacks NX (nx)", lines)
 
     def test_no_flags_line_fails(self):
-        # On Intel, /proc/cpuinfo also has a "vmx flags" line, which is not the
-        # flags line.
+        # On a CPU with VMX, /proc/cpuinfo also has a "vmx flags" line, which
+        # is not the flags line.
         no_flags = "processor\t: 0\nmodel name\t: Intel(R) Xeon(R) Processor\nvmx flags\t: vnmi ept\n"
         for flags in (no_flags, "", None):
             with self.subTest(flags=flags):
