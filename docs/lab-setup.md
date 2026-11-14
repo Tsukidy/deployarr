@@ -15,6 +15,7 @@ The scripts in [`tools/lab/`](../tools/lab/) hold these settings in `lab.conf`.
 ## What you need
 
 - An x86-64 PC or server with hardware virtualization (Intel VT-x or AMD-V) turned on in its firmware settings.
+- A CPU with every processor feature that the [Test lab](roadmap.md#test-lab) section lists, such as SSE4.2 and PrefetchW. The VMs use the host's CPU model, and Windows 11 needs these features. The check in step 5 tests them.
 - 16 GB of memory and 100 GB of free disk. The check runs the three VMs at once, with 4 GB each.
 - Ubuntu 26.04 LTS, desktop or server. The steps ran on Ubuntu 26.04.1 LTS, and the scripts use its package versions and file paths. Nobody has run this version of the page on Ubuntu 24.04.
 - An account that can run `sudo`.
@@ -112,12 +113,13 @@ sudo tools/lab/check.sh
 
 The check takes about a minute. It starts a packet capture and the [PXE prototype](../tools/pxe-prototype/README.md), and boots the three VMs to their network boot with no screen. The prototype serves a 1 KB unsigned test program in place of the Windows boot program. The check then prints one line for each test:
 
+- The host's CPU has the eight processor features that the [Test lab](roadmap.md#test-lab) section lists. The check reads the `flags` line of each processor in `/proc/cpuinfo`, and a feature counts only when every line lists it. A `FAIL` line names each missing feature and its flag. The VM tests run either way.
 - Each VM's PXE DISCOVER carries option 93 and option 97 with the VM's UUID.
 - Each VM gets an address from dnsmasq.
 - The PXE prototype answers each VM on port 4011.
 - Each UEFI VM refuses the unsigned program with `Access Denied`, so Secure Boot is on.
 
-The last line is `RESULT PASS`. The check writes a folder and a zip named `lab-check-<time>` in `~/deployarr-lab/checks`. The zip holds the capture, a `tshark -V` decode of the DHCP packets, the logs, and `versions.txt` with the version of each component. The capture filter drops TFTP data, so the zip holds no file contents. The folder and any zip belong to you, also when the check fails. A check that stops early, such as when `dumpcap` or the PXE prototype fails to start, writes the folder and no zip.
+The last line is `RESULT PASS`. The check writes a folder and a zip named `lab-check-<time>` in `~/deployarr-lab/checks`. The zip holds the capture, a `tshark -V` decode of the DHCP packets, the logs, `cpu-flags.txt` with the host's `flags` lines, and `versions.txt` with the version of each component. The capture filter drops TFTP data, so the zip holds no file contents. The folder and any zip belong to you, also when the check fails. A check that stops early, such as when `dumpcap` or the PXE prototype fails to start, writes the folder and no zip.
 
 ## 6. Get the Windows files
 
@@ -260,6 +262,7 @@ To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. Th
 | `tshark` says `You don't have permission to read the file` | The AppArmor profile for `tshark` blocks the path. Give the file on standard input with `tshark -r - < <file>`, as in [Run an experiment](#run-an-experiment). |
 | `network.sh up` stops at dnsmasq, or `ss` shows another program on port 67 | Another DHCP server holds port 67 on every interface. Common ones are the `dnsmasq` service and libvirt's `default` network. Stop it, or bind it to its own interface as the [prototype README](../tools/pxe-prototype/README.md#share-port-67-with-dnsmasq) says. |
 | The check fails on `dnsmasq gave an address` for every VM | A firewall drops DHCP on the bridge. If `sudo ufw status` says `active`, run `sudo ufw allow in on br-lab`. |
+| The check fails on `host CPU` | The host's CPU lacks a processor feature that Windows 11 needs, and the line names it. Windows 11 cannot run in a lab VM on this host. Use a host whose CPU has every feature in the [Test lab](roadmap.md#test-lab) section. |
 | The check fails on option 97 for `bios` | The VM did not get the SMBIOS setting. Check that `tools/lab/vm.sh` is unchanged. |
 | The check fails on `Access Denied` | Secure Boot is off in that VM. Delete `~/deployarr-lab/uefi/vars.fd` or `~/deployarr-lab/uefi2023/vars.fd`, and redo step 3 for `uefi2023`. |
 | `media.sh` says the ISO has no `sources/boot.wim` | The file is not a Windows installation ISO. Download it again. |
