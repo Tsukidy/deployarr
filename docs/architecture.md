@@ -322,6 +322,7 @@ The engine is a pure state machine over an `Executor` trait, so it is tested on 
 - Step processes read and set variables through the agent, with the `deployarr-agent var get` and `var set` commands over a local channel that the agent opens for each step. There is no command that clears every variable. MDT scripts change a shared-memory store directly, and its `Clear()` method erases the engine's own state.
 - A variable can be marked secret. Secrets never reach a log line or an event. The CMTrace writer and the event stream both redact them. Logs show templates before substitution, as MDT's engine does.
 - Every variable records where its value came from: a gathered fact, a rule, a lookup match, a prompt, or a step. A lookup match names its resolver, and for an add-on resolver also the add-on. The UI shows this trace for each deployment. MDT writes a similar trace into `ZTIGather.log`.
+- Some variables fill settings in the unattend file, such as the `ReadyToUse` OOBE settings. Where MDT has a variable for one of those settings, deployarr keeps MDT's name. See [Ready-to-use OOBE settings](#ready-to-use-oobe-settings).
 
 ## Order lookup
 
