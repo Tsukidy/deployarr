@@ -1,4 +1,4 @@
-"""Tests for doc_section.py. Run with: python3 -m unittest discover -s tools -p 'test_*.py'"""
+"""Tests for doc_section.py and the docs check's file list. Run with: python3 -m unittest discover -s tools -p 'test_*.py'"""
 import contextlib
 import io
 import os
@@ -258,6 +258,89 @@ class CommandTest(unittest.TestCase):
             capture_output=True, text=True, encoding="utf-8", check=False, cwd=tempfile.gettempdir(),
         )
         self.assertEqual((result.returncode, result.stdout, result.stderr), run(self.path, "beta"))
+
+
+class MarkdownFilesTest(unittest.TestCase):
+    """check_docs.markdown_files(), the file list that the docs check and RepositoryDocsTest share."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root)
+
+    def make(self, *paths):
+        """Create each path under the root. A path that ends in a slash is a folder, and any other is an empty file."""
+        for path in paths:
+            full = os.path.join(self.root, *path.split("/"))
+            if path.endswith("/"):
+                os.makedirs(full, exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(full), exist_ok=True)
+                open(full, "w", encoding="utf-8").close()
+
+    def files(self):
+        return sorted(check_docs.markdown_files(self.root))
+
+    @staticmethod
+    def paths(*paths):
+        return sorted(os.path.join(*path.split("/")) for path in paths)
+
+    def test_skips_folders_that_hold_a_git_file_or_folder(self):
+        self.make(
+            ".git/",
+            "README.md",
+            # A worktree or a submodule holds a .git file.
+            ".claude/worktrees/wt/.git",
+            ".claude/worktrees/wt/README.md",
+            ".claude/worktrees/wt/docs/roadmap.md",
+            # A clone holds a .git folder.
+            "tools/re/clone/.git/",
+            "tools/re/clone/notes.md",
+            "tools/re/clone/docs/deep.md",
+        )
+        self.assertEqual(self.files(), self.paths("README.md"))
+
+    def test_yields_files_under_dot_claude_outside_nested_checkouts(self):
+        self.make(
+            ".git/",
+            ".claude/CLAUDE.md",
+            ".claude/rules/style.md",
+            ".claude/worktrees/wt/.git",
+            ".claude/worktrees/wt/.claude/rules/style.md",
+        )
+        self.assertEqual(self.files(), self.paths(".claude/CLAUDE.md", ".claude/rules/style.md"))
+
+    def test_yields_every_file_of_a_tree_with_no_git(self):
+        # Such as an export made with git archive.
+        self.make("README.md", "docs/a.md", "docs/deep/b.md", "docs/notes.txt", ".claude/rules/style.md")
+        self.assertEqual(
+            self.files(),
+            self.paths("README.md", "docs/a.md", "docs/deep/b.md", ".claude/rules/style.md"),
+        )
+
+    def test_walks_a_root_that_holds_a_git_file(self):
+        # A run from inside a worktree, whose root holds a .git file.
+        self.make(".git", "README.md", "docs/a.md")
+        self.assertEqual(self.files(), self.paths("README.md", "docs/a.md"))
+
+    def test_still_skips_the_skip_dirs(self):
+        self.make("README.md", ".git/x.md", "target/doc/x.md", "node_modules/pkg/README.md", "crates/a/target/x.md")
+        self.assertEqual(self.files(), self.paths("README.md"))
+
+    def test_the_docs_check_reports_a_worktree_only_from_inside_it(self):
+        self.make(".git/", "README.md", ".claude/worktrees/wt/.git")
+        worktree = os.path.join(self.root, ".claude", "worktrees", "wt")
+        with open(os.path.join(worktree, "README.md"), "w", encoding="utf-8") as handle:
+            handle.write("[plan](missing.md)\n")
+        with open(os.path.join(worktree, "notes.md"), "wb") as handle:
+            handle.write("caf\xe9\n".encode("latin-1"))
+        self.assertEqual(check_docs.check(self.root), (["README.md"], []))
+        self.assertEqual(
+            check_docs.check(worktree),
+            (
+                ["README.md", "notes.md"],
+                ["notes.md: not UTF-8 (invalid continuation byte)", "README.md:1: missing file missing.md"],
+            ),
+        )
 
 
 class RepositoryDocsTest(unittest.TestCase):
