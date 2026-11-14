@@ -332,7 +332,7 @@ class MarkdownFilesTest(unittest.TestCase):
         with open(os.path.join(worktree, "README.md"), "w", encoding="utf-8") as handle:
             handle.write("[plan](missing.md)\n")
         with open(os.path.join(worktree, "notes.md"), "wb") as handle:
-            handle.write("caf\xe9\n".encode("latin-1"))
+            handle.write(b"caf\xe9\n")  # ISO-8859-1
         self.assertEqual(check_docs.check(self.root), (["README.md"], []))
         self.assertEqual(
             check_docs.check(worktree),
