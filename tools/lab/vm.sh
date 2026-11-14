@@ -60,8 +60,10 @@ if [[ $firmware == uefi ]]; then
         cp "$vars" "$dir/vars.fd"
     fi
     mkdir -p "$dir/tpm"
-    # A Unix socket path must be short, so the socket goes in the runtime folder.
-    sock=${XDG_RUNTIME_DIR:-/tmp}/deployarr-lab-$name-swtpm.sock
+    # A Unix socket path must be short, so the socket goes in /tmp. Ubuntu's
+    # AppArmor profile for swtpm lets it create a socket there, and not in
+    # $XDG_RUNTIME_DIR.
+    sock=/tmp/deployarr-lab-$(id -u)-$name-swtpm.sock
     rm -f "$sock"
     swtpm socket --tpm2 --tpmstate "dir=$dir/tpm" \
         --ctrl "type=unixio,path=$sock" \
