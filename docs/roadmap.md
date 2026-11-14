@@ -107,19 +107,21 @@ Order lookup is high priority. M5 starts as soon as M3 passes its check and runs
 Order lookup is optional for a deployarr installation. A server with no data source still deploys from pre-staged records and the manual list.
 
 Scope:
-- Data sources for SQL Server (`tiberius`), PostgreSQL, and MySQL (`sqlx`). All of them are optional.
+- Data sources for SQL Server (`tiberius`), PostgreSQL, MySQL, and MariaDB (`sqlx`). All of them are optional.
 - Named queries with bound parameters, the OS-code map, and the lookup chain:
   1. pre-staged record
   2. order by baseboard serial
   3. order number prompt
   4. manual list
+- The [write guards](architecture.md#write-guards), with the `SELECT` check for MySQL and MariaDB named queries.
 - A chain an admin can reorder or trim, checked when it is saved, and a no-match screen for a PC that no resolver matches.
 - Placeholder filtering for SMBIOS values.
 - The variable trace in the UI and the lookup test box.
 
 Check:
-- Integration tests pass against SQL Server, PostgreSQL, and MySQL containers.
-- On PostgreSQL and on MySQL, the integration tests check the [write guards](architecture.md#write-guards) with an account that may write. Named queries that run `INSERT`, `TRUNCATE`, and `DROP TABLE` each fail and leave the data unchanged. A named query that sets the session to read-write, or one that starts a read-write transaction, does not let the next named query on the same connection write. A named query that holds two statements fails and changes nothing.
+- Integration tests pass against SQL Server, PostgreSQL, MySQL, and MariaDB containers.
+- On PostgreSQL, MySQL, and MariaDB, the integration tests check the [write guards](architecture.md#write-guards) with an account that may write. These tests send their named queries to the engine guard without the `SELECT` check, so a server that skips the `ROLLBACK` fails them on MariaDB. Named queries that run `INSERT`, `TRUNCATE`, and `DROP TABLE` each fail and leave the data unchanged. A named query that sets the session to read-write, or one that starts a read-write transaction, does not let the next named query on the same connection write. A named query that holds two statements fails and changes nothing.
+- Tests of the `SELECT` check refuse `SET STATEMENT tx_read_only=0 FOR TRUNCATE TABLE orders`, a `BEGIN NOT ATOMIC` block, and an `IF` block. They refuse each one bare, after a leading comment, and inside an executable comment. They also refuse `#x`, a carriage return, `SELECT 1`, a line feed, and then a `BEGIN NOT ATOMIC` block. They accept `SELECT` and `WITH ... SELECT`.
 - A VM whose baseboard serial is in the test order table deploys the order's OS with no input.
 - A VM with an unknown serial stops at the order number prompt, deploys after the number is typed, and does not touch its disk before that.
 - With no data source configured, a VM with no pre-staged record shows the manual list and deploys the task sequence picked there. The server opens no connection to an order database.
