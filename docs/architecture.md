@@ -288,7 +288,7 @@ The compiler also rejects these mistakes when you save, which MDT finds only at 
 - `Action::allowed_run_in` holds the table as one exhaustive match, so a new action does not compile until someone decides where it runs.
 - `compile` returns every error in document order, not only the first.
 - Each error names the node's ID, its path in the tree, such as `root.children[1].group.children[0]`, and the rule. An ID that two nodes share cannot locate either node, so the duplicate error also names the path of the first node with that ID.
-- The duplicate ID rule covers every node, disabled ones included. The other rules cover only the nodes that the program keeps, so they skip a disabled step and every node in a disabled group (design decision).
+- A disabled node is still part of the sequence that you save, so the `run_in` rule, the WinPE condition rule, and the duplicate ID rule check it. The `Restart` rule reads program order, so it skips disabled nodes (design decision).
 
 The parser rejects other mistakes before the compiler runs, such as an empty success list or an empty `All` or `Any`. See [JSON format](#json-format).
 

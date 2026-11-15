@@ -359,8 +359,7 @@ fn disabled_nodes_are_dropped_with_everything_inside_them() {
                     0x05,
                     vec![
                         step(0x06, "either", command()),
-                        // A dropped step is not checked against its action.
-                        step(0x07, "full_os", apply_image()),
+                        step(0x07, "win_pe", apply_image()),
                     ],
                 )),
                 step(0x08, "either", command()),
@@ -379,6 +378,33 @@ fn disabled_nodes_are_dropped_with_everything_inside_them() {
             Exec(0x04, jump_to(4)),
             Exec(0x08, jump_to(4)),
             Exec(0x09, FailDeployment),
+        ]
+    );
+}
+
+#[test]
+fn a_disabled_step_is_still_checked_by_itself() {
+    let document = root(vec![
+        disabled(step(0x02, "full_os", apply_image())),
+        disabled(group(
+            0x03,
+            vec![when(step(0x04, "win_pe", command()), wmi())],
+        )),
+    ]);
+
+    assert_eq!(
+        compile_err(&document),
+        [
+            error(
+                0x02,
+                vec![0],
+                Rule::RunIn {
+                    action: "apply_os_image",
+                    run_in: RunIn::FullOs,
+                    allowed: &[RunIn::WinPe],
+                },
+            ),
+            error(0x04, vec![1, 0], Rule::FullOsCondition { condition: "wmi" },),
         ]
     );
 }

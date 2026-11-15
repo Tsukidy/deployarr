@@ -83,8 +83,9 @@ pub enum OnError {
 /// compiles to an [`Instr::Enter`] followed by its children.
 ///
 /// It fails with every rule that the sequence breaks, in document order.
-/// [`Rule`] lists the rules. The ID rule covers every node in the tree, and the
-/// other rules cover only the nodes that the program keeps.
+/// [`Rule`] lists the rules. A disabled node is still checked against every
+/// rule but the one about program order, because it is still part of the
+/// sequence that is saved.
 pub fn compile(sequence: &TaskSequence) -> Result<Program, CompileErrors> {
     let mut compiler = Compiler::default();
     compiler.group(
@@ -170,13 +171,14 @@ impl Compiler {
     fn step(&mut self, step: &Step, place: Place) {
         let meta = &step.meta;
         self.check_id(meta);
+        self.check_step(step);
         let Place::Kept { on_failure } = place else {
             return;
         };
         if !meta.enabled {
             return;
         }
-        self.check_step(step);
+        self.check_order(step);
         self.instrs.push(Instr::Exec {
             node: meta.id,
             condition: meta.condition.clone(),
@@ -207,6 +209,7 @@ impl Compiler {
         }
     }
 
+    /// The rules about the step by itself, which cover every step.
     fn check_step(&mut self, step: &Step) {
         let allowed = step.action.allowed_run_in();
         if !allowed.contains(&step.run_in) {
@@ -224,6 +227,11 @@ impl Compiler {
         {
             self.fail(step.meta.id, Rule::FullOsCondition { condition });
         }
+    }
+
+    /// The rules about program order, which cover only the steps that the
+    /// program keeps.
+    fn check_order(&mut self, step: &Step) {
         match step.action {
             Action::PartitionDisk { .. } => self.partitioned = true,
             Action::Restart { .. } if step.run_in == RunIn::WinPe && !self.partitioned => {
@@ -357,7 +365,7 @@ impl core::error::Error for CompileError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Rule {
     /// The step's `run_in` is not one that its action allows. See
-    /// [`Action::allowed_run_in`].
+    /// [`Action::allowed_run_in`]. Disabled steps count.
     RunIn {
         action: &'static str,
         run_in: RunIn,
@@ -365,11 +373,12 @@ pub enum Rule {
     },
     /// The step has `run_in` `WinPe`, and its condition holds an
     /// `installed_msi` or `wmi` condition, which only the full OS can answer.
-    /// `condition` names the first one.
+    /// `condition` names the first one. Disabled steps count.
     FullOsCondition { condition: &'static str },
     /// The step is a `Restart` with `run_in` `WinPe`, and no `PartitionDisk`
     /// step comes before it in program order. Until that step, the state is
-    /// on `X:`, and a restart loses it.
+    /// on `X:`, and a restart loses it. The program drops disabled nodes, so
+    /// they do not count.
     RestartBeforePartition,
     /// An earlier node in the tree, at `first`, has the same ID. Disabled
     /// nodes count.
