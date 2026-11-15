@@ -7,6 +7,7 @@ use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::non_empty::{NonEmpty, NonEmptySeed};
+use crate::sequence::RunIn;
 use crate::template::Template;
 use crate::validated_string::validated_string;
 use crate::variable::{SettableVarName, VarName};
@@ -65,6 +66,32 @@ pub enum Action {
     ActivateWindows {
         online: bool,
     },
+}
+
+impl Action {
+    /// The `run_in` values that a step with this action may have. The
+    /// compiler rejects a step with any other.
+    ///
+    /// The steps that build the new Windows run only in WinPE, and the steps
+    /// that need the installed Windows run only in the full OS. The match is
+    /// exhaustive, so a new action does not compile until someone decides
+    /// where it runs.
+    pub fn allowed_run_in(&self) -> &'static [RunIn] {
+        match self {
+            Self::PartitionDisk { .. }
+            | Self::ApplyOsImage { .. }
+            | Self::ApplyDrivers { .. }
+            | Self::ApplyUnattend { .. }
+            | Self::CheckReadiness { .. } => &[RunIn::WinPe],
+            Self::InstallApplications { .. }
+            | Self::VerifyDrivers { .. }
+            | Self::ActivateWindows { .. } => &[RunIn::FullOs],
+            Self::RunCommand { .. }
+            | Self::RunPowerShell { .. }
+            | Self::SetVariable { .. }
+            | Self::Restart { .. } => &[RunIn::WinPe, RunIn::FullOs, RunIn::Either],
+        }
+    }
 }
 
 /// The exit codes that end a command step with success.
