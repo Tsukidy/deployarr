@@ -1018,11 +1018,11 @@ How a stored step behaves:
 Planning runs in two parts before the compiler:
 
 1. `AddOnHost::lower` asks each add-on to expand its steps and the `ApplyJoinProfile` join slots.
-2. `substitute` in `deployarr-core` puts each expansion in place of its step.
+2. `lower` in `deployarr-core` puts each expansion in place of its step.
 
 `compile` then takes the `LoweredSequence`, so a program that names an add-on does not type-check.
 
-`substitute` keeps the step's `NodeMeta` on a group that holds the expansion. The step's condition and `continue_on_error` therefore still apply. `substitute` rejects these:
+`lower` keeps the step's `NodeMeta` on a group that holds the expansion. The step's condition and `continue_on_error` therefore still apply. `lower` rejects these:
 
 - a missing expansion
 - an action outside the six that an add-on may return
