@@ -484,7 +484,7 @@ The fact has three values: 1.2, 2.0, and unknown. The log names the source of ea
 | `tbs.dll` or `Tbsi_GetDeviceInfo` does not load, `Tbsi_GetDeviceInfo` returns an error, or `tpmVersion` holds another value | The mapping's result, from the rows below | The load error, the TBS error, or the `tpmVersion` value, then the mapping's row |
 | A counted device reads 2.0 | 2.0 | The device, the ID, whether it is a hardware ID or a compatible ID, and the device's status and problem code |
 | No counted device reads 2.0, and one reads 1.2 | 1.2 | The device, the ID, whether it is a hardware ID or a compatible ID, and the device's status and problem code |
-| Devices match, but none has started with no problem code | Unknown | Each matched device, its ID, its status, and its problem code |
+| One or more devices match, but none has started with no problem code | Unknown | Each matched device, its ID, its status, and its problem code |
 | No present device lists an ID from the table | Unknown | That no ID matched |
 | The device scan fails | Unknown | The scan error |
 
