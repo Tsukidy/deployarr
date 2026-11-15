@@ -26,7 +26,7 @@ The repository holds the design documents and the Cargo workspace for M0. There 
 | `tools/re/README.md` | How to reproduce the MDT, ConfigMgr, and WinPE research: the sources and their hashes, the steps, and the pitfalls. Read it before you use `rea`, `ilspycmd`, or the other research tools. |
 | `docs/research/` add-on pages | How other products build add-on systems: Mattermost, Grafana, Zed, go-plugin, Jellyfin, Nextcloud, Spin, TUF and minisign, and MDT 8450's ConfigMgr integration. `wasmtime-50.0.1.md` records the WebAssembly prototype in `tools/addon-wasm-prototype/`. `addon-design-attacks-wasmtime-50.0.1.md` records the adversarial runs against the add-on design, with their probes in `tools/addon-design-attacks/`. Each page ends with the design changes it suggests. |
 | `docs/lab-setup.md`, `tools/lab/` | How to build the PXE lab, and the scripts that run its network and VMs and check it |
-| `docs/agents/` | The issue workflow: the tracker operations, the triage labels, and the agent brief and ticket layouts |
+| `docs/agents/` | The issue workflow: the tracker operations, how to take a ticket, the labels and triage, the agent brief and ticket layouts, and how to write tickets |
 | `.out-of-scope/` | One page per rejected enhancement, with the reason. Its README gives the format. |
 | `tools/check_docs.py` | The docs check that CI runs: links, anchors, em and en dashes, and curly quotes |
 | `.github/` | Issue forms, the pull request template, labels, workflows, and `CODEOWNERS` |
@@ -51,49 +51,13 @@ GitHub issues hold the project's work. [Roadmap](docs/roadmap.md) sets the order
 - Triage labels: the canonical names, unchanged, plus `epic` and `area:*`. See `docs/agents/triage-labels.md`.
 - Agent briefs and the ticket layout: see `docs/agents/agent-brief.md`.
 
-### Labels
+### Rules for every session
 
-- Every issue carries exactly one category label, `bug` or `enhancement`, and exactly one state label: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, or `wontfix`.
-- An epic is the exception. It carries `epic` and no category or state. Each roadmap milestone has one, and its sub-issues are the milestone's tickets.
-- `area:*` labels are optional and can be combined.
-- `lab` marks work that needs the VM lab. Only a session on the lab host takes it, and its prompt names `lab`. Every other session skips it.
-- Copy label names from `.github/labels.json`. To add a label or change its color or description, edit that file. To rename or remove one, open an issue for the owner, because the Labels workflow never renames or deletes.
-
-### Write tickets
-
-- Before you publish tickets, show the owner the breakdown as a numbered list. Give each ticket's title, its blockers, and what it delivers, and ask whether the granularity and the blockers are right. Publish only after the owner approves the list in the session. If the owner is not in the session, as in a scheduled run, publish nothing as `ready-for-agent`.
-- Label each approved ticket yourself, with its category and its state. Use `ready-for-agent` when an agent can finish it. Add `lab` when the work needs the VM lab, and say so in the body. Use `ready-for-human` when the work itself needs real hardware, external access, or manual testing, and say which. The owner approved the breakdown, so the tickets skip triage and the owner never labels them by hand.
-- Write each body in the ticket layout from `docs/agents/agent-brief.md`. Make each ticket a sub-issue of the epic for its milestone. Work that belongs to no milestone, such as a repository chore, has no parent and leaves out `## Parent`.
-- Publish blockers first, then list them in each ticket's `## Blocked by` section by number. The Blocked by workflow turns the section into native GitHub links.
-- When you find work outside your current ticket, do not do it. Open an issue for it with `bug` or `enhancement` and `needs-triage`, never `ready-for-agent`, and mention it in your pull request.
-- A question only the owner can answer is an `enhancement` labeled `ready-for-human`, and a sub-issue of the epic for the milestone it blocks. State the question and the options, and end the body with `Answer in a comment, then close this issue as completed. Close it as not planned if the waiting tickets should not happen.` Publish it before the tickets that wait on it, and list it under their `## Blocked by`. Before you open one, search the open issues for the same question.
-- Settle any hold the owner wants while they approve the breakdown. Leave a held ticket out, or publish a question such as "Start X?" and list it as the ticket's blocker.
-
-### Take a ticket
-
-- If your prompt names an issue for you to work on, work on that issue, whatever its labels, and keep its state label. A prompt that asks you to triage an issue or break an epic into tickets is not a request to work on it, and you do not claim it.
-- If the prompt gives input, such as a decision or lab results, first post it on the issue as a comment that starts with `Owner input:`, so a later session can find it.
-- Claim a named issue with the normal steps, which skip the label test for it. If another branch holds it and the prompt names that branch as gone, release that branch's claim as described under Stale claims in `docs/agents/issue-tracker.md` first. If another session holds it and the prompt does not say so, or the claim fails, stop and tell the owner. Do not move to another ticket.
-- Otherwise, take the first ticket on the frontier: open, `ready-for-agent`, with a `## Blocked by` section whose issues are all closed, and held by no session. Skip tickets labeled `lab` unless your prompt names `lab`. Never take an issue in any other state.
-- Claim it before any other work, with the steps in `docs/agents/issue-tracker.md`. The claim comments decide who holds a ticket, and the assignee only shows it.
-- Before you start, read each issue in the `## Blocked by` section with its comments. Follow any answer the owner gave there, and read the ticket's comments for `Owner input:` and for partial work that an earlier session pushed.
-- If a blocker was closed as not planned, the ticket should not happen. Comment `Not planned, because #<blocker> was closed as not planned.` Then close the ticket as not planned, swap its state label for `wontfix`, and clear the assignee, all in one `issue_write` call. Then comment `Claim released by branch <branch>`. If a blocker was closed as a duplicate, follow the duplicates to the first issue that was not closed as one, and replace the blocker with it in one body edit. Then check that issue like any other blocker. If it is open, release your claim. If it was closed as not planned, close the ticket as above.
-- If you need an answer from the owner, open a question as described under Write tickets. In one body edit, add it to the ticket's `## Blocked by` section. Comment `Waiting on #<question>. Partial work: branch <branch>, pushed`, or `not pushed`. Then release your claim. The ticket keeps its label and returns to the frontier when the owner closes the question.
-- If the ticket's own work turns out to need the VM lab, and your prompt does not name `lab`, first comment on what the session on the lab host must do. Then add `lab` and clear the assignee in one `issue_write` call. Then comment `Claim released by branch <branch>`.
-- If the ticket's own work turns out to need hardware, external access, or manual testing, first comment on what a human must do. Then swap `ready-for-agent` for `ready-for-human` and clear the assignee in one `issue_write` call. Then comment `Claim released by branch <branch>`.
-- In the pull request, write `Closes #<number>` when merging completes the issue. Otherwise write `Refs #<number>`.
-
-### Triage
-
-Triage is for issues the owner or anyone else files by hand. They arrive with `needs-triage`. An agent triages only when the owner asks, and it recommends a category and a state and waits for the owner's answer before it applies them. Triage never claims or assigns the issue.
-
-- Every triage comment starts with `> *This was generated by AI during triage.*`
-- Before you recommend, check whether the request is already implemented, and read `.out-of-scope/` for an earlier rejection of the same idea.
-- For a bug, reproduce it before it reaches `ready-for-agent`.
-- Apply the labels last, in one call with the category and the state, after the comments and edits below. An issue from a blank form has no category yet. Applying the state last keeps an issue that triage leaves half done in `needs-triage`.
-- For `ready-for-agent` and `ready-for-human`, post the agent brief comment first. Then add a `## Blocked by` section to the end of the body, keeping the reporter's text, and keep the `id` that the `issue_write` call returns. Attach the issue to the epic for its milestone with that `id`. Then apply the labels.
-- For `needs-info`, post triage notes first: what is established, and specific questions for the reporter. Then apply the label.
-- For `wontfix`, follow the steps in `.out-of-scope/README.md` when an enhancement is rejected. If the work already exists, comment where it lives. Then close the issue as not planned, and swap its state label for `wontfix` in the same `issue_write` call.
+- Claim a ticket before any other work, and read [Take a ticket](docs/agents/issue-tracker.md#take-a-ticket) before you claim.
+- Before you publish tickets, show the owner the numbered breakdown and get approval in the session. With no owner in the session, publish nothing as `ready-for-agent`. See [Write tickets](docs/agents/agent-brief.md#write-tickets).
+- Triage only when the owner asks. See [Triage](docs/agents/triage-labels.md#triage).
+- Work you find outside your ticket becomes a new `needs-triage` issue, never part of your change. See [Write tickets](docs/agents/agent-brief.md#write-tickets).
+- Every issue carries exactly one category label and exactly one state label, and an epic is the exception. See [Triage labels](docs/agents/triage-labels.md).
 
 ## Branches and pull requests
 
