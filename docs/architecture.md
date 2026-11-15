@@ -463,11 +463,18 @@ Base WinPE 10.0.26100.1 has no `tbs.dll`. It ships in the `WinPE-SecureStartup` 
 The mapping:
 
 - It uses the IDs that base WinPE's `tpm.inf` binds to the TPM driver, from the [table in the research page](research/winpe-10.1.26100.9457.md#tbsdll). An ID from a row that `tpm.inf` describes as TPM 1.2 means 1.2. An ID from a row it describes as TPM 2.0 means 2.0. The agent carries the table in its code. It does not read `tpm.inf` at run time.
-- It reads the hardware IDs and the compatible IDs of every present device from the SetupAPI scan above. It compares them with the table without regard to case.
+- It reads the hardware IDs and the compatible IDs of every present device from the SetupAPI scan above. It compares them with the table without regard to case. A device that lists an ID from the table is a matched device.
 - A device with no compatible IDs is not a scan error. `SetupDiGetDeviceRegistryPropertyW` reports `ERROR_INVALID_DATA` for a property that the device does not have ([SetupDiGetDeviceRegistryPropertyW](https://learn.microsoft.com/en-us/windows/win32/api/setupapi/nf-setupapi-setupdigetdeviceregistrypropertyw)).
 - Compatible IDs matter when the firmware gives the TPM a vendor `_HID`, as EDK2 does. Windows uses compatible IDs to find a driver when none matches a hardware ID ([Compatible ID](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/compatible-ids)). An ACPI device's compatible IDs come from its `_CID` object ([Device management namespace objects](https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/device-management-namespace-objects), section Compatible ID (_CID)). EDK2 at tag `edk2-stable202408` declares its TPM 2.0 device with `_HID` `NNNN0000` and `_CID` `MSFT0101` (`SecurityPkg/Tcg/Tcg2Acpi/Tpm.asl:30-34`). Its `UpdateHID` replaces `NNNN0000` with an ID built from the TPM's manufacturer and firmware version (`SecurityPkg/Tcg/Tcg2Acpi/Tcg2Acpi.c:558-652`). A check of hardware IDs alone reads such a PC as unknown.
+- It counts a matched device only when the device has started with no problem code. Such a device is a counted device. Both paths in step 3 run this mapping, so the rule holds when `tbs.dll` or its export does not load, and when `Tbsi_GetDeviceInfo` returns an error or another `tpmVersion` value. A boot image with `tbs.dll` and base WinPE therefore still agree.
+- The agent reads a matched device's status with `CM_Get_DevNode_Status`, which `cfgmgr32.dll` in base WinPE exports ([WinPE 10.1.26100.9457 reference](research/winpe-10.1.26100.9457.md#functions-the-architecture-names)). It passes the device instance handle that the scan returns in `SP_DEVINFO_DATA.DevInst`. `CM_` functions such as `CM_Get_DevNode_Status` take that handle as input ([SP_DEVINFO_DATA](https://learn.microsoft.com/en-us/windows/win32/api/setupapi/ns-setupapi-sp_devinfo_data)).
+- `CM_Get_DevNode_Status` returns a status made of the `DN_` flags defined in `Cfg.h`, and a problem code, one of the `CM_PROB_` values defined in `Cfg.h`. The problem code is used only when the status has `DN_HAS_PROBLEM` ([CM_Get_DevNode_Status](https://learn.microsoft.com/en-us/windows/win32/api/cfgmgr32/nf-cfgmgr32-cm_get_devnode_status)). A matched device counts when its status has `DN_STARTED` and lacks `DN_HAS_PROBLEM`. When a device is started, `SetupDiRestartDevices` sets its status to `DN_STARTED` ([SetupDiRestartDevices](https://learn.microsoft.com/en-us/windows/win32/api/setupapi/nf-setupapi-setupdirestartdevices)).
+- The log gives a matched device's status flags and its problem code. When the status lacks `DN_HAS_PROBLEM`, the log says that the device has no problem code.
+- Within one device, the first table ID among its hardware IDs, in list order, decides the device's version. Its compatible IDs decide only when none of its hardware IDs is in the table, and then the first table ID among them decides. Windows "always prefers Hardware IDs (returned by _HID) over Compatible IDs (returned by _CID) in INF matching and driver selection" ([Device management namespace objects](https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/device-management-namespace-objects), section Compatible ID (_CID)). A list of hardware IDs is typically sorted from most to least suitable ([Hardware ID](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/hardware-ids)). Compatible IDs should be listed in order of decreasing suitability ([Compatible ID](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/compatible-ids)). While `tpm.inf` is the only INF that lists these IDs, the rule picks the ID that Windows binds (inferred).
+- A started device with a 1.2 hardware ID, such as `ACPI\PNP0C31`, and the 2.0 compatible ID `ACPI\MSFT0101` therefore reads 1.2. Windows binds the 1.2 section of `tpm.inf` for that device, so 1.2 is the version its driver uses (inferred). No known device lists IDs for both versions.
 - Nobody has checked the table against every firmware TPM. The M3 check tests it on the UEFI VM and on one real PC.
 - The UEFI VM's TPM is QEMU's `tpm-crb` device (`tools/lab/vm.sh`). QEMU 8.2.2, the version in Ubuntu 24.04, declares that device with `_HID` `MSFT0101` and no `_CID` (`hw/i386/acpi-build.c:1794-1810`). The VM therefore tests only the hardware-ID path. The real PC tests the compatible-ID path only if its TPM has a vendor `_HID`.
+- Nobody has checked whether `tpm.sys` starts in base WinPE. The image holds `tpm.sys` and `tpm.inf` ([WinPE 10.1.26100.9457 reference](research/winpe-10.1.26100.9457.md#tbsdll)), but only a boot shows whether the driver starts. If it does not, no device counts, and every PC reads unknown in base WinPE. The M3 check tests it, on a boot image built from the ADK's `winpe.wim`.
 
 The fact has three values: 1.2, 2.0, and unknown. The log names the source of each value.
 
@@ -475,16 +482,18 @@ The fact has three values: 1.2, 2.0, and unknown. The log names the source of ea
 | --- | --- | --- |
 | `Tbsi_GetDeviceInfo` returns `TBS_SUCCESS` with `TPM_VERSION_20` or `TPM_VERSION_12` | 2.0 or 1.2 | `Tbsi_GetDeviceInfo` |
 | `tbs.dll` or `Tbsi_GetDeviceInfo` does not load, `Tbsi_GetDeviceInfo` returns an error, or `tpmVersion` holds another value | The mapping's result, from the rows below | The load error, the TBS error, or the `tpmVersion` value, then the mapping's row |
-| A present device lists a 2.0 ID from the table | 2.0 | The device, the ID, and whether it is a hardware ID or a compatible ID |
-| No present device lists a 2.0 ID, and one lists a 1.2 ID | 1.2 | The device, the ID, and whether it is a hardware ID or a compatible ID |
+| A counted device reads 2.0 | 2.0 | The device, the ID, whether it is a hardware ID or a compatible ID, and the device's status and problem code |
+| No counted device reads 2.0, and one reads 1.2 | 1.2 | The device, the ID, whether it is a hardware ID or a compatible ID, and the device's status and problem code |
+| Devices match, but none has started with no problem code | Unknown | Each matched device, its ID, its status, and its problem code |
 | No present device lists an ID from the table | Unknown | That no ID matched |
 | The device scan fails | Unknown | The scan error |
 
 - A scan that fails partway is a failed scan. The TPM version is unknown, even when a device read before the failure matched.
-- When one device lists IDs for both versions, 2.0 wins. The same holds when two devices match with different versions. This is a design choice, not a finding. No known device lists IDs for both versions.
+- A failed `CM_Get_DevNode_Status` call on a matched device is a failed scan too. The call then returns a `CR_` error code ([CM_Get_DevNode_Status](https://learn.microsoft.com/en-us/windows/win32/api/cfgmgr32/nf-cfgmgr32-cm_get_devnode_status)), and the log names it.
+- When two counted devices read different versions, 2.0 wins. This is a design choice, not a finding. Within one device, the hardware ID rule above decides instead.
 - The agent never reports that a PC has no TPM. A TPM whose IDs are all outside the table looks the same as a PC with no TPM (inferred).
-- The agent does not read `TBS_E_TPM_NOT_FOUND` as no TPM. It runs the mapping, as base WinPE does.
-- A matched ID shows the TPM interface that the firmware declares. It does not show that the TPM works.
+- The agent does not read `TBS_E_TPM_NOT_FOUND` as no TPM. It runs the mapping, as base WinPE does. A matched device then overrides the TBS answer only when it has started with no problem code.
+- A counted device shows that `tpm.sys` started for the device with no problem code. Base WinPE's `tpm.inf` binds the table's IDs to the TPM driver, so the driver that started is `tpm.sys` (inferred). The device's ID shows the TPM interface that the firmware declares. A counted device does not show that every TPM command works.
 
 ### Handoff from WinPE to the new OS
 
@@ -577,7 +586,10 @@ deployarr applies `install.wim` with DISM and never runs `setup.exe`, so Windows
 - Each check either fails the step or logs a warning. The Secure Boot check warns by default, because Windows 11 requires firmware that can run Secure Boot, not Secure Boot turned on.
 - A task sequence can change a minimum, switch a check between fail and warn, or turn it off. A BIOS PC needs the UEFI check off, and a PC without TPM 2.0 needs the TPM check off.
 - A fact that the agent cannot read fails its check, and the log says that the value was unknown.
-- The TPM check passes when the agent reports 2.0, from either source in [TPM version](#tpm-version). In base WinPE the version comes from the TPM device's IDs. A PC whose TPM lists `ACPI\MSFT0101` as a hardware ID or as a compatible ID passes the default check. A TPM that lists no ID from the table reads as unknown and fails the check.
+- The TPM check passes when the agent reports 2.0, from either source in [TPM version](#tpm-version). In base WinPE the version comes from the TPM device's IDs, and the device counts only when it has started with no problem code.
+  - A started TPM device with no problem code passes the default check when it lists `ACPI\MSFT0101` as a hardware ID, as a TPM with the `_HID` `MSFT0101` does. It also passes when it lists `ACPI\MSFT0101` as a compatible ID and no hardware ID from the table, as a TPM with a vendor `_HID` does. [TPM version](#tpm-version) gives the rule for a device that lists IDs for both versions.
+  - A TPM device with a problem code, or one that has not started, does not count. With no other counted device, the TPM version is unknown, and the PC fails the default check.
+  - A TPM that lists no ID from the table reads as unknown and fails the check too.
 - Each check sets read-only variables with its result, the required value, and the value found, as ConfigMgr's `_TS_CR` variables do. Conditions and the UI use them to show why a PC stopped.
 - The step does not check processor speed or Microsoft's list of supported processors.
 

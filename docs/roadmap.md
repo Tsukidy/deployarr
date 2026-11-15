@@ -111,7 +111,8 @@ Check:
 - On the UEFI VM, a sequence with an `ActivateWindows` step and `online` off takes Microsoft's KMS client setup key for Pro, and `slmgr /dli` shows `T83GX`. The same key with one character changed fails the step, and the deployment shows the error. The lab records the error code.
 - The UEFI VM runs once with each end state. With `ReadyToUse`, it boots to the sign-in screen with no OOBE. With `CustomerOobe`, it shuts down, shows OOBE on its next boot, and has no account that deployarr created. Neither leaves a cached answer file in `%WINDIR%\Panther`.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
-- On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. It reports the TPM version that the PC has, and its log names the device ID that matched and whether it is a hardware ID or a compatible ID. If base WinPE lacks the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
+- On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. It reports the TPM version that the PC has. Its log names the device ID that matched, whether it is a hardware ID or a compatible ID, and the device's status and problem code. The device must have started with no problem code. If base WinPE lacks the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
+- Those TPM reads use a boot image built from the ADK's `winpe.wim`, which has no `tbs.dll`. They test the [TPM version](architecture.md#tpm-version) mapping, and whether `tpm.sys` starts in base WinPE.
 - A VM shows a prompt from a `PromptSpec` that the server sends, such as one that a test add-on declares. It accepts typed input and scanner-style input, and it applies the declared pattern.
 
 ### M4. PXE
