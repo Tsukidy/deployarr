@@ -246,12 +246,12 @@ The OS default is XTS-AES 128 on Windows 10 1511 and later ([Encrypt method of W
 
 `BitLocker::Enable` acts on the volume's state (`OsdBitLocker!0x140014714`):
 
-- Protection on: it logs a warning that the volume is already protected and changes nothing.
-- Protection off, and the conversion status is 2 or 4, encryption in progress or paused: it checks again every 2 minutes, at most 240 times, which is 8 hours. The step fails if the status is still 2 or 4.
-- Fully decrypted: it sets up key protection, encrypts, and turns on auto-unlock for other encrypted data volumes (`OsdBitLocker!0x140007820`).
-- Fully encrypted with no key protectors: it creates them. This is the state that Pre-provision BitLocker leaves (inferred).
-- Fully encrypted with key protectors: it enables them again. This is the state that Disable BitLocker leaves (inferred).
-- Decryption in progress or paused: the step fails.
+- When protection is on, it logs a warning that the volume is already protected and changes nothing.
+- When protection is off and the conversion status is 2 or 4, encryption in progress or paused, it checks again every 2 minutes, at most 240 times, which is 8 hours. The step fails if the status is still 2 or 4.
+- When the volume is fully decrypted, it sets up key protection, encrypts, and turns on auto-unlock for other encrypted data volumes (`OsdBitLocker!0x140007820`).
+- When the volume is fully encrypted and has no key protectors, it creates them. This is the state that Pre-provision BitLocker leaves (inferred).
+- When the volume is fully encrypted and has key protectors, it enables them again. This is the state that Disable BitLocker leaves (inferred).
+- When decryption is in progress or paused, the step fails.
 - After a failure, `BitLocker::Rollback` deletes the key protectors that the step added and can decrypt the volume (`OsdBitLocker!0x140013b5c`).
 
 Key protectors (`BitLocker::CreateKeyProtectors`, `OsdBitLocker!0x140012038`):
