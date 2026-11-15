@@ -72,10 +72,10 @@ impl Action {
     /// The `run_in` values that a step with this action may have. The
     /// compiler rejects a step with any other.
     ///
-    /// The steps that build the new Windows run only in WinPE, and the steps
-    /// that need the installed Windows run only in the full OS. The match is
-    /// exhaustive, so a new action does not compile until someone decides
-    /// where it runs.
+    /// The steps that check the hardware and build the new Windows run only in
+    /// WinPE, and the steps that need the installed Windows run only in the
+    /// full OS. The match is exhaustive, so a new action does not compile until
+    /// someone decides where it runs.
     pub fn allowed_run_in(&self) -> &'static [RunIn] {
         match self {
             Self::PartitionDisk { .. }
