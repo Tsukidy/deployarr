@@ -225,10 +225,10 @@ The engine handles an outside shutdown during a step with the step's `retryCount
 
 ### Update source and filters
 
-- The step drives the ConfigMgr client's Updates Deployment Agent through the `IPrivilegedInstall2`, `ICIAgentCallback`, and `IRefreshUpdatesCallback` interfaces (`TsInstallSWUpdate!0x14000e1b0`, `TsInstallSWUpdate!0x140010e58`). It does not call the Windows Update Agent itself. The binary does not import `wuapi.dll` and has no `Microsoft.Update` string (inferred from its import table and strings).
+- The step drives the ConfigMgr client's Updates Deployment Agent through the `IPrivilegedInstall2`, `ICIAgentCallback`, and `IRefreshUpdatesCallback` interfaces (`TsInstallSWUpdate!0x14000e1b0`, `TsInstallSWUpdate!0x140010e58`). It does not call the Windows Update Agent itself (inferred). The binary does not import `wuapi.dll` and has no `Microsoft.Update` string.
 - Before a scan, the step reads `WUServer` and `WUStatusServer` from `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate` and logs them. When the key is missing, it logs "Windows Update is not configured on this client machine" as a warning and goes on (`TsInstallSWUpdate!0x140010e58`). The client therefore scans against the WSUS server in that policy (inferred).
 - The step installs only updates that are deployed to the PC. `All` logs "Installing all updates targetted for this computer", and `Mandatory` logs "Installing mandatory updates". The two targets call different methods of `IPrivilegedInstall2` (`TsInstallSWUpdate!0x1400075e8`).
-- With `Mandatory`, the check after a pass skips each update whose date property from the client is zero (`TsInstallSWUpdate!0x14000d34c`). That property is the deployment deadline (inferred).
+- With `Mandatory`, the check after a pass skips each update for which a floating-point value from the client is zero (`TsInstallSWUpdate!0x14000d34c`). That value is the deployment deadline as a COM date (inferred).
 - The step has no KB, category, or update ID filter of its own. The admin's deployments are the filter (inferred from the properties and variables above).
 
 ### Waits
@@ -242,6 +242,7 @@ The engine handles an outside shutdown during a step with the step's `retryCount
 | Result of a pass | What the step does | Return value |
 | --- | --- | --- |
 | The client answers `0x87D00708` | Logs "No updates need to be installed on this machine." | 0 |
+| The pass ends with any other error | Ends the step | That error |
 | An update failed | Logs "One or more updates failed to install, hr=0x%08lx" | The failure's HRESULT |
 | A reboot is pending | Sets `SMSTSRebootRequested` to `HD` and `SMSTSRetryRequested` to `TRUE`, and logs "Installation is not yet complete, action needs to be re-run after reboot" | 0 |
 | Every targeted update is installed | Logs "Installation of updates completed successfully" | 0 |
@@ -249,13 +250,13 @@ The engine handles an outside shutdown during a step with the step's `retryCount
 | Six passes ran and updates are still missing | Logs "Retry count is reached. Out of the loop" | 0 |
 
 - The table comes from `TsInstallSWUpdate!0x140004698`. The step checks for a failed update before it checks for a pending reboot, so a failure wins.
-- `wmain` returns the value of the pass loop, and the process exits with it (`TsInstallSWUpdate!0x140005428`, at `0x140005f08` and `0x140006116`). A failed update therefore fails the step, unless the step continues on error.
+- The pass loop's value passes through `TsInstallSWUpdate!0x140004e00` (at `0x1400052f7` and `0x140005403`) to `wmain`, and the process exits with it (`TsInstallSWUpdate!0x140005428`, at `0x140005f08` and `0x140006116`). A failed update therefore fails the step, unless the step continues on error.
 - After six passes with updates still missing, the step succeeds (`TsInstallSWUpdate!0x140004698`, at `0x140004ceb`).
 - `HD` means a reboot into the installed OS, as in `smsboot.exe /target:HD` ([MDT 8450 binaries reference](mdt-8450-binaries.md#reboots)) (inferred).
 
 ### Logs
 
-- The step logs under the component `InstallSWUpdate`. Its first line is `=======================[ tsinstallswupdate.exe ] =======================` (`TsInstallSWUpdate!0x140005428`). These lines go to `smsts.log` (inferred).
+- The step sets up its logging with the name `InstallSWUpdate`. Its first line is `=======================[ tsinstallswupdate.exe ] =======================` (`TsInstallSWUpdate!0x140005428`). These lines go to `smsts.log` (inferred).
 - When the step starts a scan or an install job, it names the client logs to read: `UpdatesDeployment.log`, `UpdatesHandler.log`, `UpdatesStore.log`, `wuahandler.log`, and `WindowsUpdate.log` (`TsInstallSWUpdate!0x140009ce0`, `TsInstallSWUpdate!0x1400075e8`).
 
 ## PXE responder
@@ -408,7 +409,7 @@ The service answers DHCPv6 SOLICIT and REQUEST messages that ask for option 59. 
 | A pending reboot sets `SMSTSRebootRequested` and `SMSTSRetryRequested`, and the step exits 0. MDT's script does the same | The action returns `Reboot { rerun: true }` while an update waits for a reboot. See [State on disk and resume](../architecture.md#state-on-disk-and-resume) |
 | A failed update fails the step at once with the failure's HRESULT. MDT's script reboots and tries again instead | No decision now on which behavior deployarr takes. Either way, the step result lists each update with its result code and HRESULT |
 | After six passes with updates still missing, the step succeeds. MDT's script fails its eighth pass with 9902, but MDT's templates continue on error | When the action stops at its pass limit, its result lists the updates still missing. No decision now on whether that fails the step or only warns |
-| Every wait has a limit or a retry count, except the wait for an install job | Each phase of the action, which are the search, the download, and the install, has a time limit that a setting can change. When one passes, the step fails with a timeout error |
+| A scan waits at most an hour and a busy client gets 30 tries a minute apart, but the wait for an install job has no limit | The search, the download, and the install each have a time limit that a setting can change. When one passes, the step fails with a timeout error |
 | The step saves its job ID, so a run after an unexpected restart reconnects to the job instead of starting another | An action that a crash interrupts runs again from a new search, which finds only the updates still missing, so it needs no job ID (inferred). See [State on disk and resume](../architecture.md#state-on-disk-and-resume) |
 | The step's own log says little about each update and points to five client logs | The agent log records each update found, whether it was installed or skipped and why, and its result, as MDT's log does |
 | The 2509 `IsUEFI` enables the privilege first, but reports BIOS when it cannot enable it | No change. The agent already calls `GetFirmwareType` and uses the firmware variable check only as a fallback |
