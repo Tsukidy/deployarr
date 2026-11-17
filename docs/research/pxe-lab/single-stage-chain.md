@@ -130,7 +130,7 @@ The table lists every RRQ in order, from the prototype log. The capture holds th
 | 32 | 10:40:02.352 | `\EFI\Microsoft\Boot\Policies\UnlockToken.pol` | `tsize=0` | ERROR 1 File not found |
 
 - RRQs 1 and 2 come from OVMF. It asks for `blksize` 1468 and `windowsize` 4, and the prototype grants both.
-- RRQs 3 to 32 come from `bootmgfw.efi`. Every path it sends starts with `\`, including the option 252 path, which arrives as `\boot\uefi.bcd`.
+- RRQs 3 to 31 come from `bootmgfw.efi`, and RRQ 32 from the `winload.efi` that it starts (inferred). Every path in RRQs 3 to 32 starts with `\`, including the option 252 path, which arrives as `\boot\uefi.bcd`.
 - `bootmgfw.efi` asks for `blksize` 1456 and never for `windowsize`, so each of its transfers runs with a window of 1. The transfer of `boot.wim` sent 393,333 blocks with no retransmits.
 - `bootmgfw.efi` downloads its own file again, in RRQ 23. The log does not show why.
 - The BCD sets `timeout` 30 (`New-BcdStores.ps1` line 73), but the requests after the BCD follow without a pause. The store has one loader in `displayorder` (line 97).
@@ -154,7 +154,7 @@ Frames 1 to 7 of [`single-stage-chain-bios-dhcp.txt`](captures/single-stage-chai
 - The ROM takes the lease `10.41.0.192` from dnsmasq on port 67, then sends its boot file REQUEST from `10.41.0.192:68` to port 4011.
 - The prototype's ACK in frame 7 goes to `10.41.0.192:68`. It has the boot file `boot\x64\pxeboot.n12` and option 252 = `boot\bios.bcd`. It copies the broadcast flag, `0x8000`, from the REQUEST in frame 6.
 
-Frames 38 to 41 are WinPE's own DISCOVER, OFFER, REQUEST, and ACK, with option 60 `MSFT 5.0` and no option 93. The prototype logs them as `dhcp-ignored` with `reason=no-option-93`, and dnsmasq gives WinPE `10.41.0.192` again.
+Frames 38 to 41 are WinPE's own DHCP exchange with dnsmasq. WinPE's DISCOVER in frame 38 and REQUEST in frame 40 carry option 60 `MSFT 5.0` and no option 93. The prototype logs those two as `dhcp-ignored` with `reason=no-option-93`. dnsmasq's OFFER in frame 39 and ACK in frame 41 give WinPE `10.41.0.192` again.
 
 ### TFTP requests
 
@@ -176,8 +176,8 @@ The capture holds the same 13 RRQs in the same order.
 | 12 | 10:42:34.920 | `\boot\x64\boot.wim` | `tsize=0,blksize=1456` | Complete, 572691590 bytes in 89.254 seconds |
 | 13 | 10:44:04.443 | `\EFI\Microsoft\Boot\Policies\UnlockToken.pol` | `tsize=0` | ERROR 1 File not found |
 
-- RRQ 1 comes from the iPXE ROM, and RRQ 2 from `pxeboot.n12`. `pxeboot.n12` asks for `boot\x64\bootmgr.exe`, in the folder of its own boot file.
-- RRQs 3 to 13 come from `bootmgr.exe`. Its first request is the option 252 path, and it never asks for `\boot\x64\BCD`.
+- RRQ 1 comes from the iPXE ROM. RRQ 2 comes from `pxeboot.n12` (inferred). `pxeboot.n12` asks for `boot\x64\bootmgr.exe`, in the folder of its own boot file.
+- RRQs 3 to 12 come from `bootmgr.exe`, and RRQ 13 from the `winload.exe` that it starts (inferred). The first request of `bootmgr.exe` is the option 252 path, and it never asks for `\boot\x64\BCD`.
 - `bootmgr.exe` uses the same `blksize` 1456 and no `windowsize` as `bootmgfw.efi`. The transfer of `boot.wim` sent 393,333 blocks with no retransmits.
 
 ### End state
@@ -233,6 +233,9 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/single-stage-chain-<vm>.
 
 ## What is inferred
 
+- The program that sent each RRQ after the firmware's or the ROM's download is inferred, wherever this page names one. The capture and the prototype log record each RRQ's client port and time, but they name no program.
+  - RRQs 3 to 31 on `uefi` come from `bootmgfw.efi`. RRQ 2 on `bios` comes from `pxeboot.n12`, and RRQs 3 to 12 come from `bootmgr.exe`. Each program's first request follows the end of its own download, and a program cannot run before it is downloaded.
+  - RRQ 32 on `uefi` and RRQ 13 on `bios`, for `\EFI\Microsoft\Boot\Policies\UnlockToken.pol`, come from the OS loader that the boot manager starts, `winload.efi` or `winload.exe`. Each follows the end of the `boot.wim` download. The two-stage page's [What is inferred](two-stage-chain.md#what-is-inferred) section records a `strings -el` check of the same `boot.wim`. It finds that path in `winload.efi` and `winload.exe`, and finds only `SecureBootUnlockToken.pol` in `bootmgfw.efi` and `bootmgr.exe`.
 - `bootmgfw.efi` reads the BCD path from option 252 of the ACK that booted it (inferred). It asks for exactly that path, with a leading `\`, after its own folder's `BCD` fails. No other source on the network names `uefi.bcd`. The `bios` run supports the same reading for `bootmgr.exe`.
 - The order of the two UEFI requests suggests that `bootmgfw.efi` tries `BCD` beside itself first and option 252 second (inferred). No run served a file at `\boot\x64\BCD`, so the page does not show which store wins when both exist.
 - The `\EFI\Microsoft\Boot\*` requests, `\boot\x64\boot.stl`, and `\hiberfil.sys` are probes for files that a boot from disk would have (inferred from their names). Both boots go on after File not found. The [ConfigMgr 2509 reference](../configmgr-2509.md#tftp-server) says that `sccmpxe.exe` does not log misses for `EFI\Microsoft\Boot\*`, `smsboot\*\x*\BCD`, and `hiberfil.sys`, and infers that these are the boot manager's probes. In these runs the boot managers request paths of all three shapes.
