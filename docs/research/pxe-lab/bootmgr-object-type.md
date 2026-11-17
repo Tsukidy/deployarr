@@ -86,7 +86,7 @@ The runs use the single stage because #27 is their control. Its runs used the sa
 | `/usr/share/OVMF/OVMF_VARS_4M.ms.fd` | `d2e3a79d28c1c93286048a3e876570882dab4538d6a842ab2e0e53265cbcc983` |
 | `/usr/share/seabios/bios-256k.bin` | `e26615f9ad430328f49ca105e570b2dc4490a08a34ea73d27cae8b809a30ee06` |
 
-The boot files come from index 1 of `sources\boot.wim` in `Windows11_Client_x64_en-us_26300_9457.iso`, whose SHA-256 is `bd4307df32bc8af33b39ccecb1174aeb345386630f89a2b86c7a4e36b55ea650`. Index 1 is Microsoft Windows PE (amd64), build 26100.9457. The issuer is the `Issuer :` line under `Signer's certificate:` in the output of `osslsigncode verify`. The version is the file version in each file's version resource.
+The boot files come from index 1 of `sources\boot.wim` in `Windows11_Client_x64_en-us_26300_9457.iso`, whose SHA-256 is `bd4307df32bc8af33b39ccecb1174aeb345386630f89a2b86c7a4e36b55ea650`. Index 1 is Microsoft Windows PE (amd64), build 26100.9457. The issuer is the `Issuer :` line under `Signer's certificate:` in the output of `osslsigncode verify`. The version is the file version in each file's version resource. `boot.wim` has no version resource, so its row gives the version and build of index 1 from the image metadata.
 
 | File in `~/deployarr-lab/tftp/2011` | Bytes | SHA-256 | Issuer | Version |
 | --- | --- | --- | --- | --- |
@@ -141,14 +141,14 @@ The table lists every RRQ in order, from the prototype log. The capture holds th
 | 31 | 19:07:33.840 | `\boot\x64\boot.wim` | `tsize=0,blksize=1456` | Complete, 572691590 bytes in 51.118 seconds |
 | 32 | 19:08:25.208 | `\EFI\Microsoft\Boot\Policies\UnlockToken.pol` | `tsize=0` | ERROR 1 File not found |
 
-- The first file that `bootmgfw.efi` loads is the store, after `\boot\x64\BCD` gets File not found. It then loads the font, `boot.sdi`, and `boot.wim` that the store names.
+- The first file that `bootmgfw.efi` loads is the store, after `\boot\x64\BCD` gets File not found (inferred). See [What is inferred](#what-is-inferred). It then loads the font, `boot.sdi`, and `boot.wim` that the store names.
 - The transfer of `boot.wim` sent 393,333 blocks with a window of 1 and no retransmits.
 
 ### End state
 
 `vm.sh` started at 19:07:23.128. The screenshot written at 19:08:37.57 shows a window titled `X:\windows\system32\cmd.exe - startnet.cmd` running `wpeinit`, so WinPE started at most 74.4 seconds after `vm.sh` did. A second later the window shows a command prompt.
 
-The lab host then stood still from shortly after 19:09:15 until 19:15:05, during a power event. The journal has no entry in that time, and `systemd-resolved` logs `Clock change detected` at 19:15:05. QEMU, swtpm, the prototype, and `dumpcap` kept running through it. Every boot event above came before it. Commands typed into the WinPE window through QEMU's `sendkey` after it gave these results. A first try of the three `reg query` commands had doubled backslashes and printed `ERROR: Invalid key name.`
+The lab host then stood still from shortly after 19:09:15 until 19:15:05. The owner reported a power event at that time. The journal has no entry in that time, and `systemd-resolved` logs `Clock change detected` at 19:15:05. `uptime -s` moved from 18:10:05 to 18:15:55, so the host's uptime missed about 350 seconds. QEMU, swtpm, the prototype, and `dumpcap` survived it without a restart. Every boot event above came before it. Commands typed into the WinPE window through QEMU's `sendkey` after it gave these results:
 
 - `ver` printed `Microsoft Windows [Version 10.0.26100.9457]`.
 - `reg query hklm\system\currentcontrolset\control\secureboot\state` printed `UEFISecureBootEnabled REG_DWORD 0x1`.
@@ -164,15 +164,15 @@ The lab host then stood still from shortly after 19:09:15 until 19:15:05, during
 | Frame | Time | Packet |
 | --- | --- | --- |
 | 1 | 19:17:58.060 | The ROM's DISCOVER, xid `9395630f`, option 93 = 0 |
-| 2 | 19:17:58.061 | The prototype's OFFER, with no boot file |
-| 3 | 19:17:59.088 | The ROM's second DISCOVER |
+| 2 | 19:17:58.060 | The prototype's OFFER, with no boot file |
+| 3 | 19:17:59.087 | The ROM's second DISCOVER |
 | 4 | 19:17:59.088 | The prototype's OFFER again |
-| 5 and 6 | 19:18:01.068 | Two OFFERs of `10.41.0.192` from dnsmasq |
+| 5 and 6 | 19:18:01.067 | Two OFFERs of `10.41.0.192` from dnsmasq |
 | 7 | 19:18:01.070 | The ROM's lease REQUEST |
 | 8 | 19:18:01.070 | dnsmasq's ACK |
-| 9 | 19:18:01.071 | The ROM's boot file REQUEST, from `10.41.0.192:68` to port 4011 |
+| 9 | 19:18:01.070 | The ROM's boot file REQUEST, from `10.41.0.192:68` to port 4011 |
 | 10 | 19:18:01.071 | The prototype's ACK to `10.41.0.192:68`, with the boot file `boot\x64\pxeboot.n12` and option 252 = `boot\bios-bootmgr-10200002.bcd` |
-| 41 to 44 | 19:19:47.956 to 19:19:48.470 | WinPE's own DHCP exchange with dnsmasq. WinPE's DISCOVER and REQUEST carry option 60 `MSFT 5.0` and no option 93. |
+| 41 to 44 | 19:19:47.955 to 19:19:48.469 | WinPE's own DHCP exchange with dnsmasq. WinPE's DISCOVER and REQUEST carry option 60 `MSFT 5.0` and no option 93. |
 
 As on `uefi`, dnsmasq's first OFFER came 3.0 seconds after the first DISCOVER. The ROM sent its DISCOVER again after 1.0 seconds, and the prototype answered both. The full capture has 3 packets more than #27's, and frames 3, 4, and 6 are the extra DHCP packets.
 
@@ -196,7 +196,7 @@ The capture holds the same 13 RRQs in the same order.
 | 12 | 19:18:03.075 | `\boot\x64\boot.wim` | `tsize=0,blksize=1456` | Complete, 572691590 bytes in 91.496 seconds |
 | 13 | 19:19:34.853 | `\EFI\Microsoft\Boot\Policies\UnlockToken.pol` | `tsize=0` | ERROR 1 File not found |
 
-- The first file that `bootmgr.exe` loads is the store. It then loads the font, `boot.sdi`, and `boot.wim` that the store names.
+- The first file that `bootmgr.exe` loads is the store (inferred). See [What is inferred](#what-is-inferred). It then loads the font, `boot.sdi`, and `boot.wim` that the store names.
 - The transfer of `boot.wim` sent 393,333 blocks with a window of 1 and no retransmits.
 
 ### End state
@@ -297,7 +297,7 @@ sudo dumpcap -i br-lab -f 'udp and udp[8:2] != 3' -w - > ~/deployarr-lab/capture
 timeout 1800 $LAB/tools/lab/vm.sh <vm> -display none -monitor unix:/tmp/lab-<vm>-mon.sock,server,nowait
 ```
 
-The screenshots came from the HMP command `screendump <file>.png -f png` on the monitor socket, about once a second. The WinPE commands went in one key at a time with the HMP command `sendkey`. After the last packet, `sudo pkill -INT -x dumpcap` stopped the capture, the HMP command `quit` stopped the VM, and `sudo pkill -INT` stopped the prototype.
+The screenshots came from the HMP command `screendump <file>.png -f png` on the monitor socket, about once a second. The WinPE commands went in one key at a time with the HMP command `sendkey`. After the last packet, `sudo pkill -INT -x dumpcap` stopped the capture, the HMP command `quit` stopped the VM, and `sudo pkill -INT -f '^python3 -B .*pxe_prototype.py'` stopped the prototype.
 
 These commands make the committed files:
 
@@ -316,7 +316,8 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/bootmgr-object-type-<vm>
 ## Not covered
 
 - The `uefi2023` VM, whose `db` holds only the Windows UEFI CA 2023, and the 2023-signed boot files. [#32](https://github.com/Tsukidy/deployarr/issues/32) runs those.
-- The two-stage chain with a `0x10200002` store. The `0x10100002` stores boot in both chains, as #28 records.
+- The two-stage chain with a `0x10200002` store. `boot/uefi.bcd` and `boot/bios.bcd`, with `0x10100002`, boot in both chains, as #28 records.
+- The two-stage chain with the `-nopath` stores. #29 boots them only in the single stage.
 - A store with no loader `path` and `0x10200002`.
 - A `0x10200002` store that Windows writes, through `BcdStore.CreateObject`, and ConfigMgr's own store.
 - Physical PCs and other firmware.
