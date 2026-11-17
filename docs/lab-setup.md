@@ -101,9 +101,21 @@ It prints four certificates: `Microsoft Corporation KEK CA 2011`, `Microsoft Cor
 sudo tools/lab/network.sh up
 ```
 
-The script creates the bridge `br-lab` with the address `10.41.0.1/24`, and one tap device for each VM. It starts a dnsmasq that hands out `10.41.0.100` to `10.41.0.199` and does nothing else. It has no DNS and no PXE. dnsmasq holds port 67 only on `br-lab`, so the PXE prototype can share the port.
+The script creates the bridge `br-lab` with the address `10.41.0.1/24`, and one tap device for each VM. It starts a dnsmasq that hands out `10.41.0.100` to `10.41.0.199` and does nothing else. It has no DNS and no PXE. It gives each VM `10.41.0.1` as its gateway.
 
-The last lines show `dnsmasq is running` and `0.0.0.0%br-lab:67`. The network does not survive a reboot. Run the command again after each reboot. To remove the network, run `sudo tools/lab/network.sh down`.
+dnsmasq runs in its own network namespace, `deployarr-lab-dhcp`. A veth pair joins the namespace to `br-lab`. Its end on the bridge is `veth-lab-dhcp`, and its end in the namespace is `dhcp0`, with the address `10.41.0.2`. So dnsmasq holds UDP port 67 only in that namespace, and any program on the lab host, such as the PXE prototype or deployarr, can bind port 67 on `br-lab`. [DHCP](architecture.md#dhcp) says why deployarr needs that.
+
+The last lines show `dnsmasq is running in namespace deployarr-lab-dhcp` and `0.0.0.0%dhcp0:67`. dnsmasq writes its log to `/run/deployarr-lab/dnsmasq.log` and its leases to `/run/deployarr-lab/dnsmasq.leases`. Both belong to root:
+
+```bash
+sudo tail /run/deployarr-lab/dnsmasq.log
+```
+
+```bash
+sudo cat /run/deployarr-lab/dnsmasq.leases
+```
+
+The network does not survive a reboot. Run the command again after each reboot. Running it again also moves a dnsmasq that an earlier version of the script started on the lab host into the namespace. To remove the network, run `sudo tools/lab/network.sh down`. It removes the namespace and the veth pair too.
 
 ## 5. Check the lab
 
@@ -260,7 +272,7 @@ To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. Th
 | The check stops at `dumpcap or the PXE prototype failed to start` | Read `dumpcap.log` and `prototype.out` in the evidence folder. Often another program holds UDP port 69 or 4011, such as a PXE prototype that still runs. `sudo ss -ulpn 'sport = :69 or sport = :4011'` shows it. |
 | `dumpcap` says that the file `could not be opened: Permission denied` | `dumpcap` cannot open a file in your home folder. Add `-w -` and redirect its output to the file, as in [Run an experiment](#run-an-experiment). |
 | `tshark` says `You don't have permission to read the file` | The AppArmor profile for `tshark` blocks the path. Give the file on standard input with `tshark -r - < <file>`, as in [Run an experiment](#run-an-experiment). |
-| `network.sh up` stops at dnsmasq, or `ss` shows another program on port 67 | Another DHCP server holds port 67 on every interface. Common ones are the `dnsmasq` service and libvirt's `default` network. Stop it, or bind it to its own interface as the [prototype README](../tools/pxe-prototype/README.md#share-port-67-with-dnsmasq) says. |
+| The PXE prototype cannot bind port 67, or `sudo ss -ulpn 'sport = :67'` on the lab host shows a program | Another DHCP server holds port 67 in the lab host's network stack. The lab's dnsmasq runs in its own namespace and never shows here. Common ones are the `dnsmasq` service and libvirt's `default` network. Stop it, or bind it to its own interface as the [prototype README](../tools/pxe-prototype/README.md#share-port-67-with-dnsmasq) says. |
 | The check fails on `dnsmasq gave an address` for every VM | A firewall drops DHCP on the bridge. If `sudo ufw status` says `active`, run `sudo ufw allow in on br-lab`. |
 | The check fails on `host CPU` | The line names each processor feature that the host's CPU lacks. The VMs use the host's CPU model, so Windows 11 in a lab VM lacks the same features. Use a host whose CPU has every feature in the [Test lab](roadmap.md#test-lab) section. |
 | The check fails on option 97 for `bios` | The VM did not get the SMBIOS setting. Check that `tools/lab/vm.sh` is unchanged. |
