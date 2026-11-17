@@ -9,7 +9,8 @@
 //! `TsCore!0x1801a96c0` names the function in MDT 8450's `TsCore.dll` that a
 //! rule comes from, as `docs/research/mdt-8450-binaries.md#conditions` does.
 
-use alloc::string::String;
+use alloc::borrow::Cow;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::fmt;
@@ -222,52 +223,18 @@ pub enum ConditionError {
     /// A `registry` comparison has empty text as its data. MDT makes this an
     /// error (`TsCore!0x1801a6bec`).
     RegistryEmptyData { key: Template },
-    /// A `registry` value has a type that the condition cannot compare with
-    /// its data.
+    /// A `registry` comparison found a value of a type it does not read, such
+    /// as `REG_BINARY`. `reg_type` is the type's number.
     RegistryType {
         key: Template,
         value: String,
-        found: RegType,
+        reg_type: u32,
     },
     /// A `file` condition compares the version of a file that has no version
     /// resource.
     NoFileVersion { path: Template },
     /// A probe could not answer.
     Probe { kind: ProbeKind, error: ProbeError },
-}
-
-/// The type of a registry value, for [`ConditionError::RegistryType`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RegType {
-    Dword,
-    Qword,
-    Sz,
-    ExpandSz,
-    Other(u32),
-}
-
-impl RegType {
-    fn of(value: &RegValue) -> Self {
-        match value {
-            RegValue::Dword(_) => Self::Dword,
-            RegValue::Qword(_) => Self::Qword,
-            RegValue::Sz(_) => Self::Sz,
-            RegValue::ExpandSz(_) => Self::ExpandSz,
-            RegValue::Other(number) => Self::Other(*number),
-        }
-    }
-}
-
-impl fmt::Display for RegType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Dword => f.write_str("`REG_DWORD`"),
-            Self::Qword => f.write_str("`REG_QWORD`"),
-            Self::Sz => f.write_str("`REG_SZ`"),
-            Self::ExpandSz => f.write_str("`REG_EXPAND_SZ`"),
-            Self::Other(number) => write!(f, "{number}"),
-        }
-    }
 }
 
 impl fmt::Display for ConditionError {
@@ -300,9 +267,13 @@ impl fmt::Display for ConditionError {
                 "a `registry` comparison under `{}` has empty data to compare against",
                 key.as_str()
             ),
-            Self::RegistryType { key, value, found } => write!(
+            Self::RegistryType {
+                key,
+                value,
+                reg_type,
+            } => write!(
                 f,
-                "the registry value `{value}` under `{}` has type {found}, which this condition's data cannot compare with",
+                "the registry value `{value}` under `{}` has type {reg_type}. A `registry` condition reads only `REG_DWORD`, `REG_QWORD`, `REG_SZ`, and `REG_EXPAND_SZ` values",
                 key.as_str()
             ),
             Self::NoFileVersion { path } => {
@@ -475,25 +446,28 @@ impl Evaluator<'_> {
         else {
             return Ok(false);
         };
-        match (&found, op, data) {
-            (RegValue::Dword(number), Op::Compare(op), RegData::Integer(data)) => {
-                Ok(compare(op, u64::from(*number).cmp(data)))
+        // Both sides compare by the `var` rules, whatever the value's type. A
+        // number is its decimal text.
+        let text = match found {
+            RegValue::Dword(number) => number.to_string(),
+            RegValue::Qword(number) => number.to_string(),
+            RegValue::Sz(text) | RegValue::ExpandSz(text) => text,
+            RegValue::Other(reg_type) => {
+                return Err(ConditionError::RegistryType {
+                    key: key.clone(),
+                    value: name.into(),
+                    reg_type,
+                });
             }
-            (RegValue::Qword(number), Op::Compare(op), RegData::Integer(data)) => {
-                Ok(compare(op, number.cmp(data)))
-            }
-            (RegValue::Sz(text) | RegValue::ExpandSz(text), op, RegData::String(data)) => {
-                Ok(match op {
-                    Op::Compare(op) => compare(op, cmp_ignore_case(text, data)),
-                    Op::Like => like(text, data),
-                })
-            }
-            _ => Err(ConditionError::RegistryType {
-                key: key.clone(),
-                value: name.into(),
-                found: RegType::of(&found),
-            }),
-        }
+        };
+        let data = match data {
+            RegData::String(text) => Cow::Borrowed(text.as_str()),
+            RegData::Integer(number) => Cow::Owned(number.to_string()),
+        };
+        Ok(match op {
+            Op::Compare(op) => compare(op, compare_text(&text, &data)),
+            Op::Like => like(&text, &data),
+        })
     }
 
     fn file(
@@ -597,7 +571,9 @@ fn compare_time(comparison: &Comparison<Timestamp>, found: OffsetDateTime) -> bo
 }
 
 /// Orders two texts as integers when both are integers, and otherwise as text
-/// without regard to case (`TsCore!0x1801a96c0`).
+/// without regard to case. These are the `var` rules (`TsCore!0x1801a96c0`).
+/// A `registry` comparison follows them too, as `RegData` in
+/// `docs/architecture.md#parameter-types` says.
 fn compare_text(left: &str, right: &str) -> Ordering {
     match (Integer::parse(left), Integer::parse(right)) {
         (Some(left), Some(right)) => left.cmp(&right),

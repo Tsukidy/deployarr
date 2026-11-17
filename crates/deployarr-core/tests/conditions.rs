@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use deployarr_core::condition::{Condition, FileVersion, MsiProduct};
 use deployarr_core::evaluate::{
-    ConditionError, Probe, ProbeError, ProbeKind, RegKey, RegType, RegValue, WmiError, evaluate,
+    ConditionError, Probe, ProbeError, ProbeKind, RegKey, RegValue, WmiError, evaluate,
 };
 use deployarr_core::non_empty::NonEmpty;
 use deployarr_core::store::{Sensitivity, SetSource, Vars};
@@ -1040,7 +1040,8 @@ fn mdt_registry_exists_with_a_value_tests_the_value() {
 }
 
 /// MDT compares a `REG_DWORD` value as an unsigned number
-/// (`TsCore!0x1801a6bec`).
+/// (`TsCore!0x1801a6bec`). By the `var` rules, a number value and integer data
+/// compare as integers too.
 #[test]
 fn mdt_registry_compares_dword_values_as_numbers() {
     let machine = Machine::new()
@@ -1066,8 +1067,9 @@ fn mdt_registry_compares_dword_values_as_numbers() {
 }
 
 /// MDT compares a `REG_SZ` value as text without regard to case, and a
-/// `REG_EXPAND_SZ` value after it expands it (`TsCore!0x1801a6bec`). Here the
-/// probe has expanded `%SystemRoot%\System32` already.
+/// `REG_EXPAND_SZ` value after it expands it (`TsCore!0x1801a6bec`). The `var`
+/// rules do the same for text that is not an integer. Here the probe has
+/// expanded `%SystemRoot%\System32` already.
 #[test]
 fn mdt_registry_compares_string_values_without_regard_to_case() {
     let machine = Machine::new()
@@ -1116,14 +1118,15 @@ fn mdt_registry_comparing_against_empty_data_is_an_error() {
 }
 
 /// "Registry conditions accept only ... `REG_DWORD`, `REG_SZ`, and
-/// `REG_EXPAND_SZ` values" (`TsCore!0x1801a6bec`). A comparison with a value
-/// of another type, such as `REG_BINARY` or `REG_MULTI_SZ`, fails to evaluate.
+/// `REG_EXPAND_SZ` values" (`TsCore!0x1801a6bec`). deployarr adds `REG_QWORD`.
+/// A comparison with a value of another type, such as `REG_BINARY` or
+/// `REG_MULTI_SZ`, fails to evaluate.
 #[test]
 fn mdt_registry_comparing_another_value_type_is_an_error() {
     let machine = Machine::new()
         .value(HKLM_CONTOSO, "Blob", RegValue::Other(3))
         .value(HKLM_CONTOSO, "Lines", RegValue::Other(7));
-    for (value, number) in [("Blob", 3), ("Lines", 7)] {
+    for (value, reg_type) in [("Blob", 3), ("Lines", 7)] {
         for test in [
             json!({ "equals": 1 }),
             json!({ "equals": "1" }),
@@ -1140,7 +1143,7 @@ fn mdt_registry_comparing_another_value_type_is_an_error() {
                 ConditionError::RegistryType {
                     key: Template::new(HKLM_CONTOSO),
                     value: value.into(),
-                    found: RegType::Other(number),
+                    reg_type,
                 },
                 "{value}"
             );
@@ -1148,39 +1151,94 @@ fn mdt_registry_comparing_another_value_type_is_an_error() {
     }
 }
 
-/// Integer data compares with a `REG_DWORD` or `REG_QWORD` value, and text
-/// data with a `REG_SZ` or `REG_EXPAND_SZ` value. Any other pairing fails to
-/// evaluate.
+/// `RegData` is "compared by the `Var` rules" (`docs/architecture.md`, Core
+/// data shapes). Both sides are text: a `REG_DWORD` or `REG_QWORD` value and
+/// integer data are their decimal numbers. They compare as integers when both
+/// are integers, and otherwise as text without regard to case. `like` matches
+/// the value's text, whatever its type.
 #[test]
-fn registry_data_of_the_other_kind_is_an_error() {
+fn registry_compares_data_and_value_by_the_var_rules() {
     let machine = Machine::new()
-        .value(HKLM_CONTOSO, "Build", RegValue::Sz("26100".into()))
-        .value(HKLM_CONTOSO, "Count", RegValue::Dword(5))
-        .value(HKLM_CONTOSO, "Big", RegValue::Qword(5));
-    let cases = [
-        ("Build", json!({ "greater_equal": 26100 }), RegType::Sz),
-        ("Count", json!({ "equals": "5" }), RegType::Dword),
-        ("Count", json!({ "like": "5" }), RegType::Dword),
-        ("Count", json!({ "like": 5 }), RegType::Dword),
-        ("Big", json!({ "equals": "5" }), RegType::Qword),
-    ];
-    for (value, test, found) in cases {
-        let text = test.to_string();
-        let error = run(
-            registry(HKLM_CONTOSO, Some(value), test),
-            &Vars::new(),
-            &machine,
+        .value(
+            r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+            "CurrentBuildNumber",
+            RegValue::Sz("26100".into()),
         )
-        .unwrap_err();
-        assert_eq!(
-            error,
-            ConditionError::RegistryType {
-                key: Template::new(HKLM_CONTOSO),
-                value: value.into(),
-                found,
-            },
-            "{value} {text}"
-        );
+        .value(HKLM_CONTOSO, "Old", RegValue::Sz("9600".into()))
+        .value(HKLM_CONTOSO, "Padded", RegValue::ExpandSz("026100".into()))
+        .value(HKLM_CONTOSO, "Edition", RegValue::Sz("Professional".into()))
+        .value(HKLM_CONTOSO, "Count", RegValue::Dword(5))
+        .value(HKLM_CONTOSO, "Big", RegValue::Qword(26100));
+    let build = |test| {
+        registry(
+            r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion",
+            Some("CurrentBuildNumber"),
+            test,
+        )
+    };
+    let contoso = |value, test| registry(HKLM_CONTOSO, Some(value), test);
+    let cases = [
+        // `REG_SZ` "26100" against `Integer(26100)`.
+        (build(json!({ "greater_equal": 26100 })), true),
+        (build(json!({ "equals": 26100 })), true),
+        (build(json!({ "less": 26100 })), false),
+        (build(json!({ "greater": 22631 })), true),
+        // `REG_SZ` "9600" against `String("26100")` compares as integers.
+        (contoso("Old", json!({ "less": "26100" })), true),
+        (contoso("Old", json!({ "greater": "26100" })), false),
+        (contoso("Old", json!({ "less": 26100 })), true),
+        (contoso("Padded", json!({ "equals": 26100 })), true),
+        // A number value against text data.
+        (contoso("Count", json!({ "equals": "5" })), true),
+        (contoso("Count", json!({ "equals": "005" })), true),
+        (contoso("Count", json!({ "less": "10" })), true),
+        (contoso("Big", json!({ "equals": "26100" })), true),
+        // One side that is not an integer makes both text.
+        (contoso("Count", json!({ "equals": "five" })), false),
+        (contoso("Count", json!({ "less": "five" })), true),
+        (contoso("Edition", json!({ "greater": 5 })), true),
+        (contoso("Edition", json!({ "equals": 5 })), false),
+        // `like` matches the value's text.
+        (contoso("Count", json!({ "like": "5" })), true),
+        (contoso("Count", json!({ "like": 5 })), true),
+        (contoso("Big", json!({ "like": "261*" })), true),
+        (contoso("Big", json!({ "like": "2610?" })), true),
+        (contoso("Big", json!({ "like": "9*" })), false),
+        (build(json!({ "like": "26???" })), true),
+    ];
+    for (json, expected) in cases {
+        let text = json.to_string();
+        assert_eq!(check(json, &Vars::new(), &machine), expected, "{text}");
+    }
+}
+
+/// MDT picks the comparison by the value's real type (`TsCore!0x1801a6bec`). It
+/// compares a `REG_SZ` or `REG_EXPAND_SZ` value as text without regard to
+/// case, never as integers, so it finds "9600" greater than "26100" and
+/// "026100" unequal to "26100". deployarr applies the `var` rules to both
+/// sides, so two integers compare as integers whatever the value's type.
+#[test]
+fn difference_registry_compares_by_the_var_rules_not_by_the_value_type() {
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Old", RegValue::Sz("9600".into()))
+        .value(HKLM_CONTOSO, "Padded", RegValue::Sz("026100".into()));
+    let cases = [
+        (
+            registry(HKLM_CONTOSO, Some("Old"), json!({ "greater": "26100" })),
+            false,
+        ),
+        (
+            registry(HKLM_CONTOSO, Some("Old"), json!({ "less": "26100" })),
+            true,
+        ),
+        (
+            registry(HKLM_CONTOSO, Some("Padded"), json!({ "equals": "26100" })),
+            true,
+        ),
+    ];
+    for (json, expected) in cases {
+        let text = json.to_string();
+        assert_eq!(check(json, &Vars::new(), &machine), expected, "{text}");
     }
 }
 
@@ -1205,21 +1263,28 @@ fn difference_registry_reads_qword_values() {
 
 /// MDT's registry condition has no branch for `Like`, so it is true for every
 /// value that exists, whatever the pattern (`TsCore!0x1801a6bec`,
-/// `TsCore!0x1801ab054`). deployarr matches the pattern against a string
-/// value, as a `var` condition does.
+/// `TsCore!0x1801ab054`). deployarr matches the pattern against the value's
+/// text, as a `var` condition does.
 #[test]
 fn difference_registry_like_matches_wildcards() {
-    let machine =
-        Machine::new().value(HKLM_CONTOSO, "Edition", RegValue::Sz("Professional".into()));
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Edition", RegValue::Sz("Professional".into()))
+        .value(HKLM_CONTOSO, "Build", RegValue::Dword(26100));
     let cases = [
-        ("Pro*", true),
-        ("pro?essional", true),
-        ("Enterprise*", false),
-        ("*", true),
+        ("Edition", "Pro*", true),
+        ("Edition", "pro?essional", true),
+        ("Edition", "Enterprise*", false),
+        ("Edition", "*", true),
+        ("Build", "26*", true),
+        ("Build", "19*", false),
     ];
-    for (pattern, expected) in cases {
-        let json = registry(HKLM_CONTOSO, Some("Edition"), json!({ "like": pattern }));
-        assert_eq!(check(json, &Vars::new(), &machine), expected, "{pattern}");
+    for (value, pattern, expected) in cases {
+        let json = registry(HKLM_CONTOSO, Some(value), json!({ "like": pattern }));
+        assert_eq!(
+            check(json, &Vars::new(), &machine),
+            expected,
+            "{value} {pattern}"
+        );
     }
 }
 
