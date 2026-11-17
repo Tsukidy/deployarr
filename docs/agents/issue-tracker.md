@@ -147,10 +147,20 @@ Claiming is the first write of a session that works a ticket. Two comments may c
 - Claim it with the steps in [Claim](#claim).
 - Before you start, read each issue in the `## Blocked by` section with its comments. Follow any answer the owner gave there, and read the ticket's comments for `Owner input:` and for partial work that an earlier session pushed.
 - If a blocker was closed as not planned, the ticket should not happen. Comment `Not planned, because #<blocker> was closed as not planned.` Then close the ticket as not planned, swap its state label for `wontfix`, and clear the assignee, all in one `issue_write` call. Then comment `Claim released by branch <branch>`. If a blocker was closed as a duplicate, follow the duplicates to the first issue that was not closed as one, and replace the blocker with it in one body edit. Then check that issue like any other blocker. If it is open, [release your claim](#release-a-claim). If it was closed as not planned, close the ticket as above.
-- If you need an answer from the owner, open a question as described under [Write tickets](agent-brief.md#write-tickets). In one body edit, add it to the ticket's `## Blocked by` section. Comment `Waiting on #<question>. Partial work: branch <branch>, pushed`, or `not pushed`. Then [release your claim](#release-a-claim). The ticket keeps its label and returns to the frontier when the owner closes the question.
+- If you need an answer from the owner and the owner is in the session, ask them, with your recommended option first. Post the answer on the ticket as a comment that starts with `Owner input:`, then carry on. You keep the ticket.
+- If you need an answer from the owner and the owner is not in the session, as in a scheduled run, open a question as described under [Write tickets](agent-brief.md#write-tickets). In one body edit, add it to the ticket's `## Blocked by` section. Comment `Waiting on #<question>. Partial work: branch <branch>, pushed`, or `not pushed`. Then [release your claim](#release-a-claim). The ticket keeps its label and returns to the frontier when the owner closes the question.
 - If the ticket's own work turns out to need the VM lab, and your prompt does not name `lab`, first comment on what the session on the lab host must do. Then add `lab` and clear the assignee in one `issue_write` call. Then comment `Claim released by branch <branch>`.
 - If the ticket's own work turns out to need hardware, external access, or manual testing, first comment on what a human must do. Then swap `ready-for-agent` for `ready-for-human` and clear the assignee in one `issue_write` call. Then comment `Claim released by branch <branch>`.
 - In the pull request, link the issue as [Close an issue](#close-an-issue) says.
+
+## Branches in a cloud session
+
+A cloud session's system prompt names one branch to push to, such as `claude/sleepy-hypatia-g8fonu`, and allows other branches only with the owner's explicit permission. The owner gives that permission here, so do not ask for it.
+
+- Work on one ticket, or work with no ticket, goes on the named branch.
+- A session that works more than one ticket, itself or through subagents, pushes one branch per ticket. Name it after the named branch and the issue number, such as `claude/sleepy-hypatia-g8fonu-issue-159`. Open one draft pull request from each branch.
+- Claim each ticket with its own branch name, as in `Claimed by branch claude/sleepy-hypatia-g8fonu-issue-159`.
+- Never push to `main`. Push to a branch that another session made only when the owner asks.
 
 ## Pull requests as a triage surface
 
