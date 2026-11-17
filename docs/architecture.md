@@ -109,6 +109,13 @@ pub enum Action {
 	ApplyDrivers { selection: DriverSelection },
 	ApplyUnattend { template: UnattendTemplateId },
 	InstallApplications { apps: AppSelection },   // One(AppId) or FromList(VarName)
+	InstallUpdates {              // full OS only. Windows Update or WSUS. See Windows Update
+		source: UpdateSource,
+		missing: MissingUpdatePolicy,
+		max_passes: NonZeroU8,    // default 7
+		exclude: Vec<UpdateExclusion>,   // default empty
+		timeouts: UpdateTimeouts,
+	},
 	VerifyDrivers { policy: MissingDriverPolicy },
 	CheckReadiness { checks: ReadinessChecks },   // Windows 11 minimums by default
 	ActivateWindows { online: bool },   // full OS only. Installs the product key typed in WinPE
@@ -164,6 +171,9 @@ pub enum RestartTarget { WinPe, InstalledOs }
 pub enum DiskSelector { FirstInternal }   // the default
 pub enum DriverSelection { Auto, Profile, ProfileAll }
 pub enum MissingDriverPolicy { Fail, Warn, Ignore }
+pub enum MissingUpdatePolicy { Fail, Warn, Ignore }      // default Warn
+pub enum UpdateSource { WindowsUpdate, Wsus(WsusUrl) }   // default WindowsUpdate
+pub enum UpdateExclusion { Kb(NonZeroU32), UpdateId(Uuid) }
 pub enum AppSelection { One(AppId), FromList(VarName) }
 
 pub struct ReadinessChecks {
@@ -180,6 +190,12 @@ pub struct DiskCheck { pub min_gb: u32, pub mode: CheckMode }           // decim
 pub struct ProcessorCheck { pub min_cores: u32, pub mode: CheckMode }   // processor cores. Default 2, Fail
 
 pub enum CheckMode { Fail, Warn, Off }
+
+pub struct UpdateTimeouts {          // whole seconds, for one phase of one pass
+	pub search_secs: NonZeroU32,     // default 3600
+	pub download_secs: NonZeroU32,   // default 7200
+	pub install_secs: NonZeroU32,    // default 7200
+}
 
 pub struct Comparison<T> { pub op: CompareOp, pub value: T }
 pub struct FileVersion { pub major: u16, pub minor: u16, pub build: u16, pub revision: u16 }
@@ -199,6 +215,8 @@ pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rul
 - `MemoryCheck`, `DiskCheck`, and `ProcessorCheck` each hold a minimum and a `mode`, so the JSON for one is an object such as `{"min_mib": 4096, "mode": "fail"}`. The `uefi`, `tpm_2_0`, and `secure_boot` checks have no minimum, so each is a bare `CheckMode`, such as `"warn"`.
 - `min_mib` is in mebibytes of 2^20 bytes, so the default 4096 is 4 GiB. `min_gb` is in decimal gigabytes of 10^9 bytes, the unit that disks are sold in, because a disk sold as 64 GB holds less than 64 GiB. `min_cores` counts processor cores.
 - `max_runtime_secs` is a whole number of seconds and is never zero, because a zero limit fails every run. An earlier sketch had `max_runtime: Option<Duration>`. serde writes a `Duration` as an object with `secs` and `nanos`. deployarr limits a step in whole seconds, so the limit is one JSON integer and the field name carries the unit.
+- `UpdateTimeouts` follows the same rules as `max_runtime_secs`. Each limit is whole seconds and never zero, and `max_passes` is never zero either. See [Windows Update](#windows-update).
+- `WsusUrl` is an `http` or `https` URL, such as `https://wsus.example.com:8531`. The parser rejects an empty value and any other scheme. `UpdateExclusion::Kb` holds a KB article number without the `KB` prefix, and `UpdateId` holds an update ID, written as a GUID without braces.
 - `ExitCodes` holds `i32` values. Windows returns a process's exit code as a 32-bit `DWORD` ([GetExitCodeProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess)), and an `i32` holds those 32 bits. An exit code at or above `0x80000000` is written as its signed value, so `0x80070005` is `-2147024891`. The unsigned spelling fails to parse. An HRESULT is a `LONG`, a 32-bit signed integer ([Windows Data Types](https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types)), so the signed value is also the HRESULT's own value.
 - `ExitCodes` keeps its fields private, and `ExitCodes::new` rejects a code that is in both `success` and `reboot`. A code means success, or success and then a reboot, never both.
 - `Test<T>` carries an operator together with its operand. `Exists` and `NotExists` take no operand, and every other operator takes one, so a `Var` or `Registry` condition can neither lack the operand it needs nor carry one that it ignores. A `Var` condition compares against a `NonEmptyTemplate`, because `NotExists` is the test for an empty variable.
@@ -217,7 +235,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 - The top-level `schema_version` is 1. The parser rejects any other version.
 - Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`.
 - A variant with data is an object with one key, the variant's name, such as `{"run_command": {"command": "ipconfig"}}`. A variant without data is a string, such as `"win_pe"`. Each node in `children` is `{"group": ...}` or `{"step": ...}`. This is serde's externally tagged form. The other choice puts a `"type"` key inside the object. serde buffers such an object before it reads the variant, so the path of a parse error stops at `action` and does not reach the field that failed.
-- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `Option` field is none. Every other field is required.
+- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, every field of `install_updates`, and each field inside them. An omitted `Option` field is none. Every other field is required.
 - An unknown field is an error, so a misspelled field name never passes as a default.
 - The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
 - A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
@@ -282,7 +300,7 @@ The compiler also rejects these mistakes when you save, which MDT finds only at 
 | Action | Allowed `run_in` |
 | --- | --- |
 | `PartitionDisk`, `ApplyOsImage`, `ApplyDrivers`, `ApplyUnattend`, `CheckReadiness` | `WinPe` |
-| `InstallApplications`, `VerifyDrivers`, `ActivateWindows` | `FullOs` |
+| `InstallApplications`, `InstallUpdates`, `VerifyDrivers`, `ActivateWindows` | `FullOs` |
 | `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart` | `WinPe`, `FullOs`, or `Either` |
 
 - `Action::allowed_run_in` holds the table as one exhaustive match, so a new action does not compile until someone decides where it runs.
@@ -746,7 +764,7 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 1. WinPE gets the network and storage drivers it needs to reach the disk and the server, such as Intel VMD/RST, from the boot image. The default set is every driver of class Net, SCSIAdapter, or HDC, which is MDT's default. Display and System drivers are optional. The agent loads them at start with `drvload` and reports any that fail. MDT ignores WinPE driver failures.
 2. The agent downloads the selected packages and injects them one at a time with `dism /Image:W:\ /Add-Driver /Driver:<package> /Recurse`. A failing package is recorded and skipped. MDT injects all drivers in one DISM call, so one bad driver fails the deployment.
 3. Windows Setup installs the injected drivers while it detects devices.
-4. Late in the sequence, `VerifyDrivers` lists every device with a problem code through `CM_Get_DevNode_Status`. The agent sends each device's hardware IDs to the server. If the library has a matching package that was not injected, the agent installs it with `pnputil /add-driver <inf> /install`, then checks again. This catches devices that WinPE could not see. Windows Update drivers are later work. The first release does not try them, and `MissingDriverPolicy` holds `Fail`, `Warn`, and `Ignore`.
+4. Late in the sequence, `VerifyDrivers` lists every device with a problem code through `CM_Get_DevNode_Status`. The agent sends each device's hardware IDs to the server. If the library has a matching package that was not injected, the agent installs it with `pnputil /add-driver <inf> /install`, then checks again. This catches devices that WinPE could not see. Windows Update drivers are later work. The first release does not try them, and the [Windows Update](#windows-update) step searches only for software updates. `MissingDriverPolicy` holds `Fail`, `Warn`, and `Ignore`.
 5. The step then applies its policy: fail the deployment, warn, or ignore. The UI lists missing drivers by PC type, with hardware IDs, so the next deployment of that model succeeds.
 
 ## OS images
@@ -783,6 +801,75 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 - Dependencies install first. The server rejects dependency cycles when you save. MDT's editor rejects only an app that depends on itself.
 - A bundle is an application with no command, only an ordered list of dependencies. MDT uses the same idea.
 - `InstallApplications` takes either one application or a variable that holds a list. App lists can come from the task sequence, from a pre-staged record, or from an order row column. MDT's Install Application step chooses between these by whether a GUID field is empty.
+
+## Windows Update
+
+The `InstallUpdates` action installs software updates from Windows Update, or from a WSUS server that the step names. MDT runs `ZTIWindowsUpdate.wsf` for this ([MDT 8456 reference](research/mdt-8456.md#windows-update)), and ConfigMgr has its Install Software Updates step ([ConfigMgr 2509 reference](research/configmgr-2509.md#install-software-updates)). The owner chose how the step treats a failed update and the pass limit, where it gets updates, and where it sits in the built-in template ([#154](https://github.com/Tsukidy/deployarr/issues/154#issuecomment-6956567901)).
+
+- The action runs only in the full OS, after the [handoff to the agent service](#handoff-from-winpe-to-the-new-os). ConfigMgr's step refuses WinPE ([ConfigMgr 2509 reference](research/configmgr-2509.md#flow)). MDT's script reboots out of WinPE instead of searching there ([MDT 8456 reference](research/mdt-8456.md#where-it-runs)).
+- The agent drives the Windows Update Agent (WUA) API itself, as MDT's script does. ConfigMgr's step drives the ConfigMgr client instead, and deployarr has no such client ([ConfigMgr 2509 reference](research/configmgr-2509.md#update-source-and-filters)).
+- Microsoft lists `Wuapi.dll` as the DLL behind WUA's interfaces, such as `IUpdateSearcher` ([IUpdateSearcher::get_ServerSelection](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-iupdatesearcher-get_serverselection)), and base WinPE has no `wuapi.dll` ([list file](research/winpe-10.1.26100.9457.md#the-list-file)). The agent therefore creates WUA's update session object, MDT's `Microsoft.Update.Session`, at run time with `CoCreateInstance`, which `ole32.dll` exports ([CoCreateInstance](https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance)). `ole32.dll` is on base WinPE's list, and `wuapi.dll` is in neither import table, so the [import check](#agent) passes. COM loads `wuapi.dll` only when the agent creates the object in the full OS (inferred).
+- Steps in the full OS run as LocalSystem in session 0 (see [Handoff from WinPE to the new OS](#handoff-from-winpe-to-the-new-os)). Nobody has tested whether WUA searches, downloads, and installs for a caller in that context. The M7 check tests it.
+- The built-in Windows client template holds one `InstallUpdates` step, enabled, after its `InstallApplications` step. MDT's templates hold two such steps, one before Install Applications and one after, and ship both disabled ([MDT 8456 reference](research/mdt-8456.md#where-it-runs)). A task sequence can turn the step off, for example for PCs that cannot reach their update source.
+
+### Update settings
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `source` | `WindowsUpdate` | Where the step gets updates. `Wsus` names a WSUS server by its URL |
+| `missing` | `Warn` | What the step does when updates are still missing after `max_passes` passes. See [Success and failure](#success-and-failure) |
+| `max_passes` | 7 | How many passes may install updates. MDT's script also allows 7 ([MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)) |
+| `exclude` | empty | KB article numbers and update IDs that the step never installs, like MDT's `WUMU_ExcludeKB` and `WUMU_ExcludeID` ([MDT 8456 reference](research/mdt-8456.md#settings)) |
+| `timeouts` | 3,600 seconds to search, 7,200 to download, and 7,200 to install | How long one phase of one pass may take. The search default is ConfigMgr's wait for a scan ([ConfigMgr 2509 reference](research/configmgr-2509.md#waits)). The other two are a design choice |
+
+### Update source
+
+- With `WindowsUpdate`, the searcher's `ServerSelection` is `ssWindowsUpdate`, which searches "the Windows Update service over the Internet" ([ServerSelection](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-uamg/07e2bfa4-6795-4189-b007-cc50b476181a)). The step changes no policy value and never registers the Microsoft Update service, so the PC's update settings stay as Windows ships them. MDT registers Microsoft Update when no WSUS server is set ([MDT 8456 reference](research/mdt-8456.md#update-source)).
+- With `Wsus`, the `ServerSelection` is `ssManagedServer`, which searches "only the managed server" (same page). The step writes the URL to `WUServer` and `WUStatusServer` under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`, and 1 to `UseWUServer` in that key's `AU` subkey. These are the values MDT writes. The step then restarts the `wuauserv` service so that WUA reads them, as MDT does ([MDT 8456 reference](research/mdt-8456.md#update-source)).
+- MDT also sets `AU\NoAutoUpdate` to 1. The step leaves it, so it changes only the values that choose the server (design decision).
+- Before its first write, the step saves each value's old data, or the fact that the value did not exist, in the run state on disk. Each run of the step writes the values again, but it saves the old data only once.
+- Before the step records its final result, whatever that result is, it restores each value and restarts `wuauserv`. It writes the saved data back, or deletes a value that did not exist before. MDT leaves `WUServer`, `WUStatusServer`, and `UseWUServer` in the deployed OS ([MDT 8456 reference](research/mdt-8456.md#update-source)).
+
+### Update passes
+
+The step works in passes, and the run state holds a pass count. Before each pass, the step compares the count with `max_passes`. While the count is lower, a pass does the following:
+
+1. It adds one to the pass count and saves the run state.
+2. It searches for `IsInstalled = 0 and IsHidden = 0 and Type = 'Software'`. `Type = 'Software'` leaves out driver updates ([IUpdateSearcher::Search](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-iupdatesearcher-search)), because drivers come from the driver library. See [Injection and verification](#injection-and-verification).
+3. It skips each update that `exclude` names, and each update whose `InstallationBehavior.CanRequestUserInput` is true ([CanRequestUserInput](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-iinstallationbehavior-get_canrequestuserinput)), because no one can answer a prompt. MDT skips the same updates ([MDT 8456 reference](research/mdt-8456.md#search-and-filters)).
+4. If no update is left, the step ends with success.
+5. It accepts the license terms of each update that is left, as MDT does. It then downloads them as one batch and installs them as one batch.
+6. It reads each update's `ResultCode`, `HResult`, and `RebootRequired` ([IUpdateInstallationResult](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-iupdateinstallationresult)). An update failed when its result code is not `orcSucceeded`, which is 2 ([OperationResultCode](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/ne-wuapi-operationresultcode)). An update that failed to download counts as failed. An error from the whole download or install call counts as a failure of every update in the batch, with that call's HRESULT (design decision).
+7. If an update failed or needs a reboot, the step asks for a reboot and runs again after it. See [Reboots and resume](#reboots-and-resume). Otherwise the next pass starts at once, because an update that just installed can make more updates apply. MDT's script also searches again at once when nothing failed and nothing needs a reboot ([MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)).
+
+When the count reaches `max_passes`, the step starts no more passes. It runs one last search with the same criteria and skips, and installs nothing. Each update that this search finds and does not skip is a missing update.
+
+- The search, the download, and the install each start with WUA's asynchronous call, `BeginSearch`, `BeginDownload`, or `BeginInstall`. MDT's script uses the last two the same way. When a phase passes its time limit, the agent calls the job's `RequestAbort` ([ISearchJob](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-isearchjob), [IDownloadJob](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-idownloadjob), [IInstallationJob](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-iinstallationjob)) and fails the step with a timeout error. ConfigMgr's step waits up to an hour for a scan and has no limit on an install job ([ConfigMgr 2509 reference](research/configmgr-2509.md#waits)).
+- The agent log records each update that a search finds, whether the step installs or skips it and why, and its result, as MDT's log does ([MDT 8456 reference](research/mdt-8456.md#search-and-filters)). ConfigMgr's step logs little and names five client logs to read instead ([ConfigMgr 2509 reference](research/configmgr-2509.md#logs)).
+
+### Success and failure
+
+| How the step ends | Result |
+| --- | --- |
+| A search succeeds and finds nothing to install | Success |
+| The last search after `max_passes` passes finds missing updates | Set by `missing`. `Fail` fails the step. `Warn` succeeds with a warning. `Ignore` succeeds |
+| A search fails | Failure |
+| A phase passes its time limit | Failure |
+| The agent cannot create WUA's objects, or cannot write or restore a policy value | Failure |
+
+- A failed update never ends the step by itself. The step reboots and searches again until the pass limit, as MDT's script does. ConfigMgr's step fails at once with the failure's HRESULT ([ConfigMgr 2509 reference](research/configmgr-2509.md#results-reboots-and-exit-codes)).
+- Only a search that succeeds and finds nothing means that the PC is up to date. MDT counts the search error `0x8024402C` as success, so a PC with no network looks up to date ([MDT 8456 reference](research/mdt-8456.md#search-and-filters)). A PC that cannot reach its update source therefore fails the step.
+- The step result lists every update that a search found, with its update ID, title, and KB numbers. For each pass, it gives the update's result code and HRESULT, or the reason the step skipped it. It lists each failure, including one that a later pass fixed. It lists the missing updates under every `missing` value.
+- Under `Warn`, the PC finishes, and the deployment shows the warning and the list of missing updates.
+- A failed step goes through its `on_error`, like any other step. MDT's templates continue on error for both of their Windows Update steps ([MDT 8456 reference](research/mdt-8456.md#where-it-runs)).
+
+### Reboots and resume
+
+- When an update failed or waits for a reboot, the action returns `Reboot { rerun: true }`. The agent saves the run state, reboots, and runs the same step again. See [State on disk and resume](#state-on-disk-and-resume). MDT's script and ConfigMgr's step ask their engines for the same reboot and retry.
+- The run state keeps the action's progress until the step records its final result. The progress is the pass count, the update results so far, and the saved policy values. A run after a reboot reads it. MDT keeps its pass count in a variable that its engine drops on a retry, and the count survives only through a fallback file (inferred in [MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)).
+- A crash or a power loss during the step leaves `in_flight` set, and the action runs again. It reads its saved progress and starts a new pass from a new search, which finds only the updates still missing. It therefore needs no WUA job ID (inferred). ConfigMgr's step saves its job ID to reconnect to the job instead ([ConfigMgr 2509 reference](research/configmgr-2509.md#flow)).
+- The pass count goes up at the start of each pass, so an interrupted pass still counts. A PC that crashes in every pass still reaches `max_passes`.
+- The step restores the policy values that it saved in the run state, not the values in the registry. A run after a crash therefore restores the values from before the step, not the ones the step wrote.
 
 ## Boot image
 
@@ -1241,7 +1328,7 @@ The web UI is the only admin interface in the first release. After it, a desktop
 
 The screens are these:
 
-- Deployments: live progress, step timeline, logs, variable trace, and missing drivers.
+- Deployments: live progress, step timeline, logs, variable trace, missing drivers, and missing updates.
 - Task sequences: a tree editor with a step palette, a typed form for each action, a condition builder, version history, and templates. Step kinds from add-ons appear in the palette under the add-on's name, with forms drawn from their schemas. Import opens a deployarr export, or another format through an importer add-on such as the MDT importer.
 - OS images: import an ISO or WIM, then choose editions.
 - Drivers: import packages, browse by hardware ID, manage profiles, and view missing-driver reports.
@@ -1305,7 +1392,6 @@ An add-on author sees one trait with default bodies and the `deployarr-core` typ
 
 These are planned for later and kept out of the first release on purpose:
 
-- Windows Update during deployment
 - BitLocker
 - user state migration and in-place upgrades
 - multicast
