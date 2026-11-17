@@ -47,10 +47,11 @@ COMMENT = re.compile(r"<!--.*?-->", re.S)
 NOT_BREAK = re.compile(r"[^\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029]")
 SKIP_DIRS = {".git", "target", "node_modules"}
 
-# The most bytes the always-loaded agent files may total. It is their size
+# The most bytes the always-loaded agent files may total. It was their size
 # after #65, plus the placement rule that #66 adds to AGENTS.md, which came to
-# 13,010 bytes, rounded up to the next 500.
-AGENT_FILES_BUDGET = 13500
+# 13,010 bytes, rounded up to the next 500. For #201 the owner raised it to
+# 13,700, so that the work list rule fits without cutting other text.
+AGENT_FILES_BUDGET = 13700
 REQUIRED_AGENT_FILES = ("AGENTS.md", "CLAUDE.md")
 IMPORT_HOPS = 4
 # An @path import. A backslash before a space keeps the space in the path.
