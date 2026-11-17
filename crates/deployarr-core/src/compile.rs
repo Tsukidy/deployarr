@@ -85,7 +85,8 @@ pub enum OnError {
     /// [`Instr::Enter`], that group can be the group itself.
     JumpTo(Pc),
     /// Nowhere. The deployment fails, because no enclosing group has
-    /// `continue_on_error`.
+    /// `continue_on_error`. For an [`Instr::Enter`], the group itself has none
+    /// either.
     FailDeployment,
 }
 
