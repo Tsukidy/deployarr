@@ -24,8 +24,8 @@ This page records what `wdsmgfw.efi` and `wdsnbp.com` send in their second reque
 - The table lists the sub-options in each program's order. `wdsmgfw.efi` sends 12, 13, 1, and 14. `wdsnbp.com` sends 13, 14, 1, and 5.
 - On `bios`, `wdsnbp.com` first sends a request with no option 250. The prototype answers it with the first ACK again, in frame 11. `wdsnbp.com` sends the request with option 250 in frame 12, 0.70 seconds after frame 11. A screenshot taken after the second ACK shows a screen that asks for an administrator's approval.
 - Both second requests keep option 93 from the firmware, 7 on `uefi` and 0 on `bios`. Sub-option 1 is 6 on `bios`, where `wdsnbp.com` prints `Architecture: x64`.
-- Once the boot manager runs, it requests the same files in the same order as in the single-stage run of [#27](https://github.com/Tsukidy/deployarr/issues/27). That run's page and RRQ tables are in pull request [#134](https://github.com/Tsukidy/deployarr/pull/134). The boot manager loads the BCD that option 252 names in the second ACK.
-- Neither VM waited for a key press. No key went to either VM before WinPE showed its command prompt.
+- Once the boot manager runs, it requests the same files in the same order as in the single-stage run of [#27](https://github.com/Tsukidy/deployarr/issues/27), which [Single-stage boot chain in the PXE lab](single-stage-chain.md) records. The boot manager loads the BCD that option 252 names in the second ACK.
+- Neither VM showed a key prompt, and both boot managers loaded with no key pressed. [Key prompt](#key-prompt) gives the evidence for each VM.
 - In WinPE, `BootServerReply` holds the second ACK on both VMs.
 
 ## Setup
@@ -33,8 +33,8 @@ This page records what `wdsmgfw.efi` and `wdsnbp.com` send in their second reque
 | Item | Value |
 | --- | --- |
 | Lab host | Ubuntu 26.04.1 LTS, kernel `7.0.0-43-generic`, AMD Ryzen 7 7700X, KVM |
-| Lab scripts | `tools/lab/` from [#127](https://github.com/Tsukidy/deployarr/pull/127), branch `lab-120-ubuntu-2604` at `786c13b`. Its `tools/lab/` differs from `main` at `ef0bf5e` only in `check.sh` and in the swtpm socket path of `vm.sh`. |
-| PXE prototype | `tools/pxe-prototype/`, the same on that branch as on `main` at `ef0bf5e` |
+| Lab scripts | `tools/lab/` from [#127](https://github.com/Tsukidy/deployarr/pull/127), branch `lab-120-ubuntu-2604` at `786c13b`, before `main` merged it. Its `tools/lab/` is the same as on `main` at `cb91bb8`. |
+| PXE prototype | `tools/pxe-prototype/`, the same on that branch as on `main` at `cb91bb8` |
 | Network | `br-lab` at `10.41.0.1/24`. dnsmasq hands out addresses on it from `0.0.0.0%br-lab:67`, and the prototype answers PXE on ports 67 and 4011. |
 | Chain | `--chain two-stage`. The first ACK names the WDS network boot program and carries option 250. A request with option 250 gets the boot manager and option 252. |
 | TFTP root | `~/deployarr-lab/tftp/2011`, built by `tools/lab/media.sh` as [step 6 of the lab guide](../../lab-setup.md#6-get-the-windows-files) says |
@@ -197,7 +197,7 @@ The table lists every RRQ in order, from the prototype log. The capture holds th
 
 - RRQs 1 and 2 come from OVMF, from client ports 1952 and 1953.
 - RRQs 3 and 4 come from `wdsmgfw.efi` (inferred), 2 milliseconds after the second ACK. It requests the boot file of the second ACK with a leading `\`, probes its size, and downloads it with `blksize` 1456 and no `windowsize`.
-- RRQs 5 to 34 come from `bootmgfw.efi` (inferred). They match RRQs 3 to 32 of the `uefi` run in #27, as #134 records them, file for file and option for option. The first file it loads is `\boot\uefi.bcd`, the option 252 path of the second ACK, after `\boot\x64\BCD` gets File not found.
+- RRQs 5 to 34 come from `bootmgfw.efi` (inferred). They match RRQs 3 to 32 of the `uefi` run in #27, as its [TFTP requests](single-stage-chain.md#tftp-requests) table records them, file for file and option for option. The first file it loads is `\boot\uefi.bcd`, the option 252 path of the second ACK, after `\boot\x64\BCD` gets File not found.
 - Every transfer finished with no retransmits. The transfer of `boot.wim` sent 393,333 blocks with a window of 1.
 
 ### End state
@@ -309,7 +309,7 @@ The capture holds the same 14 RRQs in the same order.
 - RRQ 1 comes from the iPXE ROM.
 - RRQ 2 comes from `wdsnbp.com` (inferred), 77 milliseconds after the second ACK. It requests the second ACK's boot file as written, with no leading `\`, and with `blksize` 512.
 - RRQ 3 comes from `pxeboot.n12` (inferred). It requests `boot\x64\bootmgr.exe`, in the folder of its own boot file.
-- RRQs 3 to 14 match RRQs 2 to 13 of the `bios` run in #27, as #134 records them, file for file. RRQs 4 to 14 come from `bootmgr.exe` (inferred), and its first file is the option 252 path of the second ACK.
+- RRQs 3 to 14 match RRQs 2 to 13 of the `bios` run in #27, as its [TFTP requests](single-stage-chain.md#tftp-requests-1) table records them, file for file. RRQs 4 to 14 come from `bootmgr.exe` (inferred), and its first file is the option 252 path of the second ACK.
 - Every transfer finished with no retransmits. The transfer of `boot.wim` sent 393,333 blocks with a window of 1.
 
 ### End state
@@ -323,6 +323,32 @@ At 11:05:13, about 111 seconds after `vm.sh` started, the screen shows a window 
 - After byte 300, `BootServerReply` holds 50 more bytes before its zeros begin. Bytes 300 to 311 equal bytes 300 to 311 of the first ACK, the end of its option 250 and its end option. Bytes 312 to 349 are `00 00 21`, the first ACK's option 250 again, and `af 01 ff`.
 
 The commands that read these bytes printed parts of the value with `set` substrings, so that each part fits on one line. The value names came from a `for /f` loop, because WinPE has no `findstr`.
+
+## Key prompt
+
+No key went to either VM from the start of `vm.sh` until WinPE showed its command prompt. The only keys sent were the WinPE commands under [Commands](#commands). The times below come from the prototype logs, where `transfer-finished` marks the end of a download.
+
+| VM | Sub-option 11 in the first ACK | Key prompt | Boot manager loads with no key pressed |
+| --- | --- | --- | --- |
+| `uefi` | 2 (`WDSBP_OPTVAL_PXE_PROMPT_NOPROMPT`) | None. `wdsmgfw.efi` shows `ESC=Exit` while it contacts the server, and does not wait. | Yes |
+| `bios` | 1 (`WDSBP_OPTVAL_PXE_PROMPT_OPTIN`) | None. `wdsnbp.com` shows an approval screen that asks for no key. | Yes |
+
+On `uefi`:
+
+- `wdsmgfw.efi`'s download ends at 10:58:58.174. It sends its second request at 10:58:58.314, 140 milliseconds later.
+- The serial log shows the text that `wdsmgfw.efi` wrote: `Windows Deployment Services (Server IP: 10.41.0.1)`, `Contacting Server (10.41.0.1): -`, and `ESC=Exit`. None of it asks for a key press. No screenshot caught this text. The screenshot written at 10:58:58.05 still shows the firmware's `Start PXE over IPv4.`, and the one written at 10:58:59.09 is black.
+- `bootmgfw.efi`'s download ends at 10:58:58.580. It requests its first file, `\boot\x64\BCD`, at 10:58:58.713, 133 milliseconds later.
+- The screenshot written at 10:59:00.14 shows `Loading files...` for `boot.wim`.
+
+On `bios`:
+
+- `wdsnbp.com`'s download ends at 11:03:29.212. It sends its first request at 11:03:29.464, and its request with option 250 at 11:03:30.161, 0.69 seconds after the first ACK came again.
+- The screenshot written at 11:03:30.21 shows the approval screen quoted under [DHCP](#dhcp-1). The screenshot written at 11:03:29.18 does not show it. The screen asks the reader to give the details to an administrator, and asks for no key.
+- `pxeboot.n12`'s download ends at 11:03:30.245, and its request for `boot\x64\bootmgr.exe` arrives in the same millisecond.
+- `bootmgr.exe`'s download ends at 11:03:30.414. It requests its first file, `\boot\bios.bcd`, at 11:03:30.526, 112 milliseconds later.
+- The screenshot written at 11:03:31.25 shows `Loading files...` for `boot.wim`. The serial log is empty, so the screenshots, once a second, are the only record of the screen.
+
+The [Boot chain](../../architecture.md#boot-chain) section says that for zero touch, `pxeboot.n12` on BIOS and option 250 sub-option 11 = 2 for `wdsmgfw.efi` on UEFI mean nothing waits for a key press. These runs used both, and nothing waited. On `bios`, the first ACK also carried sub-option 11 = 1, and `wdsnbp.com` still showed no key prompt. The runs sent neither `pxeboot.com` nor a UEFI sub-option 11 other than 2, so they do not show that the other settings would wait for a key.
 
 ## Sub-option names
 
@@ -360,7 +386,7 @@ The raw evidence stays on the lab host in `~/deployarr-lab/runs/28/`: the protot
 
 ## Commands
 
-Each run started the prototype, then the capture, then the VM, as [Run an experiment](../../lab-setup.md#run-an-experiment) says. The lab scripts ran from a checkout of `lab-120-ubuntu-2604`, here `$LAB`. `<vm>` is `uefi` or `bios`.
+Each run started the prototype, then the capture, then the VM, as [Run an experiment](../../lab-setup.md#run-an-experiment) says. The lab scripts ran from a checkout of `lab-120-ubuntu-2604`, here `$LAB`. `main` at `cb91bb8` has the same `tools/lab/` and `tools/pxe-prototype/`. `<vm>` is `uefi` or `bios`.
 
 ```bash
 rm -rf ~/deployarr-lab/<vm>
@@ -418,7 +444,7 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/two-stage-chain-<vm>.pca
 ## Not covered
 
 - The `uefi2023` VM, whose `db` holds only the Windows UEFI CA 2023. [#32](https://github.com/Tsukidy/deployarr/issues/32) runs the 2023-signed boot files there.
-- The other first-stage options: the abort option, the key prompt of `pxeboot.com`, and a UEFI option 250 other than sub-option 11 = 2.
+- The other first-stage options: the abort option, `pxeboot.com` and its key prompt, and a UEFI option 250 other than sub-option 11 = 2.
 - A server that does not answer `wdsnbp.com`'s request without option 250.
 - A first ACK sent from port 67. In both runs the firmware sent its boot file request to port 4011, and the first ACK came from port 4011. No run shows where a network boot program sends its requests after a first ACK from port 67.
 - Relayed requests, and a server whose port 67 is not shared with dnsmasq.
@@ -431,6 +457,7 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/two-stage-chain-<vm>.pca
 - The option 250 parser must accept sub-options 12, 13, and 14, and a `0xFF` byte at the end of option 250. Both programs send that byte, and `WdsBp.h` does not define it.
 - When `wdsnbp.com` sends a request with no option 250, answering it with the first-stage reply again works. The reply rules in [DHCP](../../architecture.md#dhcp) already answer that request, because it carries option 93. Whether `wdsnbp.com` needs that answer is not measured.
 - The second ACK should follow sub-option 1, as `sccmpxe.exe` does, not option 93. On BIOS, option 93 stays 0 in the second request, and sub-option 1 is 6 for an x64 CPU. This is how [Boot chain](../../architecture.md#boot-chain) can tell x64 BIOS PCs from others. The x86 value still needs a measurement.
+- The zero-touch settings of [Boot chain](../../architecture.md#boot-chain), `pxeboot.n12` on BIOS and sub-option 11 = 2 on UEFI, boot both VMs with no key press. No run tested the other settings, so the runs do not show that those would wait for a key.
 - `wdsnbp.com` shows sub-option 6 on screen as `Message from Administrator`, under an approval text. deployarr should send its own text there, not `SCCM PXE`. With sub-option 2 = 1, `wdsnbp.com` sent its next request 0.70 seconds after the repeated first ACK, with no key press.
 - The xid of a second request can be the firmware's xid, as on `bios`, or a new one, as on `uefi`. The server must not tie a second request to the first by xid.
 - After the boot manager starts, its TFTP requests match the single stage, so the TFTP findings of #27 apply to both chains. `wdsmgfw.efi` adds a size probe and a download of `\boot\x64\bootmgfw.efi` with a leading `\`. `wdsnbp.com` and `pxeboot.n12` download with `blksize` 512.
