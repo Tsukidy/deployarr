@@ -14,6 +14,7 @@ pub mod action;
 pub mod addon;
 pub mod compile;
 pub mod condition;
+pub mod evaluate;
 pub mod join;
 pub mod lookup;
 pub mod lower;

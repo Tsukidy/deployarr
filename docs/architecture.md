@@ -347,7 +347,8 @@ The parser rejects other mistakes before the compiler runs, such as an empty suc
 - The agent evaluates a condition when it reaches the group or step. A false group condition skips the group. A false step condition skips the step and leaves `last` unchanged, as MDT does.
 - The agent expands `Template` fields in a condition when it evaluates it, not when the server compiles the sequence.
 - Evaluation returns `Result<bool, ConditionError>`. An error is not false. It fails the step and goes through the step's `on_error`, which is MDT's rule.
-- `Var` compares as integers when both sides are integers, and otherwise compares strings without regard to case, like MDT. `Like` matches `*` and `?` wildcards. `Exists` means the variable is set and not empty.
+- `Var` compares as integers when both sides are integers, and otherwise compares strings without regard to case, like MDT. `Like` matches `*` and `?` wildcards. `Exists` means the variable is set and not empty. A `Registry` comparison applies the `Var` rules to the text of both sides, with a number as its decimal text.
+- A comparison or `Like` test on a list value is an error, the same way a list in a `Template` fails the step (see [Variables](#variables)). `Exists` and `NotExists` work on a list, and a list with at least one item exists. A test on list items needs its own operator, which a later ticket can add (owner decision on [#177](https://github.com/Tsukidy/deployarr/issues/177)).
 - A missing file, folder, registry key, or registry value makes the condition false.
 - `Not` takes one child. MDT's `not` with several children means "none of them is true", so an MDT importer turns it into `Not(Any(children))`.
 
