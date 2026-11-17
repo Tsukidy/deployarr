@@ -44,7 +44,7 @@ This matches the OFFER in [DHCP](../../architecture.md#dhcp). The OFFER there al
 | `uefi` VM | `q35` with SMM, OVMF `OVMF_CODE_4M.ms.fd`, a fresh copy of `OVMF_VARS_4M.ms.fd` with Microsoft's 2011 and 2023 keys, TPM 2.0 through swtpm, a virtio-net card with no option ROM, MAC `52:54:00:41:00:11`, 2 vCPUs, 4 GB |
 | `bios` VM | `pc` with `smbios-entry-point-type=32`, SeaBIOS, QEMU's `e1000` card with its iPXE ROM, MAC `52:54:00:41:00:21`, 2 vCPUs, 4 GB |
 
-The four runs went one after another, from 20:10:23 to 20:19:57 UTC. Each VM started with its folder under `~/deployarr-lab` deleted, so its disk, firmware variables, and TPM state were new. The run script wrote the wall clock and `/proc/uptime` at each step, and the two agree for every run, so the lab host did not stand still during a run.
+The four runs went one after another, from 20:10:23 to 20:19:57 UTC. Each VM started with its folder under `~/deployarr-lab` deleted, so its disk, firmware variables, and TPM state were new. The run script wrote the wall clock and `/proc/uptime` at each step. Wall clock minus uptime stays within 0.33 seconds across all four runs. Uptime at the first stamp puts the host's last start at about 18:16 UTC, so the host did not restart during the runs.
 
 The component versions, firmware files, boot files, and `boot.wim` are the same as in [Versions](bootmgr-object-type.md#versions) of the `{bootmgr}` object type page, on the same lab host on the same day. `boot.wim` is index 1 of `sources\boot.wim` in `Windows11_Client_x64_en-us_26300_9457.iso`, Microsoft Windows PE (amd64), build 26100.9457. `bootmgfw.efi` is 10.0.28000.367 and `bootmgr.exe` is 10.0.26100.9444, both signed through the Microsoft Windows Production PCA 2011.
 
@@ -111,7 +111,7 @@ The `...` marks device paths left out.
 | 6 | 20:12:15.661 | `10.41.0.192:68` | `10.41.0.1:4011` | The ROM's boot file REQUEST |
 | 7 | 20:12:15.661 | `10.41.0.1:4011` | `10.41.0.192:68` | The prototype's ACK, with `boot\x64\pxeboot.n12` and option 252 = `boot\bios.bcd` |
 
-The boot then made the same 13 RRQs as #27. `boot.wim` completed at 20:13:55.894. WinPE's DISCOVER and REQUEST followed at 20:14:09, and the screenshot written at 20:14:15.42 shows WinPE's `cmd.exe` window.
+The boot then made the same 13 RRQs as #27. `boot.wim` completed at 20:13:55.894. WinPE's DISCOVER followed at 20:14:09.545 and its REQUEST at 20:14:10.057. The screenshot written at 20:14:15.42 shows WinPE's `cmd.exe` window.
 
 ### Control
 
@@ -196,11 +196,12 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/offer-without-option-43-
 ## Not covered
 
 - A DHCP server on another address. In the lab, dnsmasq and the prototype both answer from `10.41.0.1`, so the runs do not show whether a firmware sends its port 4011 request to the proxy OFFER's `siaddr` or option 54, or to the DHCP server. [#139](https://github.com/Tsukidy/deployarr/issues/139) moves dnsmasq off the lab host's network stack.
+- An OFFER without option 97. The `bios` VM runs with `smbios-entry-point-type=32`, so its DISCOVER carries option 97, and every OFFER in the runs carries option 97. [DHCP](../../architecture.md#dhcp) gives a request with no option 97 an OFFER without one.
 - The `uefi2023` VM. [#32](https://github.com/Tsukidy/deployarr/issues/32) runs it.
 - The two-stage chain. Its OFFER is the same, and the boots of #28 also passed through it, as [Two-stage boot chain in the PXE lab](two-stage-chain.md) records.
 - Relayed requests, a request that carries option 82, and physical PCs and other firmware.
 
 ## What changes in deployarr
 
-- Nothing for the OFFER. The OFFER in [DHCP](../../architecture.md#dhcp), with no option 43, no boot file, and option 60 `PXEClient`, leads OVMF and the iPXE ROM to the port 4011 exchange, and both boot. Risk 5 can close.
-- A PC whose firmware is like OVMF takes no address from the DHCP server unless a PXE offer also arrives. If deployarr stays silent for a PC, as [DHCP](../../architecture.md#dhcp) says it does for a finished PC on UEFI, OVMF ends PXE with `PXE-E16` and moves on to its next boot option. That is the behavior that rule expects.
+- Nothing for the OFFER. The OFFER in [DHCP](../../architecture.md#dhcp) for a request with option 97, with no option 43, no boot file, and option 60 `PXEClient`, leads OVMF and the iPXE ROM to the port 4011 exchange, and both boot. Risk 5 can close.
+- In the control, OVMF took no address from dnsmasq without a PXE offer, and other UEFI firmware may act the same (inferred). If deployarr stays silent for a PC, as [DHCP](../../architecture.md#dhcp) says it does for a finished PC on UEFI, OVMF ends PXE with `PXE-E16` and moves on to its next boot option. That is the behavior that rule expects.
