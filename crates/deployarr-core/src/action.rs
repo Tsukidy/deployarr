@@ -1,20 +1,201 @@
+use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 use core::num::NonZeroU32;
 
-use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::de::value::StrDeserializer;
+use serde::de::{
+    self, DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, VariantAccess,
+    Visitor,
+};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, forward_to_deserialize_any};
 
+use crate::addon::AddOnStep;
+use crate::join::JoinStage;
 use crate::non_empty::{NonEmpty, NonEmptySeed};
 use crate::sequence::RunIn;
 use crate::template::Template;
 use crate::validated_string::validated_string;
 use crate::variable::{SettableVarName, VarName};
 
+/// What a stored step holds. An admin edits it and the server stores it.
+///
+/// [`crate::lower::lower`] replaces each add-on step and join slot with
+/// built-in steps before the server compiles, so the compiler and the agent
+/// see only [`BuiltinAction`].
+///
+/// `Deserialize` is written by hand. It reads the action object's one key and
+/// passes the value on without buffering it:
+///
+/// - `add_on` goes to [`AddOnStep`].
+/// - `apply_join_profile` goes to the join slot.
+/// - Any other key goes to [`BuiltinAction`] through its enum access.
+///
+/// A derived enum would need `#[serde(untagged)]` on `Builtin`, so that a
+/// built-in action keeps its own key. serde buffers the whole input for an
+/// untagged variant, and the add-on step's config then fails to parse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Action {
+    /// Written in JSON exactly as the built-in action, such as
+    /// `{"run_command": {...}}`.
+    Builtin(BuiltinAction),
+    /// `{"add_on": {...}}`.
+    AddOn(AddOnStep),
+    /// `{"apply_join_profile": {"stage": "full_os"}}`. The deployment's join
+    /// profile fills this slot when the plan is made.
+    ApplyJoinProfile { stage: JoinStage },
+}
+
+const ADD_ON: &str = "add_on";
+const APPLY_JOIN_PROFILE: &str = "apply_join_profile";
+
+/// The body of an `apply_join_profile` action.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JoinSlot {
+    stage: JoinStage,
+}
+
+impl Serialize for Action {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Builtin(action) => action.serialize(serializer),
+            Self::AddOn(step) => serializer.serialize_newtype_variant("Action", 1, ADD_ON, step),
+            Self::ApplyJoinProfile { stage } => serializer.serialize_newtype_variant(
+                "Action",
+                2,
+                APPLY_JOIN_PROFILE,
+                &JoinSlot { stage: *stage },
+            ),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Action {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // serde_json does not read this list. An unknown key's error lists
+        // every key, the built-in ones included. See `UnknownAction`.
+        deserializer.deserialize_enum("Action", &[ADD_ON, APPLY_JOIN_PROFILE], ActionVisitor)
+    }
+}
+
+struct ActionVisitor;
+
+impl<'de> Visitor<'de> for ActionVisitor {
+    type Value = Action;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an action, an object with one key")
+    }
+
+    fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<Action, A::Error> {
+        let (key, variant): (String, _) = data.variant()?;
+        match key.as_str() {
+            ADD_ON => variant.newtype_variant().map(Action::AddOn),
+            APPLY_JOIN_PROFILE => variant
+                .newtype_variant()
+                .map(|JoinSlot { stage }| Action::ApplyJoinProfile { stage }),
+            _ => BuiltinAction::deserialize(BuiltinVariant { key: &key, variant })
+                .map(Action::Builtin),
+        }
+    }
+}
+
+/// An action's key, already read, and the access to its value. It hands both
+/// to `BuiltinAction`'s derived `Deserialize`, so the value is read in place.
+struct BuiltinVariant<'k, A> {
+    key: &'k str,
+    variant: A,
+}
+
+impl<'de, A: VariantAccess<'de>> Deserializer<'de> for BuiltinVariant<'_, A> {
+    type Error = A::Error;
+
+    fn deserialize_any<W: Visitor<'de>>(self, visitor: W) -> Result<W::Value, A::Error> {
+        visitor.visit_enum(self)
+    }
+
+    forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string
+        bytes byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
+}
+
+impl<'de, A: VariantAccess<'de>> EnumAccess<'de> for BuiltinVariant<'_, A> {
+    type Error = A::Error;
+    type Variant = A;
+
+    fn variant_seed<T: DeserializeSeed<'de>>(self, seed: T) -> Result<(T::Value, A), A::Error> {
+        let key: StrDeserializer<'_, KeyError> = self.key.into_deserializer();
+        match seed.deserialize(key) {
+            Ok(value) => Ok((value, self.variant)),
+            Err(KeyError::Unknown { builtins }) => Err(de::Error::custom(UnknownAction {
+                key: self.key,
+                builtins,
+            })),
+            Err(KeyError::Other(message)) => Err(de::Error::custom(message)),
+        }
+    }
+}
+
+/// The error of reading a built-in action's key. It keeps the list of
+/// built-in keys that `BuiltinAction`'s derived `Deserialize` passes when the
+/// key is unknown.
+#[derive(Debug)]
+enum KeyError {
+    Unknown { builtins: &'static [&'static str] },
+    Other(String),
+}
+
+impl de::Error for KeyError {
+    fn custom<T: fmt::Display>(message: T) -> Self {
+        Self::Other(message.to_string())
+    }
+
+    fn unknown_variant(_: &str, expected: &'static [&'static str]) -> Self {
+        Self::Unknown { builtins: expected }
+    }
+}
+
+impl fmt::Display for KeyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown { .. } => f.write_str("unknown action"),
+            Self::Other(message) => f.write_str(message),
+        }
+    }
+}
+
+impl core::error::Error for KeyError {}
+
+/// An action key that no action has. Like serde's error for an unknown
+/// variant, it lists every key.
+struct UnknownAction<'a> {
+    key: &'a str,
+    builtins: &'static [&'static str],
+}
+
+impl fmt::Display for UnknownAction<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { key, builtins } = self;
+        write!(
+            f,
+            "unknown variant `{key}`, expected one of `{ADD_ON}`, `{APPLY_JOIN_PROFILE}`"
+        )?;
+        for builtin in *builtins {
+            write!(f, ", `{builtin}`")?;
+        }
+        Ok(())
+    }
+}
+
+/// Everything the agent can run. None of these actions knows what an add-on
+/// is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum Action {
+pub enum BuiltinAction {
     RunCommand {
         command: Template,
         working_dir: Option<Template>,
@@ -22,6 +203,8 @@ pub enum Action {
         exit: ExitCodes,
         #[serde(default)]
         limits: StepLimits,
+        #[serde(default)]
+        files: Vec<StepFile>,
     },
     #[serde(rename = "run_powershell")]
     RunPowerShell {
@@ -31,6 +214,8 @@ pub enum Action {
         exit: ExitCodes,
         #[serde(default)]
         limits: StepLimits,
+        #[serde(default)]
+        files: Vec<StepFile>,
     },
     SetVariable {
         name: SettableVarName,
@@ -66,9 +251,27 @@ pub enum Action {
     ActivateWindows {
         online: bool,
     },
+    /// Sends the named variables to the server and assigns the variables that
+    /// come back. The server finds the add-on and its config from the
+    /// deployment and the node. The agent refuses to send a variable that is
+    /// marked secret.
+    ServerCall {
+        send: Vec<VarName>,
+        #[serde(default)]
+        limits: StepLimits,
+    },
+    /// Adds a provisioning package to Windows with DISM. The agent writes the
+    /// package to a private folder, builds the whole command line itself, and
+    /// deletes the file after the step. It is the one action that takes a
+    /// secret.
+    AddProvisioningPackage {
+        package: SecretRef,
+        #[serde(default)]
+        limits: StepLimits,
+    },
 }
 
-impl Action {
+impl BuiltinAction {
     /// The `run_in` values that a step with this action may have. The
     /// compiler rejects a step with any other.
     ///
@@ -89,9 +292,50 @@ impl Action {
             Self::RunCommand { .. }
             | Self::RunPowerShell { .. }
             | Self::SetVariable { .. }
-            | Self::Restart { .. } => &[RunIn::WinPe, RunIn::FullOs, RunIn::Either],
+            | Self::Restart { .. }
+            | Self::ServerCall { .. }
+            | Self::AddProvisioningPackage { .. } => &[RunIn::WinPe, RunIn::FullOs, RunIn::Either],
         }
     }
+
+    /// Whether an add-on's expansion may hold this action. Six may:
+    /// `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart`, `ServerCall`,
+    /// and `AddProvisioningPackage`.
+    ///
+    /// The match is exhaustive, so a new action does not compile until someone
+    /// decides whether add-ons may use it.
+    pub fn allowed_from_addon(&self) -> bool {
+        match self {
+            Self::RunCommand { .. }
+            | Self::RunPowerShell { .. }
+            | Self::SetVariable { .. }
+            | Self::Restart { .. }
+            | Self::ServerCall { .. }
+            | Self::AddProvisioningPackage { .. } => true,
+            Self::PartitionDisk { .. }
+            | Self::ApplyOsImage { .. }
+            | Self::ApplyDrivers { .. }
+            | Self::ApplyUnattend { .. }
+            | Self::InstallApplications { .. }
+            | Self::VerifyDrivers { .. }
+            | Self::CheckReadiness { .. }
+            | Self::ActivateWindows { .. } => false,
+        }
+    }
+}
+
+/// A file that the agent writes to the step's private folder before the step
+/// and deletes after it. The command reads the folder's path from
+/// `%_StepDir%`.
+///
+/// A step file holds content only, such as a script from an add-on's assets.
+/// It has no field that can name a secret, because the command's author could
+/// send the secret back to the server through `ServerCall`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepFile {
+    pub name: FileName,
+    pub content: ContentRef,
 }
 
 /// The exit codes that end a command step with success.
@@ -430,6 +674,90 @@ non_empty_id!(OsImageRef);
 non_empty_id!(UnattendTemplateId);
 non_empty_id!(ContentRef);
 non_empty_id!(AppId);
+non_empty_id!(
+    /// Names a secret that the server holds, such as a provisioning package.
+    /// It never holds the secret's value. Only an action that the base defines
+    /// to take a secret has a field of this type.
+    SecretRef
+);
+
+/// The longest [`FileName`].
+pub const FILE_NAME_MAX_LEN: usize = 255;
+
+validated_string! {
+    /// The name of a step file in the step's private folder, such as
+    /// `collect-hash.ps1`: 1 to 255 ASCII letters, digits, `.`, `_`, or `-`.
+    ///
+    /// The name does not end with `.`, so it is never `.` or `..`. The part
+    /// before its first `.` is not a name that Windows reserves for a device,
+    /// such as `CON` or `NUL`, in any case.
+    #[derive(PartialEq, Eq, Hash)]
+    FileName, FileNameError, check_file_name
+}
+
+/// The names that Windows reserves for devices. A name with one of these
+/// before its first `.`, such as `NUL.txt`, is the device too.
+const RESERVED_FILE_NAMES: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+fn check_file_name(text: &str) -> Result<(), FileNameError> {
+    if text.is_empty() {
+        return Err(FileNameError::Empty);
+    }
+    if let Some(found) = text
+        .chars()
+        .find(|c| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+    {
+        return Err(FileNameError::InvalidChar { found });
+    }
+    if text.len() > FILE_NAME_MAX_LEN {
+        return Err(FileNameError::TooLong { len: text.len() });
+    }
+    if text.ends_with('.') {
+        return Err(FileNameError::EndsWithDot);
+    }
+    let stem = text.split('.').next().unwrap_or(text);
+    if RESERVED_FILE_NAMES
+        .iter()
+        .any(|reserved| stem.eq_ignore_ascii_case(reserved))
+    {
+        return Err(FileNameError::Reserved);
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileNameError {
+    Empty,
+    InvalidChar { found: char },
+    TooLong { len: usize },
+    EndsWithDot,
+    Reserved,
+}
+
+impl fmt::Display for FileNameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("a file name must not be empty"),
+            Self::InvalidChar { found } => write!(
+                f,
+                "a file name holds only ASCII letters, digits, `.`, `_`, and `-`, not {found:?}"
+            ),
+            Self::TooLong { len } => write!(
+                f,
+                "a file name holds at most {FILE_NAME_MAX_LEN} characters, and this one holds {len}"
+            ),
+            Self::EndsWithDot => f.write_str("a file name must not end with `.`"),
+            Self::Reserved => f.write_str(
+                "Windows reserves this name for a device, so it cannot name a file, with or without an extension",
+            ),
+        }
+    }
+}
+
+impl core::error::Error for FileNameError {}
 
 fn check_not_empty(text: &str) -> Result<(), EmptyIdError> {
     if text.is_empty() {

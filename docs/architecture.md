@@ -188,13 +188,14 @@ pub enum MsiProduct { ProductCode(Uuid), UpgradeCode(Uuid) }
 pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rules
 ```
 
-- `NodeId` wraps a UUID. The core crate parses and writes IDs and never generates one, so it leaves out the `uuid` crate's `v4` feature. On `wasm32-unknown-unknown`, `uuid` stops a build that has `v4` unless the build also turns on one of its randomness features: `js`, `rng-getrandom`, or `rng-rand`.
+- `NodeId` wraps a UUID. The core crate never generates a random ID, so it leaves out the `uuid` crate's `v4` feature. On `wasm32-unknown-unknown`, `uuid` stops a build that has `v4` unless the build also turns on one of its randomness features: `js`, `rng-getrandom`, or `rng-rand`. `lower` derives the IDs of the nodes it adds with the `v5` feature, which needs no randomness. See [Task sequences stay loadable](#task-sequences-stay-loadable).
 - `TaskSequenceId` holds one or more of `A` to `Z`, digits, `_`, or `-`.
 - `VarName` holds 1 to 256 ASCII letters, digits, `_`, or `-`. Two names that differ only in case are equal. The name keeps the spelling its author wrote. The length, the character classes, and the case rule are MDT's. The ASCII limit is deployarr's choice. See [Variables](#variables).
 - `SettableVarName` is a `VarName` that does not start with `_`. `SetVariable` and the entries of `default_vars` take it, so a sequence cannot set a name that belongs to the agent. Conditions and `FromList` take a `VarName`, so they can still read one.
 - `DefaultVars` keeps its list private, and `DefaultVars::new` rejects two entries whose names are equal in any case. Code that builds a sequence, such as an importer or the editor, therefore cannot write a `default_vars` list that the parser would reject. The JSON is a plain array of entries.
 - `NonEmpty<T>` holds at least one item. `All`, `Any`, and the success list of `ExitCodes` use it, so none of them can be empty.
-- `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, and `AppId` are strings that reject an empty value.
+- `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, `AppId`, and `SecretRef` are strings that reject an empty value. A `SecretRef` names a secret that the server holds, never the secret's value.
+- A step file's `FileName` holds 1 to 255 ASCII letters, digits, `.`, `_`, or `-`, and does not end with `.`. The part before its first `.` is not a name that Windows reserves for a device, such as `NUL`, in any case. Windows treats `NUL.txt` as `NUL` and advises against a name that ends with a period ([Naming Files, Paths, and Namespaces](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)). A step file's name is therefore one file in the step folder and never a path.
 - `DiskSelector` has one rule so far, the first internal, non-removable disk.
 - `MemoryCheck`, `DiskCheck`, and `ProcessorCheck` each hold a minimum and a `mode`, so the JSON for one is an object such as `{"min_mib": 4096, "mode": "fail"}`. The `uefi`, `tpm_2_0`, and `secure_boot` checks have no minimum, so each is a bare `CheckMode`, such as `"warn"`.
 - `min_mib` is in mebibytes of 2^20 bytes, so the default 4096 is 4 GiB. `min_gb` is in decimal gigabytes of 10^9 bytes, the unit that disks are sold in, because a disk sold as 64 GB holds less than 64 GiB. `min_cores` counts processor cores.
@@ -217,7 +218,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 - The top-level `schema_version` is 1. The parser rejects any other version.
 - Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`.
 - A variant with data is an object with one key, the variant's name, such as `{"run_command": {"command": "ipconfig"}}`. A variant without data is a string, such as `"win_pe"`. Each node in `children` is `{"group": ...}` or `{"step": ...}`. This is serde's externally tagged form. The other choice puts a `"type"` key inside the object. serde buffers such an object before it reads the variant, so the path of a parse error stops at `action` and does not reach the field that failed.
-- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `Option` field is none. Every other field is required.
+- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `files` list of a `RunCommand` or `RunPowerShell` action is empty. An omitted `Option` field is none. Every other field is required.
 - An unknown field is an error, so a misspelled field name never passes as a default.
 - The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
 - A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
@@ -234,7 +235,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
   - Two `default_vars` entries that name the same variable, in any case, at the second entry's name, such as `default_vars[1].name`.
 - The compiler rejects a `run_in` that the action cannot honor when the sequence is saved, so that the error names the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
 
-`crates/deployarr-core/tests/data/windows-11-pro.json` is a sample that uses every action and every condition.
+`crates/deployarr-core/tests/data/windows-11-pro.json` is a sample that uses every condition, and every action but the ones that come from add-ons: the add-on step, the join slot, `ServerCall`, and `AddProvisioningPackage`.
 
 ## Task sequence engine
 
@@ -243,7 +244,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 The server compiles a task sequence into a flat list of instructions before it sends it to the agent:
 
 ```rust
-pub fn compile(sequence: &TaskSequence) -> Result<Program, CompileErrors>;
+pub fn compile(sequence: &LoweredSequence) -> Result<Program, CompileErrors>;
 
 pub struct Program {           // only compile builds one
 	source: (TaskSequenceId, u32),
@@ -256,7 +257,7 @@ pub enum Instr {
 	// If the condition is false, jump to `skip_to`, past the group's last child.
 	Enter { node: NodeId, condition: Option<Condition>, skip_to: Pc },
 	// If the condition is false, skip the step.
-	Exec { node: NodeId, condition: Option<Condition>, run_in: RunIn, action: Action, on_error: OnError },
+	Exec { node: NodeId, condition: Option<Condition>, run_in: RunIn, action: BuiltinAction, on_error: OnError },
 }
 
 pub enum OnError {
@@ -283,9 +284,9 @@ The compiler also rejects these mistakes when you save, which MDT finds only at 
 | --- | --- |
 | `PartitionDisk`, `ApplyOsImage`, `ApplyDrivers`, `ApplyUnattend`, `CheckReadiness` | `WinPe` |
 | `InstallApplications`, `VerifyDrivers`, `ActivateWindows` | `FullOs` |
-| `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart` | `WinPe`, `FullOs`, or `Either` |
+| `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart`, `ServerCall`, `AddProvisioningPackage` | `WinPe`, `FullOs`, or `Either` |
 
-- `Action::allowed_run_in` holds the table as one exhaustive match, so a new action does not compile until someone decides where it runs.
+- `BuiltinAction::allowed_run_in` holds the table as one exhaustive match, so a new action does not compile until someone decides where it runs.
 - `compile` returns every error in document order, not only the first.
 - Each error names the node's ID, its path in the tree, such as `root.children[1].group.children[0]`, and the rule. An ID that two nodes share cannot locate either node, so the duplicate error also names the path of the first node with that ID.
 - A disabled node is still part of the sequence that you save, so the `run_in` rule, the WinPE condition rule, and the duplicate ID rule check it. The `Restart` rule reads program order, so it skips disabled nodes (design decision).
@@ -1102,7 +1103,8 @@ The lookup chain's rules stay in the base, as [Lookup chain](#lookup-chain) desc
 
 - `matched_on` is `Option<IdentityKind>`, an enum. In the first design it was a string, and the reference add-on filled it with free text ([Add-on design attacks, item 4](research/addon-design-attacks-wasmtime-50.0.1.md#item-4-wipe-authority-cannot-come-from-free-text)).
 - For an identity resolver, `matched_on` must name a kind, and the server must have sent a fact of that kind. `UsableIdentity` holds the facts that the server may send. Its only constructor drops known placeholders and returns none when nothing is left.
-- For a resolver with a prompt, `matched_on` must be none. The authority is the technician's typed answer.
+- For a resolver with a prompt, `matched_on` must be none, and the server must have sent the answers to the prompt that the resolver declares. The authority is the technician's typed answer. `PromptAnswers` holds at least one answer that is not blank.
+- The authority's variants hold types with private fields, so no other code can build one.
 - Any other combination is an error, and the chain moves on.
 - The host writes the trace line from the fact it sent, never from add-on text.
 - `IdentityKind` lists the system serial, the baseboard serial, the chassis serial, the UUID, and the MAC address. The WIT enum `identity-kind` repeats the list, and a test compares the two. A new kind needs a new API level (design decision).
@@ -1142,20 +1144,20 @@ pub enum BuiltinAction {
 
 Three more names in `deployarr-core` belong to this model:
 
-- `AddOnRef` is an add-on ID plus a kind ID. `Resolver::AddOn` and `JoinProfile::AddOn` each hold one.
+- `AddOnRef` is an add-on ID plus a kind ID. `Resolver::AddOn` and `JoinProfile::AddOn` each hold one. An `AddOnId` is `<publisher>.<name>`. Each part holds 1 to 32 characters, a lower-case ASCII letter and then lower-case ASCII letters, digits, or `-`. A `KindId` follows the same rule with up to 63 characters.
 - `Catalog` is the set of step kind, join kind, resolver, and importer descriptors, from installed add-ons and from remembered ones. The UI and `validate` read it.
-- `deferred` lists every enabled add-on step and `ApplyJoinProfile` join slot in a sequence. The server must expand each one before it compiles.
+- `deferred` lists every enabled add-on step and `ApplyJoinProfile` join slot in a sequence. The server must expand each one before it compiles. It skips a step inside a disabled group, because the compiler drops that step too.
 
 How a stored step behaves:
 
-- **An add-on step is plain data.** In the [JSON format](#json-format) it is `{"add_on": {"addon": "deployarr.autopilot", "kind": "register", "config_version": 1, "config": {"group_tag": "%OrderGroupTag%"}}}`.
+- **An add-on step is plain data.** In the [JSON format](#json-format) it is `{"add_on": {"addon": "deployarr.autopilot", "kind": "register", "config_version": 1, "config": {"group_tag": "%OrderGroupTag%"}}}`. A join slot is `{"apply_join_profile": {"stage": "full_os"}}`, or `offline_image` for the other stage.
 - **The config keeps its bytes.** The step keeps the JSON text that was saved, a `Box<RawValue>`. Parsed into a `serde_json::Value`, a config came back with its keys reordered and a 23-digit integer turned into a float ([Add-on design attacks, item 6](research/addon-design-attacks-wasmtime-50.0.1.md#item-6-stored-steps-lose-bytes-and-fields)).
 - **`Action` reads one key and dispatches.** `Action` has a hand-written `Deserialize`. It reads the object's one key and passes the value on without buffering it:
   - `add_on` goes to `AddOnStep`.
   - `apply_join_profile` goes to the `ApplyJoinProfile` join slot.
   - Any other key goes to `BuiltinAction` through its enum access.
 - **`Action` never uses `#[serde(untagged)]`.** A derived `Action` would need it on `Builtin`, so that a built-in action keeps its own key in JSON. An untagged variant makes serde buffer the whole input first, as an internally tagged enum does. A `Box<RawValue>` field did not parse inside an internally tagged enum (item 6), and an untagged variant buffers the same way, so the add-on step's config would fail. The first design's untagged fallback also hid the real parse error behind one generic message ([Add-on design attacks, finding 23](research/addon-design-attacks-wasmtime-50.0.1.md#finding-23-unknown-fields-on-stored-steps-vanish)).
-- **M0 tests the parser.** That the hand-written `Deserialize` keeps the config's bytes is inferred until M0's round-trip check passes. So is the full path of a parse error inside an add-on step or a built-in action.
+- **M0 tests the parser.** `crates/deployarr-core/tests/addon.rs` shows that the hand-written `Deserialize` keeps the config's bytes, with its keys out of order and the integer `12345678901234567890123`. A bad field inside an add-on step or a built-in action fails with its full path, such as `root.children[0].step.action.add_on.config_version`. The tests of the JSON format parse every sequence through it too.
 - **Unknown fields are errors.** The envelope refuses unknown fields, as every built-in action does. A step from a newer schema is then an error, not a silent loss ([Add-on design attacks, item 6](research/addon-design-attacks-wasmtime-50.0.1.md#item-6-stored-steps-lose-bytes-and-fields)).
 - **Saving runs no add-on code.** `validate` checks the config against the kind's schema at its config version. An unknown kind is a warning, not an error. Only planning a deployment runs add-on code.
 - **A removed add-on's step still shows.** The server keeps a descriptor, the label and the schema, for every step kind and config version that was ever installed, and never deletes it. The editor therefore shows a removed add-on's step as a read-only form with a banner ([MDT 8450 ConfigMgr integration reference](research/mdt-8450-configmgr-integration.md#what-changes-in-deployarr) item 1). The admin can move, disable, or delete the step. The compiler drops a disabled step, so the sequence deploys again.
@@ -1171,14 +1173,17 @@ Planning runs in two parts before the compiler:
 
 `compile` then takes the `LoweredSequence`, so a program that names an add-on does not type-check.
 
-`lower` keeps the step's `NodeMeta` on a group that holds the expansion. The step's condition and `continue_on_error` therefore still apply. `lower` rejects these:
+`lower` keeps the step's `NodeMeta` on a group that holds the expansion. The step's condition and `continue_on_error` therefore still apply. Each child of the expansion is a `Step<Action>`, so that `lower` can see an add-on step inside it. `lower` rejects these:
 
 - a missing expansion
 - an action outside the six that an add-on may return
 - a child with another `run_in`
-- a nested add-on step
+- a nested add-on step or join slot
+- an expansion for a node that `deferred` does not list
 
-The IDs of the new nodes derive from the step's ID, so the same input gives the same program (design decision).
+An add-on step or join slot that `deferred` skips needs no expansion. `lower` turns it into an empty group with the step's `NodeMeta`, and the compiler drops that group.
+
+The IDs of the new nodes derive from the step's ID, so the same input gives the same program (design decision). The ID of child `i` is the version 5 UUID whose namespace is the step's ID and whose name is `i` in decimal ASCII digits. Each child keeps the rest of the `NodeMeta` that its add-on gave it.
 
 ### What runs on the PC
 

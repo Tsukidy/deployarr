@@ -1,16 +1,21 @@
-//! Compiles a task sequence into the flat program that the agent runs. The
-//! server also compiles a sequence when it is saved, to reject one that cannot
-//! run.
+//! Compiles a lowered task sequence into the flat program that the agent
+//! runs. The server also compiles a sequence when it is saved, to reject one
+//! that cannot run.
+//!
+//! [`compile`] takes a [`LoweredSequence`], whose steps hold only built-in
+//! actions, so a program that names an add-on does not type-check.
 
 use alloc::collections::BTreeMap;
 use alloc::collections::btree_map::Entry;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::action::Action;
+use crate::action::BuiltinAction;
 use crate::condition::Condition;
 use crate::non_empty::NonEmpty;
-use crate::sequence::{Group, Node, NodeId, NodeMeta, RunIn, Step, TaskSequence, TaskSequenceId};
+use crate::sequence::{
+    Group, LoweredSequence, Node, NodeId, NodeMeta, RunIn, Step, TaskSequenceId,
+};
 
 /// A task sequence compiled into a flat list of instructions.
 ///
@@ -59,7 +64,7 @@ pub enum Instr {
         node: NodeId,
         condition: Option<Condition>,
         run_in: RunIn,
-        action: Action,
+        action: BuiltinAction,
         on_error: OnError,
     },
 }
@@ -76,7 +81,7 @@ pub enum OnError {
     FailDeployment,
 }
 
-/// Compiles a task sequence into the program that the agent runs.
+/// Compiles a lowered task sequence into the program that the agent runs.
 ///
 /// The compiler drops disabled nodes and works out each step's `on_error`, so
 /// a failure needs no group stack at run time. A group, the root included,
@@ -86,7 +91,7 @@ pub enum OnError {
 /// [`Rule`] lists the rules. A disabled node is still checked against every
 /// rule but the one about program order, because it is still part of the
 /// sequence that is saved.
-pub fn compile(sequence: &TaskSequence) -> Result<Program, CompileErrors> {
+pub fn compile(sequence: &LoweredSequence) -> Result<Program, CompileErrors> {
     let mut compiler = Compiler::default();
     compiler.group(
         &sequence.root,
@@ -127,14 +132,14 @@ enum Place {
 }
 
 impl Compiler {
-    fn node(&mut self, node: &Node, place: Place) {
+    fn node(&mut self, node: &Node<BuiltinAction>, place: Place) {
         match node {
             Node::Group(group) => self.group(group, place),
             Node::Step(step) => self.step(step, place),
         }
     }
 
-    fn group(&mut self, group: &Group, place: Place) {
+    fn group(&mut self, group: &Group<BuiltinAction>, place: Place) {
         let meta = &group.meta;
         self.check_id(meta);
         let (children, end) = match place {
@@ -168,7 +173,7 @@ impl Compiler {
         }
     }
 
-    fn step(&mut self, step: &Step, place: Place) {
+    fn step(&mut self, step: &Step<BuiltinAction>, place: Place) {
         let meta = &step.meta;
         self.check_id(meta);
         self.check_step(step);
@@ -210,7 +215,7 @@ impl Compiler {
     }
 
     /// The rules about the step by itself, which cover every step.
-    fn check_step(&mut self, step: &Step) {
+    fn check_step(&mut self, step: &Step<BuiltinAction>) {
         let allowed = step.action.allowed_run_in();
         if !allowed.contains(&step.run_in) {
             self.fail(
@@ -231,10 +236,10 @@ impl Compiler {
 
     /// The rules about program order, which cover only the steps that the
     /// program keeps.
-    fn check_order(&mut self, step: &Step) {
+    fn check_order(&mut self, step: &Step<BuiltinAction>) {
         match step.action {
-            Action::PartitionDisk { .. } => self.partitioned = true,
-            Action::Restart { .. } if step.run_in == RunIn::WinPe && !self.partitioned => {
+            BuiltinAction::PartitionDisk { .. } => self.partitioned = true,
+            BuiltinAction::Restart { .. } if step.run_in == RunIn::WinPe && !self.partitioned => {
                 self.fail(step.meta.id, Rule::RestartBeforePartition);
             }
             _ => {}
@@ -252,7 +257,7 @@ impl Compiler {
 
 /// How many instructions a kept group compiles to: its `Enter`, and one for
 /// each kept node inside it.
-fn kept_len(group: &Group) -> usize {
+fn kept_len(group: &Group<BuiltinAction>) -> usize {
     let children: usize = group
         .children
         .iter()
@@ -283,25 +288,27 @@ fn full_os_only(condition: &Condition) -> Option<&'static str> {
 }
 
 /// The action's key in the JSON format.
-fn action_name(action: &Action) -> &'static str {
+pub(crate) fn action_name(action: &BuiltinAction) -> &'static str {
     match action {
-        Action::RunCommand { .. } => "run_command",
-        Action::RunPowerShell { .. } => "run_powershell",
-        Action::SetVariable { .. } => "set_variable",
-        Action::Restart { .. } => "restart",
-        Action::PartitionDisk { .. } => "partition_disk",
-        Action::ApplyOsImage { .. } => "apply_os_image",
-        Action::ApplyDrivers { .. } => "apply_drivers",
-        Action::ApplyUnattend { .. } => "apply_unattend",
-        Action::InstallApplications { .. } => "install_applications",
-        Action::VerifyDrivers { .. } => "verify_drivers",
-        Action::CheckReadiness { .. } => "check_readiness",
-        Action::ActivateWindows { .. } => "activate_windows",
+        BuiltinAction::RunCommand { .. } => "run_command",
+        BuiltinAction::RunPowerShell { .. } => "run_powershell",
+        BuiltinAction::SetVariable { .. } => "set_variable",
+        BuiltinAction::Restart { .. } => "restart",
+        BuiltinAction::PartitionDisk { .. } => "partition_disk",
+        BuiltinAction::ApplyOsImage { .. } => "apply_os_image",
+        BuiltinAction::ApplyDrivers { .. } => "apply_drivers",
+        BuiltinAction::ApplyUnattend { .. } => "apply_unattend",
+        BuiltinAction::InstallApplications { .. } => "install_applications",
+        BuiltinAction::VerifyDrivers { .. } => "verify_drivers",
+        BuiltinAction::CheckReadiness { .. } => "check_readiness",
+        BuiltinAction::ActivateWindows { .. } => "activate_windows",
+        BuiltinAction::ServerCall { .. } => "server_call",
+        BuiltinAction::AddProvisioningPackage { .. } => "add_provisioning_package",
     }
 }
 
 /// The `run_in` value as the JSON format writes it.
-fn run_in_name(run_in: RunIn) -> &'static str {
+pub(crate) fn run_in_name(run_in: RunIn) -> &'static str {
     match run_in {
         RunIn::WinPe => "win_pe",
         RunIn::FullOs => "full_os",
@@ -365,7 +372,7 @@ impl core::error::Error for CompileError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Rule {
     /// The step's `run_in` is not one that its action allows. See
-    /// [`Action::allowed_run_in`]. Disabled steps count.
+    /// [`BuiltinAction::allowed_run_in`]. Disabled steps count.
     RunIn {
         action: &'static str,
         run_in: RunIn,
@@ -455,7 +462,7 @@ impl core::error::Error for CompileErrors {}
 mod tests {
     use super::*;
 
-    fn steps<'a>(group: &'a Group, out: &mut Vec<&'a Step>) {
+    fn steps<'a>(group: &'a Group<BuiltinAction>, out: &mut Vec<&'a Step<BuiltinAction>>) {
         for child in &group.children {
             match child {
                 Node::Group(group) => steps(group, out),
@@ -466,22 +473,34 @@ mod tests {
 
     #[test]
     fn action_names_are_the_json_keys() {
-        let sequence = TaskSequence::from_json(include_str!("../tests/data/windows-11-pro.json"))
-            .expect("the sample parses");
+        let sequence =
+            LoweredSequence::from_json(include_str!("../tests/data/windows-11-pro.json"))
+                .expect("the sample parses");
         let mut all = Vec::new();
         steps(&sequence.root, &mut all);
+        let mut actions: Vec<BuiltinAction> =
+            all.into_iter().map(|step| step.action.clone()).collect();
+        // The sample uses every action but the two that add-on steps expand to.
+        actions.push(BuiltinAction::ServerCall {
+            send: alloc::vec!["SerialNumber".parse().expect("a valid name")],
+            limits: crate::action::StepLimits::default(),
+        });
+        actions.push(BuiltinAction::AddProvisioningPackage {
+            package: "enrollment".parse().expect("a valid secret reference"),
+            limits: crate::action::StepLimits::default(),
+        });
         let mut seen = alloc::collections::BTreeSet::new();
-        for step in all {
-            let json = serde_json::to_value(&step.action).expect("an action serializes");
+        for action in &actions {
+            let json = serde_json::to_value(action).expect("an action serializes");
             let key = json
                 .as_object()
                 .and_then(|object| object.keys().next())
                 .expect("an action is an object with one key");
-            assert_eq!(action_name(&step.action), key);
-            seen.insert(action_name(&step.action));
+            assert_eq!(action_name(action), key);
+            seen.insert(action_name(action));
         }
-        // The sample uses every action, so every name was checked.
-        assert_eq!(seen.len(), 12);
+        // Every action was checked.
+        assert_eq!(seen.len(), 14);
     }
 
     #[test]
