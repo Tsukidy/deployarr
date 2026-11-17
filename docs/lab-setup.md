@@ -105,14 +105,16 @@ The script creates the bridge `br-lab` with the address `10.41.0.1/24`, and one 
 
 dnsmasq runs in its own network namespace, `deployarr-lab-dhcp`. A veth pair joins the namespace to `br-lab`. Its end on the bridge is `veth-lab-dhcp`, and its end in the namespace is `dhcp0`, with the address `10.41.0.2`. So dnsmasq holds UDP port 67 only in that namespace, and any program on the lab host, such as the PXE prototype or deployarr, can bind port 67 on `br-lab`. [DHCP](architecture.md#dhcp) says why deployarr needs that.
 
-The last lines show `dnsmasq is running in namespace deployarr-lab-dhcp` and `0.0.0.0%dhcp0:67`. dnsmasq writes its log to `/run/deployarr-lab/dnsmasq.log` and its leases to `/run/deployarr-lab/dnsmasq.leases`. Both belong to root:
+The last lines show `dnsmasq is running in namespace deployarr-lab-dhcp` and `0.0.0.0%dhcp0:67`. dnsmasq writes its log to `/run/deployarr-lab/dnsmasq.log` and its leases to `/run/deployarr-lab/dnsmasq.leases`. Only root can read the log:
 
 ```bash
 sudo tail /run/deployarr-lab/dnsmasq.log
 ```
 
+Any user can read the leases:
+
 ```bash
-sudo cat /run/deployarr-lab/dnsmasq.leases
+cat /run/deployarr-lab/dnsmasq.leases
 ```
 
 The network does not survive a reboot. Run the command again after each reboot. Running it again also moves a dnsmasq that an earlier version of the script started on the lab host into the namespace. To remove the network, run `sudo tools/lab/network.sh down`. It removes the namespace and the veth pair too.
@@ -273,7 +275,8 @@ To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. Th
 | `dumpcap` says that the file `could not be opened: Permission denied` | `dumpcap` cannot open a file in your home folder. Add `-w -` and redirect its output to the file, as in [Run an experiment](#run-an-experiment). |
 | `tshark` says `You don't have permission to read the file` | The AppArmor profile for `tshark` blocks the path. Give the file on standard input with `tshark -r - < <file>`, as in [Run an experiment](#run-an-experiment). |
 | The PXE prototype cannot bind port 67, or `sudo ss -ulpn 'sport = :67'` on the lab host shows a program | Another DHCP server holds port 67 in the lab host's network stack. The lab's dnsmasq runs in its own namespace and never shows here. Common ones are the `dnsmasq` service and libvirt's `default` network. Stop it, or bind it to its own interface as the [prototype README](../tools/pxe-prototype/README.md#share-port-67-with-dnsmasq) says. |
-| The check fails on `dnsmasq gave an address` for every VM | A firewall drops DHCP on the bridge. If `sudo ufw status` says `active`, run `sudo ufw allow in on br-lab`. |
+| The check fails on `dnsmasq gave an address` for every VM | The lab host filters traffic that crosses the bridge. That happens when the `br_netfilter` module is loaded, which Docker does, and `cat /proc/sys/net/bridge/bridge-nf-call-iptables` prints `1`. Allow the bridged traffic with `sudo ufw route allow in on br-lab out on br-lab`, or set `net.bridge.bridge-nf-call-iptables` to `0`. |
+| The check fails on `the PXE prototype answered on port 4011` for every VM | A firewall on the lab host drops the requests to the prototype. If `sudo ufw status` says `active`, run `sudo ufw allow in on br-lab`. |
 | The check fails on `host CPU` | The line names each processor feature that the host's CPU lacks. The VMs use the host's CPU model, so Windows 11 in a lab VM lacks the same features. Use a host whose CPU has every feature in the [Test lab](roadmap.md#test-lab) section. |
 | The check fails on option 97 for `bios` | The VM did not get the SMBIOS setting. Check that `tools/lab/vm.sh` is unchanged. |
 | The check fails on `Access Denied` | Secure Boot is off in that VM. Delete `~/deployarr-lab/uefi/vars.fd` or `~/deployarr-lab/uefi2023/vars.fd`, and redo step 3 for `uefi2023`. |
