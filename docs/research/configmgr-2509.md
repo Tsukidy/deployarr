@@ -27,6 +27,7 @@ The first analysis recorded these REA evidence IDs for its claims.
 | [Upgrade Operating System](#upgrade-operating-system) | `decompile-all`, `ev_a121464baf757a40b99affbc65d2db1bcdd4306e4df8ab54c16e3ff42a3e775f` | `OSD/bin/x64/OSDUpgradeOS.exe`, `0d1e99c549c8cc5ba6920567cf6b454f3aa49850e4b7b7f5d46641d026c944d8` |
 | [Secure Boot state](#secure-boot-state) | `decompile-all --name SecureBoot`, `ev_d4c47613550e14cb5a32dd51aa7593457deed98bdcaed662758eb85ace985391` | `OSD/bin/x64/tscore.dll`, `3d33992cf04eeb09e7df4e80d78a54f891d38b2268cabc879703be559b4655de` |
 | [Default disk layouts](#default-disk-layouts) | `inspect_managed_artifact`, `ev_8b98724c891861233d85ef2fb9c3ecd6a7ca0d8e28af2f2563fdb1df98c498b8`, and `inspect_managed_members`, `ev_46c2dd1a16580bba7ae49eb5a91514b0c6aebea3d214b416b0aba90c8adbf160`. `tools/re/configmgr-osd/ildump.py` read the CIL constants | `AdminUI.NewTaskSequenceWizard.dll` from `BIN/I386/AdminConsole.msi`, `fef1dfd95404ec421b040a3b1a6ac11486d5d1178269fe462d90574a44847844` |
+| [Install Software Updates](#install-software-updates) | `decompile-all` with Ghidra 12.1.4, `ev_c59b7655c24b5985b29816e56a3c801ab0230ca8bf642ee5070eaf49ccccb757`. Rizin 0.7.4 read the return values and loop bounds from the disassembly | `OSD/bin/x64/TsInstallSWUpdate.exe`, `e0db1b84d5640ce32940beeaf0e2f026c695c4c74fefe3ffffc4071db0c35d90` |
 | The signature in [Sources](#sources) | `inspect_pe_certificates`, `ev_c1b22eacd94945b947ce67bf114165ad408436f4c4933ee7c8b9687a25376001` | |
 | [MDT components](#mdt-components), the step catalog, and the binary inventory | `tools/re/configmgr-osd/reproduce.sh` | |
 
@@ -189,6 +190,75 @@ Other behavior:
 - MDT's gather also sets `IsServer`, `IsOnBattery`, `Memory`, and `ProcessorSpeed` (`ZTIGather.wsf:631-639`). Set Dynamic Variables gathers none of these values (inferred from the gathered variables above).
 - MDT's rules can query a database or a web service ([MDT 8456 reference](mdt-8456.md#rules-and-database-lookup)). The rules of Set Dynamic Variables have no such lookup (inferred from the rule format above).
 
+## Install Software Updates
+
+The Install Software Updates step runs `TSInstallSWUpdate.exe /target:%%SMSInstallUpdateTarget%%` (`_TaskSequenceProvider.mof:533-555`). The binary is `OSD/bin/x64/TsInstallSWUpdate.exe`, version 5.00.9141.1002. Its strings name the source files `client\OsDeployment\InstallSWUpdate\main.cpp` and `installswupdate.cpp`. MDT's counterpart is `ZTIWindowsUpdate.wsf`, which the [MDT 8456 reference](mdt-8456.md#windows-update) describes.
+
+### Properties and variables
+
+| Property or variable | Default | Effect | Source |
+| --- | --- | --- | --- |
+| `Target`, variable `SMSInstallUpdateTarget` | none | `All` or `Mandatory` | `_TaskSequenceProvider.mof:545-546` |
+| `UseCache`, variable `SMSTSSoftwareUpdateScanUseCache` | `true` | `false` makes each scan a full scan instead of one from cached results | `_TaskSequenceProvider.mof:547-548`, `TsInstallSWUpdate!0x14000e1b0` |
+| `RetryCount` | `"2"` | See the note below | `_TaskSequenceProvider.mof:550-551` |
+| `SupportedEnvironment` | `FullOS` | The step runs only in the full OS | `_TaskSequenceProvider.mof:553` |
+| `SMSTSSoftwareUpdateScanTimeout` | 3,600 seconds | How long the step waits for a scan | `TsInstallSWUpdate!0x140010514` |
+| `SMSTSMPListRequestTimeoutEnabled`, `SMSTSMPListRequestTimeout` | 60,000 ms | Whether the step checks the client's network location before a scan, and the wait between its 3 tries | `TsInstallSWUpdate!0x140010aa8` |
+| `SMSTSInstallUpdateJobGUID` | | The running install job | `TsInstallSWUpdate!0x1400075e8`, `TsInstallSWUpdate!0x140004e00` |
+| `SMSTSPendingRebootUpdateIDs` | | The updates that wait for a reboot | `TsInstallSWUpdate!0x14000fedc` |
+| `_SMSTSSoftwareUpdatePolicy`, `_SMSTSScanToolPolicy`, `_SMSTSCIVersionInfoPolicy` | | Update policies that the step compiles into the client's `root\ccm\policy\defaultmachine\requestedconfig` namespace before each pass | `TsInstallSWUpdate!0x14000e1b0`, `TsInstallSWUpdate!0x14000a1f4` |
+
+The engine handles an outside shutdown during a step with the step's `retryCount` attribute, but only when it runs as the ConfigMgr service ([MDT 8450 binaries reference](mdt-8450-binaries.md#reboots)). The `RetryCount` property sets that attribute to 2 for this step (inferred from the `[RetryCount]` qualifier). Install Application has the same default (`_TaskSequenceProvider.mof:618-619`).
+
+### Flow
+
+1. `wmain` opens the task sequence environment. In WinPE it logs "Windows PE is not supported" and exits with `0x80004005` (`TsInstallSWUpdate!0x140005428`).
+2. It parses `/target:`. It accepts `All`, `Mandatory`, and `Assignment`, and logs "Invalid target type" for anything else (`TsInstallSWUpdate!0x140003d4c`). `Assignment`, and a check after an upgrade when `OSDUpgradeOS.exe` is the caller, serve feature updates for [Upgrade Operating System](#upgrade-operating-system) (`TsInstallSWUpdate!0x140005428`, `TsInstallSWUpdate!0x140004e00`). This page leaves them out, because in-place upgrades are not in deployarr's first release.
+3. It waits for the ConfigMgr client process, `ccmexec`, to start (`TsInstallSWUpdate!0x140005428`, `TsInstallSWUpdate!0x14000733c`).
+4. If `SMSTSInstallUpdateJobGUID` names a job from an earlier run, the step reconnects to that job instead of starting a new one. It clears the variable when it ends (`TsInstallSWUpdate!0x140004e00`, `TsInstallSWUpdate!0x14000ee84`).
+5. Otherwise it runs up to six install passes (`TsInstallSWUpdate!0x140004698`, loop test at `0x140004c95`). Each pass does the following:
+   1. It compiles the update policies and checks the client's network location (`TsInstallSWUpdate!0x14000e1b0`, `TsInstallSWUpdate!0x140010aa8`).
+   2. It asks the client to scan, from the cache or in full (`TsInstallSWUpdate!0x140010e58`).
+   3. It starts an install job for the target and waits for the job to finish (`TsInstallSWUpdate!0x1400075e8`, `TsInstallSWUpdate!0x14000f534`).
+   4. It reads whether a reboot is pending and whether an update failed (`TsInstallSWUpdate!0x1400103f8`).
+   5. If neither, it scans again and checks whether every targeted update is installed (`TsInstallSWUpdate!0x14000d34c`).
+
+### Update source and filters
+
+- The step drives the ConfigMgr client's Updates Deployment Agent through the `IPrivilegedInstall2`, `ICIAgentCallback`, and `IRefreshUpdatesCallback` interfaces (`TsInstallSWUpdate!0x14000e1b0`, `TsInstallSWUpdate!0x140010e58`). It does not call the Windows Update Agent itself (inferred). The binary does not import `wuapi.dll` and has no `Microsoft.Update` string.
+- Before a scan, the step reads `WUServer` and `WUStatusServer` from `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate` and logs them. When the key is missing, it logs "Windows Update is not configured on this client machine" as a warning and goes on (`TsInstallSWUpdate!0x140010e58`). The client therefore scans against the WSUS server in that policy (inferred).
+- The step installs only updates that are deployed to the PC. `All` logs "Installing all updates targetted for this computer", and `Mandatory` logs "Installing mandatory updates". The two targets call different methods of `IPrivilegedInstall2` (`TsInstallSWUpdate!0x1400075e8`).
+- With `Mandatory`, the check after a pass skips each update for which a floating-point value from the client is zero (`TsInstallSWUpdate!0x14000d34c`). That value is the deployment deadline as a COM date (inferred).
+- The step has no KB, category, or update ID filter of its own. The admin's deployments are the filter (inferred from the properties and variables above).
+
+### Waits
+
+- A scan waits up to `SMSTSSoftwareUpdateScanTimeout` seconds, one hour by default. Then the step logs "Time-out expired waiting for updates refresh complete notification." (`TsInstallSWUpdate!0x140010514`).
+- When the client answers `0x87D00703`, which the step logs as "UDA is processing another job", the step sleeps 60 seconds and tries again, up to 30 times. After that it logs "Another job is still in progress. The action will end now." (`TsInstallSWUpdate!0x1400075e8`). A scan that gets `0x87D00703` waits for the scan that is already running (`TsInstallSWUpdate!0x140010e58`).
+- The wait for an install job has no overall limit. Every 60 seconds without a notification, the step checks that the client is still connected and reconnects to the job if it is not (`TsInstallSWUpdate!0x14000f534`).
+
+### Results, reboots, and exit codes
+
+| Result of a pass | What the step does | Return value |
+| --- | --- | --- |
+| The client answers `0x87D00708` | Logs "No updates need to be installed on this machine." | 0 |
+| The pass ends with any other error | Ends the step | That error |
+| An update failed | Logs "One or more updates failed to install, hr=0x%08lx" | The failure's HRESULT |
+| A reboot is pending | Sets `SMSTSRebootRequested` to `HD` and `SMSTSRetryRequested` to `TRUE`, and logs "Installation is not yet complete, action needs to be re-run after reboot" | 0 |
+| Every targeted update is installed | Logs "Installation of updates completed successfully" | 0 |
+| Updates are still missing | Logs "Some updates still need to be installed." and starts the next pass | |
+| Six passes ran and updates are still missing | Logs "Retry count is reached. Out of the loop" | 0 |
+
+- The table comes from `TsInstallSWUpdate!0x140004698`. The step checks for a failed update before it checks for a pending reboot, so a failure wins.
+- The pass loop's value passes through `TsInstallSWUpdate!0x140004e00` (at `0x1400052f7` and `0x140005403`) to `wmain`, and the process exits with it (`TsInstallSWUpdate!0x140005428`, at `0x140005f08` and `0x140006116`). A failed update therefore fails the step, unless the step continues on error.
+- After six passes with updates still missing, the step succeeds (`TsInstallSWUpdate!0x140004698`, at `0x140004ceb`).
+- `HD` means a reboot into the installed OS, as in `smsboot.exe /target:HD` ([MDT 8450 binaries reference](mdt-8450-binaries.md#reboots)) (inferred).
+
+### Logs
+
+- The step sets up its logging with the name `InstallSWUpdate`. Its first line is `=======================[ tsinstallswupdate.exe ] =======================` (`TsInstallSWUpdate!0x140005428`). These lines go to `smsts.log` (inferred).
+- When the step starts a scan or an install job, it names the client logs to read: `UpdatesDeployment.log`, `UpdatesHandler.log`, `UpdatesStore.log`, `wuahandler.log`, and `WindowsUpdate.log` (`TsInstallSWUpdate!0x140009ce0`, `TsInstallSWUpdate!0x1400075e8`).
+
 ## PXE responder
 
 ConfigMgr 2509 has two PXE paths. `BIN/X64/smspxe.dll` is a provider that runs inside WDS. `BIN/X64/sccmpxe.exe` is a service with its own DHCP and TFTP code, so it needs no WDS. This section describes `sccmpxe.exe` unless it names `smspxe.dll`. In WinPE, `OSD/bin/x64/TsPxe.dll` and `OSD/bin/x64/smstftp.exe` pick up where the boot ends.
@@ -334,6 +404,14 @@ The service answers DHCPv6 SOLICIT and REQUEST messages that ask for option 59. 
 | `GetSecureBootState` keeps a third value, `NA`, for a missing registry value | The agent's Secure Boot fact has three values: on, off, and unknown. Unknown never counts as off |
 | Windows 11 requires Secure Boot capable firmware, not Secure Boot on | The Secure Boot check warns by default instead of failing |
 | The wizard sizes Recovery as about 1% of the disk | The server sizes Recovery from the image's `winre.wim` plus 250 MB, as Microsoft documents. See [Disk layout and boot files](../architecture.md#disk-layout-and-boot-files) |
+| Install Software Updates needs the ConfigMgr client and installs only updates that an admin deployed through ConfigMgr. It does not call the Windows Update Agent itself (inferred) | deployarr has no such client, so its agent drives the Windows Update Agent API directly, as MDT's `ZTIWindowsUpdate.wsf` does ([MDT 8456 reference](mdt-8456.md#windows-update)) |
+| ConfigMgr's step fails in WinPE, and MDT's script reboots and tries again there | The Windows Update action runs only in the full OS, after the [handoff to the agent service](../architecture.md#handoff-from-winpe-to-the-new-os) |
+| A pending reboot sets `SMSTSRebootRequested` and `SMSTSRetryRequested`, and the step exits 0. MDT's script does the same | The action returns `Reboot { rerun: true }` while an update waits for a reboot. See [State on disk and resume](../architecture.md#state-on-disk-and-resume) |
+| A failed update fails the step at once with the failure's HRESULT. MDT's script reboots and tries again instead | No decision now on which behavior deployarr takes. Either way, the step result lists each update with its result code and HRESULT |
+| After six passes with updates still missing, the step succeeds. MDT's script fails its eighth pass with 9902, but MDT's templates continue on error | When the action stops at its pass limit, its result lists the updates still missing. No decision now on whether that fails the step or only warns |
+| A scan waits at most an hour and a busy client gets 30 tries a minute apart, but the wait for an install job has no limit | The search, the download, and the install each have a time limit that a setting can change. When one passes, the step fails with a timeout error |
+| The step saves its job ID, so a run after an unexpected restart reconnects to the job instead of starting another | An action that a crash interrupts runs again from a new search, which finds only the updates still missing, so it needs no job ID (inferred). See [State on disk and resume](../architecture.md#state-on-disk-and-resume) |
+| The step's own log says little about each update and points to five client logs | The agent log records each update found, whether it was installed or skipped and why, and its result, as MDT's log does |
 | The 2509 `IsUEFI` enables the privilege first, but reports BIOS when it cannot enable it | No change. The agent already calls `GetFirmwareType` and uses the firmware variable check only as a fallback |
 | ConfigMgr builds an in-place upgrade from `setup.exe /auto` with `/postoobe`, `/postrollback`, and `/compat ScanOnly` | No change now, because in-place upgrades are not in the first release. This page is the reference when they are |
 | Set Dynamic Variables gathers no chassis type and no virtual machine (VM) flag. MDT's gather sets laptop, desktop, and server flags from the chassis type, and `IsVM` from make and model strings ([MDT 8456 reference](mdt-8456.md#gathered-facts)) | The agent gathers the SMBIOS chassis type, MDT's laptop, desktop, and server flags, a VM flag, and the hypervisor vendor. The VM flag comes from the CPU's hypervisor present bit and the SMBIOS VM bit, never from make or model strings. See [Agent](../architecture.md#agent) |
