@@ -1,9 +1,10 @@
 use std::collections::BTreeSet;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU8, NonZeroU32};
 
 use deployarr_core::action::{
     Action, AppSelection, BuiltinAction, CheckMode, DiskCheck, DiskSelector, ExitCodes,
-    MemoryCheck, ProcessorCheck, ReadinessChecks, StepLimits,
+    MemoryCheck, MissingUpdatePolicy, ProcessorCheck, ReadinessChecks, StepLimits, UpdateExclusion,
+    UpdateSource, UpdateTimeouts, WsusUrl,
 };
 use deployarr_core::condition::{Comparison, Condition, FileVersion, RegData, Test};
 use deployarr_core::sequence::{
@@ -12,6 +13,7 @@ use deployarr_core::sequence::{
 use deployarr_core::template::Template;
 use deployarr_core::variable::{SettableVarName, VarAssignment, VarName};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 const SAMPLE: &str = include_str!("data/windows-11-pro.json");
 
@@ -54,6 +56,7 @@ fn action_name(action: &Action) -> &'static str {
         BuiltinAction::ApplyDrivers { .. } => "ApplyDrivers",
         BuiltinAction::ApplyUnattend { .. } => "ApplyUnattend",
         BuiltinAction::InstallApplications { .. } => "InstallApplications",
+        BuiltinAction::InstallUpdates { .. } => "InstallUpdates",
         BuiltinAction::VerifyDrivers { .. } => "VerifyDrivers",
         BuiltinAction::CheckReadiness { .. } => "CheckReadiness",
         BuiltinAction::ActivateWindows { .. } => "ActivateWindows",
@@ -137,6 +140,7 @@ fn sample_uses_every_condition_and_every_action_outside_add_ons() {
             "ApplyUnattend",
             "CheckReadiness",
             "InstallApplications",
+            "InstallUpdates",
             "PartitionDisk",
             "Restart",
             "RunCommand",
@@ -1007,4 +1011,285 @@ fn an_omitted_list_in_exit_takes_its_default() {
     };
     assert_eq!(exit.success(), [0, 1]);
     assert_eq!(exit.reboot(), [3010, 1641]);
+}
+
+// The settings of `install_updates`. Every field has a default, and the
+// serializer writes every field.
+
+const INSTALL_UPDATES: &str = "root.children[0].step.action.install_updates";
+
+fn install_updates(settings: Value) -> Value {
+    sequence_with_action(json!({ "install_updates": settings }))
+}
+
+fn secs(n: u32) -> NonZeroU32 {
+    NonZeroU32::new(n).expect("not zero")
+}
+
+fn passes(n: u8) -> NonZeroU8 {
+    NonZeroU8::new(n).expect("not zero")
+}
+
+fn written_settings(sequence: &AuthoredSequence) -> Value {
+    let written = serde_json::to_value(sequence).expect("a task sequence serializes");
+    written["root"]["children"][0]["step"]["action"]["install_updates"].clone()
+}
+
+#[test]
+fn omitted_update_settings_take_the_documented_defaults() {
+    let document = install_updates(json!({}));
+
+    let action = only_step_action(document.clone());
+
+    assert_eq!(
+        action,
+        BuiltinAction::InstallUpdates {
+            source: UpdateSource::WindowsUpdate,
+            missing: MissingUpdatePolicy::Warn,
+            max_passes: passes(7),
+            exclude: Vec::new(),
+            timeouts: UpdateTimeouts {
+                search_secs: secs(3600),
+                download_secs: secs(7200),
+                install_secs: secs(7200),
+            },
+        }
+    );
+    let sequence = parse(&document).expect("the document parses");
+    assert_eq!(
+        written_settings(&sequence),
+        json!({
+            "source": "windows_update",
+            "missing": "warn",
+            "max_passes": 7,
+            "exclude": [],
+            "timeouts": { "search_secs": 3600, "download_secs": 7200, "install_secs": 7200 },
+        })
+    );
+}
+
+#[test]
+fn update_timeouts_that_set_one_limit_keep_the_other_defaults() {
+    let action = only_step_action(install_updates(json!({
+        "timeouts": { "download_secs": 600 },
+    })));
+
+    let BuiltinAction::InstallUpdates { timeouts, .. } = action else {
+        panic!("expected InstallUpdates, found {action:?}");
+    };
+    assert_eq!(
+        timeouts,
+        UpdateTimeouts {
+            download_secs: secs(600),
+            ..UpdateTimeouts::default()
+        }
+    );
+}
+
+#[test]
+fn update_settings_with_a_wsus_server_and_both_kinds_of_exclusion_round_trip() {
+    let settings = json!({
+        "source": { "wsus": "https://wsus.example.com:8531" },
+        "missing": "fail",
+        "max_passes": 3,
+        "exclude": [
+            { "kb": 5034441 },
+            { "update_id": "e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f21" },
+        ],
+        "timeouts": { "search_secs": 600, "download_secs": 1800, "install_secs": 3600 },
+    });
+    let document = install_updates(settings.clone());
+
+    let sequence = parse(&document).expect("the document parses");
+
+    let [Node::Step(step)] = sequence.root.children.as_slice() else {
+        panic!("expected one step");
+    };
+    assert_eq!(
+        step.action,
+        Action::Builtin(BuiltinAction::InstallUpdates {
+            source: UpdateSource::Wsus(
+                "https://wsus.example.com:8531"
+                    .parse()
+                    .expect("a valid WSUS URL")
+            ),
+            missing: MissingUpdatePolicy::Fail,
+            max_passes: passes(3),
+            exclude: vec![
+                UpdateExclusion::Kb(secs(5_034_441)),
+                UpdateExclusion::UpdateId(Uuid::from_u128(0xe2b6a5f1_4c3d_4b2a_9f8e_7d6c5b4a3f21)),
+            ],
+            timeouts: UpdateTimeouts {
+                search_secs: secs(600),
+                download_secs: secs(1800),
+                install_secs: secs(3600),
+            },
+        })
+    );
+    assert_eq!(written_settings(&sequence), settings);
+    let written = serde_json::to_string(&sequence).expect("a task sequence serializes");
+    assert_eq!(AuthoredSequence::from_json(&written), Ok(sequence));
+}
+
+#[test]
+fn an_update_id_is_written_in_lower_case_without_braces() {
+    for id in [
+        "{E2B6A5F1-4C3D-4B2A-9F8E-7D6C5B4A3F21}",
+        "E2B6A5F1-4C3D-4B2A-9F8E-7D6C5B4A3F21",
+        "{e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f21}",
+    ] {
+        let document = install_updates(json!({ "exclude": [{ "update_id": id }] }));
+
+        let sequence = parse(&document).unwrap_or_else(|error| panic!("{id}: {error}"));
+
+        assert_eq!(
+            written_settings(&sequence)["exclude"],
+            json!([{ "update_id": "e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f21" }]),
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn a_bad_update_setting_fails_and_the_error_names_its_field() {
+    let cases = [
+        (json!({ "max_passes": 0 }), ".max_passes"),
+        (
+            json!({ "timeouts": { "search_secs": 0 } }),
+            ".timeouts.search_secs",
+        ),
+        (
+            json!({ "timeouts": { "download_secs": 0 } }),
+            ".timeouts.download_secs",
+        ),
+        (
+            json!({ "timeouts": { "install_secs": 0 } }),
+            ".timeouts.install_secs",
+        ),
+        (json!({ "source": { "wsus": "" } }), ".source.wsus"),
+        (
+            json!({ "source": { "wsus": "ftp://wsus.example.com" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "wsus.example.com:8531" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "HTTPS://wsus.example.com:8531" } }),
+            ".source.wsus",
+        ),
+        (json!({ "source": { "wsus": "https://" } }), ".source.wsus"),
+        (
+            json!({ "source": { "wsus": "https://:8531/" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com :8531" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com:8531\n" } }),
+            ".source.wsus",
+        ),
+        // A WSUS source without its URL.
+        (json!({ "source": "wsus" }), ".source.wsus"),
+        (json!({ "source": "microsoft_update" }), ".source"),
+        (json!({ "missing": "retry" }), ".missing"),
+        (json!({ "exclude": [{ "kb": 0 }] }), ".exclude[0].kb"),
+        (
+            json!({ "exclude": [{ "kb": "KB5034441" }] }),
+            ".exclude[0].kb",
+        ),
+        (
+            json!({ "exclude": [{ "kb": 5034441 }, { "update_id": "not-a-guid" }] }),
+            ".exclude[1].update_id",
+        ),
+        (
+            json!({ "exclude": [{ "update_id": "e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f2" }] }),
+            ".exclude[0].update_id",
+        ),
+    ];
+
+    for (settings, field) in cases {
+        let document = install_updates(settings);
+
+        assert_fails_at(&document, &format!("{INSTALL_UPDATES}{field}"));
+    }
+}
+
+#[test]
+fn an_unknown_update_setting_fails_and_the_error_names_it() {
+    let cases = [
+        (json!({ "passes": 3 }), ".passes", "passes"),
+        (
+            json!({ "timeouts": { "scan_secs": 60 } }),
+            ".timeouts.scan_secs",
+            "scan_secs",
+        ),
+        // An unknown kind of exclusion fails at the exclusion.
+        (
+            json!({ "exclude": [{ "title": "x" }] }),
+            ".exclude[0]",
+            "title",
+        ),
+    ];
+
+    for (settings, field, unknown) in cases {
+        let document = install_updates(settings.clone());
+
+        let error = assert_fails_at(&document, &format!("{INSTALL_UPDATES}{field}"));
+
+        assert!(
+            error.to_string().contains(&format!("`{unknown}`")),
+            "{settings}: {error}"
+        );
+    }
+}
+
+#[test]
+fn a_wsus_url_with_user_information_fails_and_the_error_holds_none_of_it() {
+    for url in [
+        "https://admin:Hunter2@wsus.example.com:8531",
+        "http://admin@wsus.example.com",
+        "https://admin:Hunter2@wsus.example.com:8531/ClientWebService",
+        "https://wsus.example.com\\admin:Hunter2@wsus.example.com",
+        "ftp://admin:Hunter2@wsus.example.com",
+        "https://admin:Hunter 2@wsus.example.com",
+    ] {
+        let document = install_updates(json!({ "source": { "wsus": url } }));
+
+        let error = assert_fails_at(&document, &format!("{INSTALL_UPDATES}.source.wsus"));
+
+        for text in [error.to_string(), format!("{error:?}")] {
+            assert!(
+                !text.contains("admin") && !text.contains("Hunter"),
+                "{url}: {text}"
+            );
+        }
+        let error = url.parse::<WsusUrl>().expect_err(url);
+        for text in [error.to_string(), format!("{error:?}")] {
+            assert!(
+                !text.contains("admin") && !text.contains("Hunter"),
+                "{url}: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_wsus_url_is_an_http_or_https_url_that_names_a_host() {
+    for url in [
+        "http://wsus:8530",
+        "https://wsus.example.com:8531",
+        "https://wsus.example.com",
+        "https://10.0.0.5:8531/",
+        "https://[fd00::5]:8531",
+        // An `@` after the authority is part of the path, not user information.
+        "https://wsus.example.com:8531/updates@site",
+    ] {
+        let parsed: WsusUrl = url.parse().unwrap_or_else(|error| panic!("{url}: {error}"));
+
+        assert_eq!(parsed.as_str(), url);
+    }
 }

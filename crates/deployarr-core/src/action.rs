@@ -3,7 +3,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
-use core::num::NonZeroU32;
+use core::num::{NonZeroU8, NonZeroU32};
 
 use serde::de::value::StrDeserializer;
 use serde::de::{
@@ -11,6 +11,7 @@ use serde::de::{
     Visitor,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, forward_to_deserialize_any};
+use uuid::Uuid;
 
 use crate::addon::AddOnStep;
 use crate::join::JoinStage;
@@ -242,6 +243,25 @@ pub enum BuiltinAction {
     InstallApplications {
         apps: AppSelection,
     },
+    /// Installs software updates from Windows Update or from a WSUS server,
+    /// in passes. Every field has a default, so `{"install_updates": {}}` is a
+    /// whole step.
+    InstallUpdates {
+        #[serde(default)]
+        source: UpdateSource,
+        /// What the step does when updates are still missing after
+        /// `max_passes` passes.
+        #[serde(default)]
+        missing: MissingUpdatePolicy,
+        /// How many passes may install updates. The default is 7.
+        #[serde(default = "default_max_passes")]
+        max_passes: NonZeroU8,
+        /// Updates that the step never installs. The default is none.
+        #[serde(default)]
+        exclude: Vec<UpdateExclusion>,
+        #[serde(default)]
+        timeouts: UpdateTimeouts,
+    },
     VerifyDrivers {
         policy: MissingDriverPolicy,
     },
@@ -288,6 +308,7 @@ impl BuiltinAction {
             | Self::ApplyUnattend { .. }
             | Self::CheckReadiness { .. } => &[RunIn::WinPe],
             Self::InstallApplications { .. }
+            | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
             | Self::ActivateWindows { .. } => &[RunIn::FullOs],
             Self::RunCommand { .. }
@@ -318,6 +339,7 @@ impl BuiltinAction {
             | Self::ApplyDrivers { .. }
             | Self::ApplyUnattend { .. }
             | Self::InstallApplications { .. }
+            | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
             | Self::CheckReadiness { .. }
             | Self::ActivateWindows { .. } => false,
@@ -777,6 +799,141 @@ pub enum MissingDriverPolicy {
     Warn,
     Ignore,
 }
+
+/// What `InstallUpdates` does when its last search, after `max_passes`
+/// passes, still finds updates to install.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissingUpdatePolicy {
+    /// The step fails.
+    Fail,
+    /// The step succeeds with a warning.
+    #[default]
+    Warn,
+    /// The step succeeds.
+    Ignore,
+}
+
+/// Where `InstallUpdates` gets updates.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateSource {
+    /// Microsoft's Windows Update service over the internet.
+    #[default]
+    WindowsUpdate,
+    /// The WSUS server at this URL.
+    Wsus(WsusUrl),
+}
+
+/// An update that `InstallUpdates` never installs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateExclusion {
+    /// A KB article number without the `KB` prefix, such as `5034441`.
+    Kb(NonZeroU32),
+    /// An update ID. It is written as a GUID in lower case without braces.
+    UpdateId(Uuid),
+}
+
+fn default_max_passes() -> NonZeroU8 {
+    const DEFAULT: NonZeroU8 = NonZeroU8::new(7).unwrap();
+    DEFAULT
+}
+
+/// How long one phase of one pass of `InstallUpdates` may take, in whole
+/// seconds. No limit is zero, because a zero limit fails every pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdateTimeouts {
+    /// The default is 3600.
+    pub search_secs: NonZeroU32,
+    /// The default is 7200.
+    pub download_secs: NonZeroU32,
+    /// The default is 7200.
+    pub install_secs: NonZeroU32,
+}
+
+impl Default for UpdateTimeouts {
+    fn default() -> Self {
+        const DEFAULT: UpdateTimeouts = UpdateTimeouts {
+            search_secs: NonZeroU32::new(3600).unwrap(),
+            download_secs: NonZeroU32::new(7200).unwrap(),
+            install_secs: NonZeroU32::new(7200).unwrap(),
+        };
+        DEFAULT
+    }
+}
+
+validated_string! {
+    /// The URL of a WSUS server, such as `https://wsus.example.com:8531`.
+    ///
+    /// It starts with `http://` or `https://` in lower case and names a host.
+    /// It holds only ASCII letters, digits, and symbols, with no space or
+    /// control character. It holds no user information, such as
+    /// `user:pass@`, so a credential never reaches the registry or a log. No
+    /// error message repeats the text.
+    #[derive(PartialEq, Eq, Hash)]
+    WsusUrl, WsusUrlError, check_wsus_url
+}
+
+fn check_wsus_url(text: &str) -> Result<(), WsusUrlError> {
+    if text.is_empty() {
+        return Err(WsusUrlError::Empty);
+    }
+    // A URI holds only letters, digits, and graphic symbols (RFC 3986,
+    // section 2).
+    if !text.chars().all(|c| c.is_ascii_graphic()) {
+        return Err(WsusUrlError::InvalidChar);
+    }
+    // Lower case is the canonical form of a scheme (RFC 3986, section 3.1).
+    let rest = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .ok_or(WsusUrlError::Scheme)?;
+    // The authority ends at the first `/`, `?`, or `#` (RFC 3986, section
+    // 3.2). An `@` in it ends the user information (section 3.2.1).
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    if authority.contains('@') {
+        return Err(WsusUrlError::UserInfo);
+    }
+    // An `http` or `https` URI with an empty host is invalid (RFC 9110,
+    // sections 4.2.1 and 4.2.2).
+    if authority.is_empty() || authority.starts_with(':') {
+        return Err(WsusUrlError::NoHost);
+    }
+    Ok(())
+}
+
+/// Why a [`WsusUrl`] fails to parse. No variant holds the text, so an error
+/// never repeats a credential that the text holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsusUrlError {
+    Empty,
+    InvalidChar,
+    Scheme,
+    UserInfo,
+    NoHost,
+}
+
+impl fmt::Display for WsusUrlError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "a WSUS URL must not be empty",
+            Self::InvalidChar => {
+                "a WSUS URL holds only ASCII letters, digits, and symbols, with no space or control character"
+            }
+            Self::Scheme => "a WSUS URL starts with `http://` or `https://`, in lower case",
+            Self::UserInfo => {
+                "a WSUS URL must not hold user information, such as `user:pass@`, so that no credential reaches the registry or a log"
+            }
+            Self::NoHost => {
+                "a WSUS URL names a host after `//`, such as `https://wsus.example.com:8531`"
+            }
+        })
+    }
+}
+
+impl core::error::Error for WsusUrlError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

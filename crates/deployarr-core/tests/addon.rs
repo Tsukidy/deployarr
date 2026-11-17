@@ -560,6 +560,7 @@ fn an_add_on_may_return_six_built_in_actions() {
             json!({ "install_applications": { "apps": { "one": "a" } } }),
             false,
         ),
+        (json!({ "install_updates": {} }), false),
         (json!({ "verify_drivers": { "policy": "warn" } }), false),
         (json!({ "check_readiness": {} }), false),
         (json!({ "activate_windows": { "online": true } }), false),

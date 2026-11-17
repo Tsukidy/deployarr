@@ -312,6 +312,7 @@ pub(crate) fn action_name(action: &BuiltinAction) -> &'static str {
         BuiltinAction::ApplyDrivers { .. } => "apply_drivers",
         BuiltinAction::ApplyUnattend { .. } => "apply_unattend",
         BuiltinAction::InstallApplications { .. } => "install_applications",
+        BuiltinAction::InstallUpdates { .. } => "install_updates",
         BuiltinAction::VerifyDrivers { .. } => "verify_drivers",
         BuiltinAction::CheckReadiness { .. } => "check_readiness",
         BuiltinAction::ActivateWindows { .. } => "activate_windows",
@@ -513,7 +514,7 @@ mod tests {
             seen.insert(action_name(action));
         }
         // Every action was checked.
-        assert_eq!(seen.len(), 14);
+        assert_eq!(seen.len(), 15);
     }
 
     #[test]
