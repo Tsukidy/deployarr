@@ -54,18 +54,18 @@ On port 67 the prototype answers a DISCOVER, and a REQUEST only when it carries 
 
 ## Run an experiment
 
-Every command needs the address of the lab bridge, the bridge name, the TFTP root, and the chain. Stop the prototype with Ctrl-C.
+Every command needs the address of the lab bridge, the bridge name, the TFTP root, and the chain. Stop the prototype with Ctrl-C. Each command runs Python with `-B`, so a run as root writes no `__pycache__` folder owned by root into the checkout.
 
 Single stage, for #27. The first ACK names the boot manager and carries option 252:
 
 ```bash
-sudo python3 pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain single --log-file single.log
+sudo python3 -B pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain single --log-file single.log
 ```
 
 Two stages, for #28. The first ACK names the WDS network boot program and carries option 250. The `dhcp-received` line of the second request shows its port and its option 250 sub-options:
 
 ```bash
-sudo python3 pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain two-stage --log-file two-stage.log
+sudo python3 -B pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain two-stage --log-file two-stage.log
 ```
 
 The log cannot show a second request that goes by unicast to port 67. While dnsmasq shares the port, the kernel gives every unicast datagram for port 67 to dnsmasq alone, and dnsmasq answers it with a NAK. Record the bridge as well, and read the second request from the capture:
@@ -77,13 +77,13 @@ sudo tcpdump -i virbr1 -w second.pcap 'udp port 67 or udp port 68 or udp port 40
 Another BCD store, for #29. Put it in the root and name it with `--bcd-uefi` or `--bcd-bios`. The `started` line shows both BCD paths:
 
 ```bash
-sudo python3 pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain single --bcd-uefi 'boot\nopath.bcd' --log-file nopath.log
+sudo python3 -B pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain single --bcd-uefi 'boot\nopath.bcd' --log-file nopath.log
 ```
 
 Transfer timing, for #30. Each `transfer-finished` line gives the file, its size, the block size, the window size, and the seconds from the request to the last ACK. Its `options` field holds what the client asked for. Its `blksize` and `windowsize` fields hold the values the transfer used, after the prototype clamps them to 32768 and 32:
 
 ```bash
-sudo python3 pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain single --no-block-log --log-file timing.log
+sudo python3 -B pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe --chain single --no-block-log --log-file timing.log
 ```
 
 ```bash
@@ -95,7 +95,7 @@ OFFER without option 43, for #31. Every OFFER the prototype sends has no option 
 Another set of boot files, for #32. Put them in a second folder with the same layout and name it with `--root`:
 
 ```bash
-sudo python3 pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe-2023 --chain two-stage --log-file ca2023.log
+sudo python3 -B pxe_prototype.py --server-ip 192.168.100.1 --interface virbr1 --root /srv/pxe-2023 --chain two-stage --log-file ca2023.log
 ```
 
 ## Read the log
@@ -148,5 +148,5 @@ The tests use loopback and unprivileged ports. `reference.py` builds the request
 `test_lab.py` needs root, Python 3.12 or later, and the `ip` command, and it is skipped without them. It builds two network namespaces shaped like the lab: a bridge whose port 67 a second socket shares the way dnsmasq does, a PC with no address, and a default route through another link. It checks that the OFFER reaches the PC as a broadcast on the bridge, and that the other socket keeps every unicast to port 67.
 
 ```bash
-cd tools/pxe-prototype && sudo python3 -m unittest test_lab
+cd tools/pxe-prototype && sudo python3 -B -m unittest test_lab
 ```

@@ -186,8 +186,10 @@ An experiment runs the PXE prototype, a capture, and a VM, each in its own termi
 Run the PXE prototype with one of the TFTP folders. Its [README](../tools/pxe-prototype/README.md) gives the command for each experiment. In the lab, the address is `10.41.0.1`, the interface is `br-lab`, and the root is `~/deployarr-lab/tftp/2011` or `~/deployarr-lab/tftp/2023`. For example:
 
 ```bash
-sudo python3 tools/pxe-prototype/pxe_prototype.py --server-ip 10.41.0.1 --interface br-lab --root ~/deployarr-lab/tftp/2011 --chain two-stage --log-file two-stage.log
+sudo python3 -B tools/pxe-prototype/pxe_prototype.py --server-ip 10.41.0.1 --interface br-lab --root ~/deployarr-lab/tftp/2011 --chain two-stage --log-file two-stage.log
 ```
+
+`-B` stops Python from writing a `__pycache__` folder owned by root into the checkout.
 
 Capture on the bridge, as the experiment issues ask. The captures go in `~/deployarr-lab/captures`, outside the repository, until you check them:
 
