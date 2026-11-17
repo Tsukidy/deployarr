@@ -1,6 +1,6 @@
 # Third-party notices
 
-The issue workflow in `docs/agents/`, `AGENTS.md`, and `.github/` is adapted from [mattpocock/skills](https://github.com/mattpocock/skills), at commit `4ae2317ddb22b046e26455e4f9c9b3aaaf62212d`. That repository carries this license:
+The issue workflow in `docs/agents/` and `.github/`, and its summary in `AGENTS.md`, are adapted from [mattpocock/skills](https://github.com/mattpocock/skills), at commit `4ae2317ddb22b046e26455e4f9c9b3aaaf62212d`. That repository carries this license:
 
 ```text
 MIT License

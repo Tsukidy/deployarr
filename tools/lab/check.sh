@@ -3,6 +3,10 @@
 # Checks the PXE lab and collects the evidence for issue #25 in one zip.
 # See docs/lab-setup.md.
 #
+# It checks that the host's CPU has the processor features that Windows 11
+# needs, because the VMs run with -cpu host under KVM. It checks under TCG
+# too, where the VMs do not see the host's CPU.
+#
 # It boots each lab VM to its network boot while the PXE prototype runs, and
 # checks that:
 # - the VM gets an address from the lab's dnsmasq
@@ -134,6 +138,8 @@ read_capture -Y dhcp -T fields -E separator=/t -E occurrence=f \
         echo "sha256 $(sha256sum "$f")"
     done
 } >"$out/versions.txt"
+# Each logical processor has its own flags line. check_summary.py tests them.
+grep '^flags[[:space:]]*:' /proc/cpuinfo >"$out/cpu-flags.txt" || true
 
 summary=$out/summary.txt
 python3 -I "$here/check_summary.py" "$out" >"$summary" || true

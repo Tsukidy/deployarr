@@ -25,8 +25,10 @@ The first analysis recorded these REA evidence IDs for its claims.
 | --- | --- | --- |
 | [Check Readiness](#check-readiness) | `decompile-all` with Ghidra 12.1.4, `ev_71434dd82c8f377b30d81acd0a471bcdf134da967d6723edafde8cc67b3d16b9` | `OSD/bin/x64/OsdPrestartCheck.exe`, `63358aa79a989e49ce60ac7adb45ff1e94167081a4bff4a4f297007ddf853810` |
 | [Upgrade Operating System](#upgrade-operating-system) | `decompile-all`, `ev_a121464baf757a40b99affbc65d2db1bcdd4306e4df8ab54c16e3ff42a3e775f` | `OSD/bin/x64/OSDUpgradeOS.exe`, `0d1e99c549c8cc5ba6920567cf6b454f3aa49850e4b7b7f5d46641d026c944d8` |
+| [BitLocker](#bitlocker) | `decompile-all` with Ghidra 12.1.4, `ev_27944a1a4f8ad0f258207edeb01fc59144514678ca57fab2b8bfa0735c8f4da6` and `ev_92022158620a155a0090cfddecf2e4fa04816ab768d3ce6ab6cb05a0f01e4f8e`. The `tscore.dll` export was stopped after it passed the `TS::BitLocker` functions, so it has no evidence ID. Rizin 0.7.4 read the `manage-bde.exe` arguments and the escrow timeout result from the disassembly | `OSD/bin/x64/OSDOfflineBitlocker.exe`, `55806bae056590e9211046afbc348642dde99b0c25f27f41739791ceef7f64d9`, and `OSD/bin/x64/OsdBitLocker.exe`, `fbfaebf3c632a50648e1ed9ada76580c7b84ae193952cabc5d901ef498e48835` |
 | [Secure Boot state](#secure-boot-state) | `decompile-all --name SecureBoot`, `ev_d4c47613550e14cb5a32dd51aa7593457deed98bdcaed662758eb85ace985391` | `OSD/bin/x64/tscore.dll`, `3d33992cf04eeb09e7df4e80d78a54f891d38b2268cabc879703be559b4655de` |
 | [Default disk layouts](#default-disk-layouts) | `inspect_managed_artifact`, `ev_8b98724c891861233d85ef2fb9c3ecd6a7ca0d8e28af2f2563fdb1df98c498b8`, and `inspect_managed_members`, `ev_46c2dd1a16580bba7ae49eb5a91514b0c6aebea3d214b416b0aba90c8adbf160`. `tools/re/configmgr-osd/ildump.py` read the CIL constants | `AdminUI.NewTaskSequenceWizard.dll` from `BIN/I386/AdminConsole.msi`, `fef1dfd95404ec421b040a3b1a6ac11486d5d1178269fe462d90574a44847844` |
+| [Install Software Updates](#install-software-updates) | `decompile-all` with Ghidra 12.1.4, `ev_c59b7655c24b5985b29816e56a3c801ab0230ca8bf642ee5070eaf49ccccb757`. Rizin 0.7.4 read the return values and loop bounds from the disassembly | `OSD/bin/x64/TsInstallSWUpdate.exe`, `e0db1b84d5640ce32940beeaf0e2f026c695c4c74fefe3ffffc4071db0c35d90` |
 | The signature in [Sources](#sources) | `inspect_pe_certificates`, `ev_c1b22eacd94945b947ce67bf114165ad408436f4c4933ee7c8b9687a25376001` | |
 | [MDT components](#mdt-components), the step catalog, and the binary inventory | `tools/re/configmgr-osd/reproduce.sh` | |
 
@@ -88,7 +90,7 @@ Each MDT 8456 script below has a native step in ConfigMgr 2509 with a similar pu
 
 - MDT's in-place upgrade template runs `LTIApply.wsf` in a `BDD_UpgradeOS` step with `IsOSUpgrade` set to 1 (`Templates/ClientUpgrade.xml:37-43`).
 - MDT's client template runs `ZTIBde.wsf` in a step of type `SMS_TaskSequence_EnableBitLockerAction` (`Templates/Client.xml:398-414`). It runs `ZTIDisableBDEProtectors.wsf` in its "Disable BDE Protectors" step (`Templates/Client.xml:85-90`). That script suspends BitLocker by calling `DisableKeyProtectors` (`ZTIDisableBDEProtectors.wsf:96-98`).
-- This analysis did not decompile `OSDBitLocker.exe`. How it handles Windows 11 details, such as the default encryption method, is an open question.
+- [BitLocker](#bitlocker) records how `OSDBitLocker.exe` and `OSDOfflineBitlocker.exe` work, including the encryption method.
 - `ZTINICConfig.wsf` saves the settings of adapters without DHCP in the State Capture phase of a refresh and restores them in State Restore (`ZTINICConfig.wsf:102-153`). It reads `OSDMigrateAdapterSettings` and writes `OSDAdapterCount` (`ZTINICConfig.wsf:109-110`, `ZTINICConfig.wsf:138`). The [step catalog](configmgr-2509-osd/task-sequence-steps.md) maps these two variables to `CaptureNetworkSettingsAction` and `ApplyNetworkSettingsAction`. MDT's client template runs the script in its "Capture Network Settings" step (`Templates/Client.xml:74-76`).
 - `ZTIDomainJoin.wsf` only verifies and recovers a domain join in the State Restore phase (`ZTIDomainJoin.wsf:15`). The join itself goes through the unattend file, where `ZTIConfigure.wsf` writes `JoinDomain` ([MDT 8456 reference](mdt-8456.md#unattend)). `ZTIDomainJoin.wsf` therefore covers only part of what `JoinDomainWorkgroupAction` does (inferred).
 - `ZTIConfigure.wsf` writes settings into the answer files (`ZTIConfigure.wsf:16`). Its mappings include the computer name, product key, admin password, time zone, and locales, which `ApplyWindowsSettingsAction` also takes. They also include the domain, OU, and workgroup, which `ApplyNetworkSettingsAction` takes (`ZTIConfigure.xml:103-216`, [step catalog](configmgr-2509-osd/task-sequence-steps.md)).
@@ -120,9 +122,9 @@ One function runs every check in order (`OsdPrestartCheck!0x140001780`):
 - The checks call helpers exported by `tscore.dll`. They are `TS::Utility::GetTotalPhysicalMemory`, `GetProcessorSpeed`, `IsFreeDiskSpaceAvailable`, `GetOsType`, `GetClientVersion`, `IsUEFI`, `GetBatteryStatus`, and `ConnectedNetworkAdapterIsFound`.
 - The disk check falls back to `IsFreeDiskSpaceNoPartitionsAvailable`, so an unpartitioned disk with enough space passes.
 - The power check passes when the PC is on AC power. A `GetBatteryStatus` result of 2 passes with the log line "Device has a battery but is wired".
-- The TPM checks call `TS::BitLocker::Tpm::InitializeEx`, which returns a version string. The step parses it with `swscanf_s("%d.%d")` and fails a major version below 2. In that case it logs "TPM 2.0 or higher is not enabled. Found version of TPM is %d.%d which is less than required 2.0" (`OsdPrestartCheck.exe` strings). It then reads `Tpm::GetInitialState`. Bit 0 means enabled and bit 1 means activated. `tscore.dll` builds its TPM class on WMI `Win32_Tpm` (inferred from its strings).
+- The TPM checks call `TS::BitLocker::Tpm::InitializeEx`, which returns a version string. The step parses it with `swscanf_s("%d.%d")` and fails a major version below 2. In that case it logs "TPM 2.0 or higher is not enabled. Found version of TPM is %d.%d which is less than required 2.0" (`OsdPrestartCheck.exe` strings). It then reads `Tpm::GetInitialState`. Bit 0 means enabled and bit 1 means activated. `InitializeEx` queries `Win32_Tpm` in `root\CIMv2\Security\MicrosoftTpm` and returns its `SpecVersion` property (`tscore!0x1800d7090`).
 - No check covers Secure Boot, processor model, or core count.
-- Two helpers are not yet understood. This analysis did not trace which `Win32_Tpm` property feeds the version string from `InitializeEx`. `tscore.dll` names `SpecVersion` in its strings, so that property is likely. This analysis read only the call site and strings of `GetProcessorSpeed`, so how it measures the speed is open.
+- One helper is not yet understood. This analysis read only the call site and strings of `GetProcessorSpeed`, so how it measures the speed is open.
 
 Microsoft lists these Windows 11 minimums: a compatible 64-bit processor at 1 GHz with two or more cores, 4 GB of memory, 64 GB of storage, UEFI firmware that is Secure Boot capable, and TPM 2.0 ([Windows 11 requirements](https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements), dated 2026-07-14). Every Check Readiness default is below these, and the UEFI and TPM checks start off.
 
@@ -157,6 +159,182 @@ The console's new task sequence wizard builds these layouts (`NewTaskSequenceWiz
 - Microsoft sizes the Recovery partition differently. Its minimum is the size of `\Windows\System32\Recovery\winre.wim` in the image, plus any WinRE customizations, plus 250 MB for servicing. Microsoft also sets the EFI partition at 200 MB or more, or 300 MB or more on 4K native disks, and the MSR at 16 MB ([UEFI/GPT-based hard drive partitions](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/configure-uefigpt-based-hard-drive-partitions?view=windows-11)).
 - This analysis did not decompile `osddiskpart.exe`. How it handles Windows 11 details is an open question.
 
+## BitLocker
+
+ConfigMgr has three BitLocker steps, run by two executables:
+
+| Step | Class (`SMS_TaskSequence_` prefix) | Command line | Runs in | Source |
+| --- | --- | --- | --- | --- |
+| Pre-provision BitLocker | `OfflineEnableBitLockerAction` | `OSDOfflineBitlocker.exe /enable` with `/disk`, `/part`, `/drive`, `/ignoretpm`, `/full`, and `/crypt` | WinPE | `_TaskSequenceProvider.mof:1515-1549` |
+| Enable BitLocker | `EnableBitLockerAction` | `OSDBitLocker.exe /enable` with `/drive`, `/wait`, `/mode`, `/keydrive`, `/pwd`, `/full`, `/crypt`, and `/ignoretpm` | full OS | `_TaskSequenceProvider.mof:1444-1507` |
+| Disable BitLocker | `DisableBitLockerAction` | `OSDBitLocker.exe /disable` with `/drive` | full OS | `_TaskSequenceProvider.mof:1415-1436` |
+
+| Binary | SHA-256 |
+| --- | --- |
+| `OSD/bin/x64/OSDOfflineBitlocker.exe` | `55806bae056590e9211046afbc348642dde99b0c25f27f41739791ceef7f64d9` |
+| `OSD/bin/x64/OsdBitLocker.exe` | `fbfaebf3c632a50648e1ed9ada76580c7b84ae193952cabc5d901ef498e48835` |
+
+Both binaries have file version 5.00.9141.1002 ([binary inventory](configmgr-2509-osd/osd-x64-inventory.tsv)). Both import the `TS::BitLocker::Tpm` class from `tscore.dll`, and `OsdBitLocker.exe` also imports `TS::BitLocker::EncryptableVolume` (import tables, read with pefile). Those classes use WMI:
+
+- `Tpm::Initialize` queries `Win32_Tpm` in `root\CIMv2\Security\MicrosoftTpm` (`tscore!0x1800d76b0`).
+- `Tpm::GetInitialState` returns a bit mask. The value 1 means enabled, 2 activated, 4 ownership allowed, 8 owned, `0x10` a compatible storage root key, and `0x20` an endorsement key pair present (`tscore!0x1800d7be0`).
+- `EncryptableVolume::Initialize` opens `root\CIMv2\Security\MicrosoftVolumeEncryption` and finds the volume's `Win32_EncryptableVolume` instance by drive letter (`tscore!0x1800870a0`).
+
+### Pre-provision BitLocker
+
+| Property | Default | Source |
+| --- | --- | --- |
+| `DestinationDisk`, `DestinationPartition`, `DestinationLogicalDrive`, `DestinationVariable` | none, so the step picks the next available volume | `_TaskSequenceProvider.mof:1524-1534` |
+| `SkipWhenTPMInvalid` | true | `_TaskSequenceProvider.mof:1536-1540` |
+| `EncryptFullDisk` | false | `_TaskSequenceProvider.mof:1542-1543` |
+| `EncryptMethod` | 0 | `_TaskSequenceProvider.mof:1545-1546` |
+
+`wmain` runs these steps (`OSDOfflineBitlocker!0x14000365c`):
+
+1. It logs an error and stops when it runs outside WinPE or on WinPE older than Windows 8.
+2. It skips a Windows To Go provision.
+3. It parses the command line (`OSDOfflineBitlocker!0x140002470`). `/disable` parses, but the step then logs "The specified action is not supported."
+4. It prepares the TPM (`OSDOfflineBitlocker!0x1400051f0`). When that fails and `/ignoretpm` is true, it logs "TPM is not found or not enabled. Ignoring 'Pre-provision BitLocker' action per user setting.", sends the status message `SMS_TS_Action_Bitlocker_TPM_Initialization_Warning`, and ends without encrypting.
+5. It resolves the target volume (`OSDOfflineBitlocker!0x140001fc0`).
+6. It turns BitLocker on (`OSDOfflineBitlocker!0x140004694`).
+
+TPM preparation (`OSDOfflineBitlocker!0x1400051f0`):
+
+- It fails unless the TPM is enabled, activated, and open to ownership. The log lines include "TPM cannot be enabled without physical presence".
+- It creates the endorsement key pair when the TPM has none.
+- When the TPM has no owner, it turns a random GUID into owner authorization, takes ownership, and saves the authorization in the task sequence variable `_OSDOAF`.
+- When the storage root key is not compatible, it resets it with that authorization.
+
+Volume choice:
+
+- With no disk, partition, or drive, the step takes the first volume that passes the checks (`OSDOfflineBitlocker!0x140001ad4`).
+- A volume passes when it is a local hard drive, is not on USB, uses NTFS or FAT32, has at least 750 MB, and, on BIOS, is not the boot volume (`OSDOfflineBitlocker!0x140001708`).
+
+Encryption (`OSDOfflineBitlocker!0x140004694`):
+
+- The step runs `manage-bde.exe -on <drive>` from WinPE's `System32`. It fails when the file is missing or when the command exits with any code but 0. Rizin read the `-on` argument at the call site.
+- It adds `-used` unless `/full` is true, so it encrypts used space only by default.
+- It adds `-em <method>` for the methods in [Encryption methods](#encryption-methods), and leaves the method to the OS otherwise (`OSDOfflineBitlocker!0x140004610`).
+- The command line names no key protector. Microsoft's page says "You apply the key management options by using the Enable BitLocker step after the OS installs" ([Task sequence steps](https://learn.microsoft.com/en-us/intune/configmgr/osd/understand/task-sequence-steps), dated 2024-04-30).
+- The step does not wait for encryption to finish.
+
+### Encryption methods
+
+Both steps take `/crypt` with a value of the `EncryptionMethod` property of `Win32_EncryptableVolume` ([GetEncryptionMethod method of Win32_EncryptableVolume](https://learn.microsoft.com/en-us/windows/win32/secprov/getencryptionmethod-win32-encryptablevolume)). Both default to 0 (`_TaskSequenceProvider.mof:1489-1490`, `_TaskSequenceProvider.mof:1545-1546`).
+
+| Value | Method | What the steps do | Source |
+| --- | --- | --- | --- |
+| 0 | none | Leave the method to the OS | `OsdBitLocker!0x140001404`, `OSDOfflineBitlocker!0x140002470` |
+| 3, 4 | AES 128, AES 256 | Use it when the running Windows is 7 or later. Otherwise log a warning, send `SMS_TS_Action_Bitlocker_Encryption_Method_Warning`, and leave the method to the OS | `tscore!0x180089f30`, `OSDOfflineBitlocker!0x140004694` |
+| 6, 7 | XTS-AES 128, XTS-AES 256 | The same, when the running Windows is 10 1511 or later | `tscore!0x180089f30`, `OSDOfflineBitlocker!0x140004694` |
+| 1, 2, 5, or above 7 | AES with diffuser, or hardware encryption | Log that the value is not valid, and leave the method to the OS | `OsdBitLocker!0x140001404`, `OSDOfflineBitlocker!0x140002470` |
+
+The OS default is XTS-AES 128 on Windows 10 1511 and later ([Encrypt method of Win32_EncryptableVolume](https://learn.microsoft.com/en-us/windows/win32/secprov/encrypt-win32-encryptablevolume)).
+
+### Enable BitLocker
+
+| Property | Default | Source |
+| --- | --- | --- |
+| `TargetDrive` | the current OS volume | `_TaskSequenceProvider.mof:1453-1458` |
+| `WaitForEncryption` | false | `_TaskSequenceProvider.mof:1460-1464` |
+| `Mode` | none. `TPM`, `Key`, `TPMAndKey`, or `TPMAndPIN`, required when `TargetDrive` is empty | `_TaskSequenceProvider.mof:1466-1470` |
+| `StartupKeyDrive` | the first available USB drive | `_TaskSequenceProvider.mof:1472-1478` |
+| `CreateRecoveryPassword` | `AD`. The others are `None`, `AD_CM`, and `ConfigMgr` | `_TaskSequenceProvider.mof:1480-1484` |
+| `EncryptFullDisk` | false | `_TaskSequenceProvider.mof:1486-1487` |
+| `EncryptMethod` | 0 | `_TaskSequenceProvider.mof:1489-1490` |
+| `SkipWhenNoValidTPM` | false | `_TaskSequenceProvider.mof:1492-1496` |
+| `PIN`, variable `OSDBitLockerPIN` | none. It is a secret, used only with `TPMAndPIN` | `_TaskSequenceProvider.mof:1498-1503` |
+
+`BitLocker::Enable` acts on the volume's state (`OsdBitLocker!0x140014714`):
+
+- When protection is on, it logs a warning that the volume is already protected and changes nothing.
+- When protection is off and the conversion status is 2 or 4, encryption in progress or paused, it checks again every 2 minutes, at most 240 times, which is 8 hours. The step fails if the status is still 2 or 4.
+- When the volume is fully decrypted, it sets up key protection, encrypts, and turns on auto-unlock for other encrypted data volumes (`OsdBitLocker!0x140007820`).
+- When the volume is fully encrypted and has no key protectors, it creates them. This is the state that Pre-provision BitLocker leaves (inferred).
+- When the volume is fully encrypted and has key protectors, it enables them again. This is the state that Disable BitLocker leaves (inferred).
+- When decryption is in progress or paused, the step fails.
+- After a failure, `BitLocker::Rollback` deletes the key protectors that the step added and can decrypt the volume (`OsdBitLocker!0x140013b5c`).
+
+Key protectors (`BitLocker::CreateKeyProtectors`, `OsdBitLocker!0x140012038`):
+
+| `/mode` | Protector | TPM preparation |
+| --- | --- | --- |
+| `TPM` | `ProtectKeyWithTPM` | yes |
+| `Key` | `ProtectKeyWithExternalKey`, then `SaveExternalKeyToFile` to the USB drive | no |
+| `TPMAndKey` | `ProtectKeyWithTPMAndStartupKey`, then `SaveExternalKeyToFile` to the USB drive | yes |
+| `TPMAndPIN` | `ProtectKeyWithTPMAndPin` with `OSDBitLockerPIN` | yes |
+| none, for a data volume | `ProtectKeyWithExternalKey`, then auto-unlock | no |
+
+- `ProcessCommandLine` maps `/mode` to these protectors (`OsdBitLocker!0x140001404`). It rejects `/mode` for a data volume and logs "Must not specify '/mode' for data volume (auto unlock only allowed)".
+- `BitLocker::ConfigureKeyProtection` prepares the TPM only for the three TPM modes (`OsdBitLocker!0x1400133e4`).
+- When a protector call returns `0x80310030`, the step logs "Unable to create TPM key protectors due to presence of bootable media", asks the user to remove it, and tries up to 3 times.
+- Before it adds protectors, `BitLocker::UpdateStartupSettings` writes these values under `HKLM\Software\Policies\Microsoft\FVE` for the four `/mode` values (`OsdBitLocker!0x140011a7c`). `UseAdvancedStartup` and `EnableBDEWithNoTPM` get 1. `UseTPM`, `UseTPMKey`, `UseTPMPIN`, and `UseTPMKeyPIN` get 2. With `TPMAndPIN`, `UseEnhancedPin` gets 1.
+
+TPM preparation (`BitLocker::InitializeTpm`, `OsdBitLocker!0x140008948`):
+
+- It makes the same checks as Pre-provision BitLocker.
+- Before it takes ownership, it sets `ActiveDirectoryBackup` and `RequireActiveDirectoryBackup` to 1 under `HKLM\Software\Policies\Microsoft\TPM`. Afterward it restores the old values.
+- When the TPM already has an owner, `SaveTPMOwner` writes `_OSDOAF` to the `ownerauthfull` value under `HKLM\SYSTEM\CurrentControlSet\Services\TPM\WMI\Admin` (`OsdBitLocker!0x1400069d0`). This hands the owner authorization from Pre-provision BitLocker to Windows (inferred).
+- When TPM preparation fails and `/ignoretpm` is true, the step logs "TPM is not found or not enabled. Ignoring 'Enable BitLocker' action per user setting." and sends `SMS_TS_Action_Bitlocker_TPM_Initialization_Warning` (`OsdBitLocker!0x1400133e4`, `OsdBitLocker!0x140014714`). The default is false, so a TPM failure fails the step.
+
+Encryption (`BitLocker::Encrypt`, `OsdBitLocker!0x140013838`):
+
+- It calls `Win32_EncryptableVolume.Encrypt` with `EncryptionFlags` 1 unless `/full` is true, and sets `EncryptionMethod` only when the value is not 0 (`tscore!0x180089f30`). Flag 1 asks for data-only encryption, and without it a new encryption covers the whole volume ([Encrypt method of Win32_EncryptableVolume](https://learn.microsoft.com/en-us/windows/win32/secprov/encrypt-win32-encryptablevolume)).
+- With `/wait`, `BitLocker::WaitWithProgress` reads the conversion status every 10 seconds while it is 2. It succeeds when the status becomes 1, fully encrypted, and fails on any other status. The wait has no time limit (`OsdBitLocker!0x140008570`).
+- Without `/wait`, "the drive encryption process happens in the background", and the task sequence goes on to the next step ([Task sequence steps](https://learn.microsoft.com/en-us/intune/configmgr/osd/understand/task-sequence-steps)).
+
+Recovery password (`BitLocker::CreateRecoveryPassword`, `OsdBitLocker!0x14000d564`):
+
+| `/pwd` | What the step does |
+| --- | --- |
+| `None` | It adds no recovery password. |
+| `AD` | It fails with "Recovery password cannot be escrowed to AD because machine is not domain joined" when the PC has no domain. Otherwise it sets FVE policy values under `HKLM\Software\Policies\Microsoft\FVE` to 1, such as `OSActiveDirectoryBackup` and `OSRequireActiveDirectoryBackup` (`OsdBitLocker!0x14000edd4`). These make Windows back the recovery information up to AD DS (inferred from the names). It then adds a numerical password protector. After `Encrypt`, it restores the old policy values (`OsdBitLocker!0x140011344`). |
+| `ConfigMgr` | It adds a numerical password protector (`OsdBitLocker!0x14001b4f4`). It sends the key package to the management point's `MP_RelayMsgMgr` endpoint, encrypted with the management point's certificate (`OsdBitLocker!0x14000b870`). Then it asks `BLM_KeyStatus` until the server reports the key escrowed (`OsdBitLocker!0x140009d90`). |
+| `AD_CM` | It does both. |
+
+- With `AD`, the password is `OSDBitLockerRecoveryPassword` when that variable is set, and random otherwise. A value that is not a valid numerical password logs an error and stops the step.
+- `OSDRecoveryKeyPollingFrequency` sets the time between escrow checks, 300 seconds by default and at least 15. `OSDRecoveryKeyPollingTimeout` sets the limit, 1,800 seconds by default and at least 30 (`OsdBitLocker!0x14000d564`).
+- At the limit, the step logs "Time out waiting for key escrow from server." It removes the numerical password it added (`OsdBitLocker!0x140021fc4`) and fails with `0x80004005`, which rizin read from the disassembly.
+- When `_SMSTSMediaType` is `FullMedia`, the step logs that it cannot escrow from stand-alone media, and that a BitLocker management policy can escrow the key later. It skips the escrow (`OsdBitLocker!0x14000d564`).
+- When it finds no management point encryption certificate, it logs "No MP encryption cert(s). Unable to proceed with recovery key escrow." (`OsdBitLocker!0x14000b870`).
+
+### Disable BitLocker
+
+- `BitLocker::Disable` changes nothing when protection is already off, and logs why (`OsdBitLocker!0x140013df0`).
+- When protection is on, on Windows 8 and later with a valid reboot count, it runs `manage-bde.exe -protectors -disable <drive> -RebootCount <n>` (`tscore!0x180087b40`). The count comes from `OSDBitLockerRebootCountOverride`, or from `OSDBitLockerRebootCount` when that is empty, and must be 0 to 15 (`OsdBitLocker!0x140004098`).
+- With no count, or a count that is not valid, it calls `Win32_EncryptableVolume.DisableKeyProtectors` with no argument (`tscore!0x180089040`).
+- The class's `RebootCount` property, 1 by default and 0 to 15, has no command-line argument (`_TaskSequenceProvider.mof:1431-1432`). It reaches the binary as `OSDBitLockerRebootCount` (inferred from the class's `VariablePrefix("OSDBitLocker")` at `_TaskSequenceProvider.mof:1420`). Microsoft's page lists both variables for the step ([Task sequence steps](https://learn.microsoft.com/en-us/intune/configmgr/osd/understand/task-sequence-steps)).
+- `manage-bde` resumes protection after that many restarts, and 0 suspends it indefinitely ([manage-bde protectors](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-protectors)).
+- The step never decrypts (`OsdBitLocker!0x140013df0`). Microsoft's page says it "leaves the key protectors visible in clear text on the hard drive. It doesn't decrypt the contents of the drive." ([Task sequence steps](https://learn.microsoft.com/en-us/intune/configmgr/osd/understand/task-sequence-steps))
+
+### What pre-provisioning needs in WinPE
+
+The import table of `OSDOfflineBitlocker.exe`, checked by the rule in [The list file](winpe-10.1.26100.9457.md#the-list-file) against [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt):
+
+- Base WinPE has `ole32.dll`, `kernel32.dll`, and the six `api-ms-win-crt-*` API sets it imports.
+- Base WinPE lacks `tscore.dll`, `osdcore.dll`, `ccmcore.dll`, `msvcp140.dll`, `vcruntime140.dll`, and `vcruntime140_1.dll`. ConfigMgr ships all six in `OSD/bin/x64` ([binary inventory](configmgr-2509-osd/osd-x64-inventory.tsv)).
+- `tscore.dll` imports `framedynos.dll`, which is nowhere in base WinPE's `winpe.wim`. `WinPE-WMI` provides it. Every ConfigMgr step that loads `tscore.dll` therefore needs `WinPE-WMI` (inferred, because Windows does not load a module whose import is missing).
+
+At run time the step also needs `Win32_Tpm` through WMI for the TPM checks (`tscore!0x1800d76b0`), and `manage-bde.exe` in `System32` (`OSDOfflineBitlocker!0x140004694`). `manage-bde.exe` imports only modules that base WinPE has. Its strings name `root\cimv2\security\microsoftvolumeencryption` and `Win32_EncryptableVolume`, so it works through WMI (inferred).
+
+| File | Base WinPE | `WinPE-WMI` | `WinPE-SecureStartup` |
+| --- | --- | --- | --- |
+| The WMI service: `winmgmt.exe`, `wmisvc.dll`, `wbemcore.dll`, `wmiprvse.exe` | no | yes | no |
+| `framedynos.dll` | no | yes | no |
+| `win32_encryptablevolume.dll`, the `Win32_EncryptableVolume` provider | no | yes | no |
+| `win32_tpm.dll`, the `Win32_Tpm` provider | no | yes | yes |
+| `manage-bde.exe`, `repair-bde.exe` | no | no | yes |
+| `tbs.dll` | no | no | yes |
+| `fveapi.dll`, `fveapibase.dll`, `fvecerts.dll`, `drivers\fvevol.sys`, `drivers\tpm.sys` | yes | no | no |
+
+- The base WinPE column comes from the file list of the x64 `winpe.wim` with SHA-256 `fbcbdb1c6651ab3a69384e9d4f95f2c02321318603849453b252e21e827c8197`, which `tools/re/winpe/reproduce.sh` downloads ([WinPE add-on 10.1.26100.9457 reference](winpe-10.1.26100.9457.md#sources)).
+- The two component packages come from the same add-on. `Windows PE Optional Packages (DesktopEditions)-x86_en-us.msi`, with SHA-1 `0b5559f2461090c11953849d98fa85462ee3ce10`, places both under `amd64\WinPE_OCs`. Both are in `9722214af0ab8aa9dffb6cfdafd937b7.cab`, with SHA-1 `f6d32f0081386aa9039c8ab4a9623f81b0686d63`.
+- `WinPE-WMI.cab` is 6,492,661 bytes, with SHA-256 `d3cafe5afb7a847889bc6770f11aa3b9c6046b4c46249f50a892b795d4e73401`. `WinPE-SecureStartup.cab` is 897,767 bytes, with SHA-256 `f8ae41b03360411752169f02cf29225e60a2212e5709c7572e5b6901efa03e74`. Every component in both has version 10.0.26100.1. `7z` listed their files.
+- `win32_encryptablevolume.dll` comes from the component `microsoft-windows-securestartup-wmi`, but it ships in `WinPE-WMI`.
+- Microsoft says `WinPE-SecureStartup` "includes BitLocker command-line tools, BitLocker WMI management libraries, a TPM driver, TPM Base Services (TBS), the Win32_TPM class, the BitLocker Unlock Wizard, and BitLocker UI libraries", and that `WinPE-WMI` must be installed first ([WinPE optional components reference](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpe-add-packages--optional-components-reference), dated 2022-05-24).
+
+Pre-provisioning as ConfigMgr and MDT do it therefore needs both `WinPE-WMI` and `WinPE-SecureStartup`. MDT's boot image adds both ([MDT 8456 reference](mdt-8456.md#winpe)). Base WinPE has the BitLocker driver `fvevol.sys` and `fveapi.dll`. `fveapi.dll` exports 160 named functions, among them `FveOpenVolumeW` and `FveConversionEncryptEx`. This analysis did not look for documentation of them, or test whether they work in base WinPE.
+
 ## Upgrade Operating System
 
 `UpgradeWindows::CreateUpgradeCmdLine` builds the Windows Setup command line (`OSDUpgradeOS!0x1400078a8`). It adds these arguments in this order:
@@ -188,6 +366,75 @@ Other behavior:
 - `tscore.dll` contains no `ChassisTypes` string. ConfigMgr gathers no chassis type and no virtual machine flag. MDT's gather sets `IsLaptop`, `IsDesktop`, and `IsVM` ([MDT 8456 reference](mdt-8456.md#gathered-facts)).
 - MDT's gather also sets `IsServer`, `IsOnBattery`, `Memory`, and `ProcessorSpeed` (`ZTIGather.wsf:631-639`). Set Dynamic Variables gathers none of these values (inferred from the gathered variables above).
 - MDT's rules can query a database or a web service ([MDT 8456 reference](mdt-8456.md#rules-and-database-lookup)). The rules of Set Dynamic Variables have no such lookup (inferred from the rule format above).
+
+## Install Software Updates
+
+The Install Software Updates step runs `TSInstallSWUpdate.exe /target:%%SMSInstallUpdateTarget%%` (`_TaskSequenceProvider.mof:533-555`). The binary is `OSD/bin/x64/TsInstallSWUpdate.exe`, version 5.00.9141.1002. Its strings name the source files `client\OsDeployment\InstallSWUpdate\main.cpp` and `installswupdate.cpp`. MDT's counterpart is `ZTIWindowsUpdate.wsf`, which the [MDT 8456 reference](mdt-8456.md#windows-update) describes.
+
+### Properties and variables
+
+| Property or variable | Default | Effect | Source |
+| --- | --- | --- | --- |
+| `Target`, variable `SMSInstallUpdateTarget` | none | `All` or `Mandatory` | `_TaskSequenceProvider.mof:545-546` |
+| `UseCache`, variable `SMSTSSoftwareUpdateScanUseCache` | `true` | `false` makes each scan a full scan instead of one from cached results | `_TaskSequenceProvider.mof:547-548`, `TsInstallSWUpdate!0x14000e1b0` |
+| `RetryCount` | `"2"` | See the note below | `_TaskSequenceProvider.mof:550-551` |
+| `SupportedEnvironment` | `FullOS` | The step runs only in the full OS | `_TaskSequenceProvider.mof:553` |
+| `SMSTSSoftwareUpdateScanTimeout` | 3,600 seconds | How long the step waits for a scan | `TsInstallSWUpdate!0x140010514` |
+| `SMSTSMPListRequestTimeoutEnabled`, `SMSTSMPListRequestTimeout` | 60,000 ms | Whether the step checks the client's network location before a scan, and the wait between its 3 tries | `TsInstallSWUpdate!0x140010aa8` |
+| `SMSTSInstallUpdateJobGUID` | | The running install job | `TsInstallSWUpdate!0x1400075e8`, `TsInstallSWUpdate!0x140004e00` |
+| `SMSTSPendingRebootUpdateIDs` | | The updates that wait for a reboot | `TsInstallSWUpdate!0x14000fedc` |
+| `_SMSTSSoftwareUpdatePolicy`, `_SMSTSScanToolPolicy`, `_SMSTSCIVersionInfoPolicy` | | Update policies that the step compiles into the client's `root\ccm\policy\defaultmachine\requestedconfig` namespace before each pass | `TsInstallSWUpdate!0x14000e1b0`, `TsInstallSWUpdate!0x14000a1f4` |
+
+The engine handles an outside shutdown during a step with the step's `retryCount` attribute, but only when it runs as the ConfigMgr service ([MDT 8450 binaries reference](mdt-8450-binaries.md#reboots)). The `RetryCount` property sets that attribute to 2 for this step (inferred from the `[RetryCount]` qualifier). Install Application has the same default (`_TaskSequenceProvider.mof:618-619`).
+
+### Flow
+
+1. `wmain` opens the task sequence environment. In WinPE it logs "Windows PE is not supported" and exits with `0x80004005` (`TsInstallSWUpdate!0x140005428`).
+2. It parses `/target:`. It accepts `All`, `Mandatory`, and `Assignment`, and logs "Invalid target type" for anything else (`TsInstallSWUpdate!0x140003d4c`). `Assignment`, and a check after an upgrade when `OSDUpgradeOS.exe` is the caller, serve feature updates for [Upgrade Operating System](#upgrade-operating-system) (`TsInstallSWUpdate!0x140005428`, `TsInstallSWUpdate!0x140004e00`). This page leaves them out, because in-place upgrades are not in deployarr's first release.
+3. It waits for the ConfigMgr client process, `ccmexec`, to start (`TsInstallSWUpdate!0x140005428`, `TsInstallSWUpdate!0x14000733c`).
+4. If `SMSTSInstallUpdateJobGUID` names a job from an earlier run, the step reconnects to that job instead of starting a new one. It clears the variable when it ends (`TsInstallSWUpdate!0x140004e00`, `TsInstallSWUpdate!0x14000ee84`).
+5. Otherwise it runs up to six install passes (`TsInstallSWUpdate!0x140004698`, loop test at `0x140004c95`). Each pass does the following:
+   1. It compiles the update policies and checks the client's network location (`TsInstallSWUpdate!0x14000e1b0`, `TsInstallSWUpdate!0x140010aa8`).
+   2. It asks the client to scan, from the cache or in full (`TsInstallSWUpdate!0x140010e58`).
+   3. It starts an install job for the target and waits for the job to finish (`TsInstallSWUpdate!0x1400075e8`, `TsInstallSWUpdate!0x14000f534`).
+   4. It reads whether a reboot is pending and whether an update failed (`TsInstallSWUpdate!0x1400103f8`).
+   5. If neither, it scans again and checks whether every targeted update is installed (`TsInstallSWUpdate!0x14000d34c`).
+
+### Update source and filters
+
+- The step drives the ConfigMgr client's Updates Deployment Agent through the `IPrivilegedInstall2`, `ICIAgentCallback`, and `IRefreshUpdatesCallback` interfaces (`TsInstallSWUpdate!0x14000e1b0`, `TsInstallSWUpdate!0x140010e58`). It does not call the Windows Update Agent itself (inferred). The binary does not import `wuapi.dll` and has no `Microsoft.Update` string.
+- Before a scan, the step reads `WUServer` and `WUStatusServer` from `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate` and logs them. When the key is missing, it logs "Windows Update is not configured on this client machine" as a warning and goes on (`TsInstallSWUpdate!0x140010e58`). The client therefore scans against the WSUS server in that policy (inferred).
+- The step installs only updates that are deployed to the PC. `All` logs "Installing all updates targetted for this computer", and `Mandatory` logs "Installing mandatory updates". The two targets call different methods of `IPrivilegedInstall2` (`TsInstallSWUpdate!0x1400075e8`).
+- With `Mandatory`, the check after a pass skips each update for which a floating-point value from the client is zero (`TsInstallSWUpdate!0x14000d34c`). That value is the deployment deadline as a COM date (inferred).
+- The step has no KB, category, or update ID filter of its own. The admin's deployments are the filter (inferred from the properties and variables above).
+
+### Waits
+
+- A scan waits up to `SMSTSSoftwareUpdateScanTimeout` seconds, one hour by default. Then the step logs "Time-out expired waiting for updates refresh complete notification." (`TsInstallSWUpdate!0x140010514`).
+- When the client answers `0x87D00703`, which the step logs as "UDA is processing another job", the step sleeps 60 seconds and tries again, up to 30 times. After that it logs "Another job is still in progress. The action will end now." (`TsInstallSWUpdate!0x1400075e8`). A scan that gets `0x87D00703` waits for the scan that is already running (`TsInstallSWUpdate!0x140010e58`).
+- The wait for an install job has no overall limit. Every 60 seconds without a notification, the step checks that the client is still connected and reconnects to the job if it is not (`TsInstallSWUpdate!0x14000f534`).
+
+### Results, reboots, and exit codes
+
+| Result of a pass | What the step does | Return value |
+| --- | --- | --- |
+| The client answers `0x87D00708` | Logs "No updates need to be installed on this machine." | 0 |
+| The pass ends with any other error | Ends the step | That error |
+| An update failed | Logs "One or more updates failed to install, hr=0x%08lx" | The failure's HRESULT |
+| A reboot is pending | Sets `SMSTSRebootRequested` to `HD` and `SMSTSRetryRequested` to `TRUE`, and logs "Installation is not yet complete, action needs to be re-run after reboot" | 0 |
+| Every targeted update is installed | Logs "Installation of updates completed successfully" | 0 |
+| Updates are still missing | Logs "Some updates still need to be installed." and starts the next pass | |
+| Six passes ran and updates are still missing | Logs "Retry count is reached. Out of the loop" | 0 |
+
+- The table comes from `TsInstallSWUpdate!0x140004698`. The step checks for a failed update before it checks for a pending reboot, so a failure wins.
+- The pass loop's value passes through `TsInstallSWUpdate!0x140004e00` (at `0x1400052f7` and `0x140005403`) to `wmain`, and the process exits with it (`TsInstallSWUpdate!0x140005428`, at `0x140005f08` and `0x140006116`). A failed update therefore fails the step, unless the step continues on error.
+- After six passes with updates still missing, the step succeeds (`TsInstallSWUpdate!0x140004698`, at `0x140004ceb`).
+- `HD` means a reboot into the installed OS, as in `smsboot.exe /target:HD` ([MDT 8450 binaries reference](mdt-8450-binaries.md#reboots)) (inferred).
+
+### Logs
+
+- The step sets up its logging with the name `InstallSWUpdate`. Its first line is `=======================[ tsinstallswupdate.exe ] =======================` (`TsInstallSWUpdate!0x140005428`). These lines go to `smsts.log` (inferred).
+- When the step starts a scan or an install job, it names the client logs to read: `UpdatesDeployment.log`, `UpdatesHandler.log`, `UpdatesStore.log`, `wuahandler.log`, and `WindowsUpdate.log` (`TsInstallSWUpdate!0x140009ce0`, `TsInstallSWUpdate!0x1400075e8`).
 
 ## PXE responder
 
@@ -322,17 +569,34 @@ The service answers DHCPv6 SOLICIT and REQUEST messages that ask for option 59. 
 | A reply echoes the request's header, apart from `op`, `siaddr`, the boot file, the last bytes of `sname` and `file`, and a `secs` whose bytes it may swap | No decision now |
 | The BCD loader has no winload path, and the TFTP size elements are absent by default | The prototype tests a template without them |
 | The TFTP server echoes an unclamped window size, resends whole windows, uses 32-bit sizes, starts a second transfer for a retransmitted request, and answers a miss with error code 0 | deployarr clamps the window size before the OACK, resends from the first block not acknowledged (RFC 7440), uses 64-bit sizes, keeps one session per client address, port, and file, and answers a miss with error code 1 at once |
-| With no deployment, a UEFI client gets no reply and a BIOS client gets `abortpxe.com` | deployarr does the same for a PC with no order and for a finished one |
+| With no deployment, a UEFI client gets no reply and a BIOS client gets `abortpxe.com` | deployarr does the same only for a PC whose deployment succeeded. The reply does not depend on an order (#70). See [DHCP](../architecture.md#dhcp) |
 | A required deployment suppresses the key-press prompt (inferred) | deployarr's zero-touch default sends `pxeboot.n12` on BIOS and, in the two-stage chain, option 250 sub-option 11 = 2 on UEFI |
 | ConfigMgr counts a deployment as used when the PXE reply goes out | No change. deployarr stops offering PXE when the deployment succeeds, so a PC whose first attempt failed can try again |
 | The WinPE handoff hides a password under keys hard-coded in both binaries, and every client shares one certificate | DHCP and TFTP carry no secret in deployarr. The agent authenticates to the server over HTTPS |
 | WinPE finds the server through `BootServerReply` | No change now. The boot image already names the server. `BootServerReply` is how one boot image could serve several servers later |
 | Nothing handles boot managers signed with the 2023 CA | The prototype must boot 2023-signed boot programs, both stages if the chain needs two, and the importer reports which CA signed each boot file |
+| Pre-provision BitLocker runs `manage-bde.exe` and reads `Win32_Tpm`, so it needs `WinPE-WMI` and `WinPE-SecureStartup`. #51 chose base WinPE without them. Base WinPE has `fveapi.dll` and `fvevol.sys`, which nobody has tested for pre-provisioning | No decision now on whether deployarr pre-provisions BitLocker in WinPE. If it does, a sequence with that step needs a boot image with both components, and the rule in [Boot image](../architecture.md#boot-image) rejects it on an image without them |
+| ConfigMgr escrows the recovery password to AD DS through FVE policy values, to its own database through the management point, or to both. A failed escrow fails the step, except on stand-alone media | No decision now on where recovery passwords may be kept. Whatever the stores are, the enable action fails when a store does not confirm the password, and the password is a secret that never reaches a log line or an event |
+| Both steps default to used space only and leave the method to the OS, which picks XTS-AES 128 on Windows 10 1511 and later. Each also takes AES 128, AES 256, and XTS-AES 256 | The enable action defaults to used space only and the OS's method. Its settings choose full disk and one of the four methods |
+| Both steps take TPM ownership when the TPM has none, and pass the owner authorization between them in `_OSDOAF` | The agent never takes TPM ownership. Windows 10 1607 and later provision the TPM and discard the owner password ([Change the TPM owner password](https://learn.microsoft.com/en-us/windows/security/hardware-security/tpm/change-the-tpm-owner-password)) |
+| Enable BitLocker first waits up to 8 hours for an earlier encryption, and its `/wait` has no time limit | Each wait has a time limit that a setting can change, and the step fails when the limit passes |
+| A TPM failure skips Pre-provision BitLocker by default, and fails Enable BitLocker by default | A TPM failure fails the enable action by default. A setting turns that into a skip with a warning, and the step result says why |
+| Disable BitLocker suspends the key protectors for 0 to 15 restarts through `manage-bde`, and never decrypts | deployarr's disable action does the same, with the restart count as a typed setting from 0 to 15 |
+| `tscore.dll` reaches BitLocker and the TPM through WMI classes, and the deployarr agent does not use WMI | The design states how the agent reaches BitLocker in the full OS, where Windows has `manage-bde.exe` and `Win32_EncryptableVolume` |
 | deployarr applies `install.wim` and never runs `setup.exe`, so nothing checks Windows 11 hardware. ConfigMgr's Check Readiness fills that gap with defaults below the Windows 11 minimums and no Secure Boot check | The agent runs a readiness check in WinPE before any disk step. Its defaults are Microsoft's Windows 11 minimums. See [Readiness check](../architecture.md#readiness-check) |
 | Check Readiness records each result and each required value in variables | Each readiness check records its result, the required value, and the value found, so a later step or the UI can show why a PC failed |
-| ConfigMgr reads TPM state through WMI `Win32_Tpm`, and the deployarr agent does not use WMI | The agent reads the TPM version through TBS. See [Agent](../architecture.md#agent) |
+| ConfigMgr reads TPM state through WMI `Win32_Tpm`, and the deployarr agent does not use WMI | The agent reads the TPM version through TBS when the boot image has `tbs.dll` and the call succeeds, and from the TPM device's IDs otherwise. Base WinPE has no `tbs.dll` (#51). See [TPM version](../architecture.md#tpm-version) |
 | `GetSecureBootState` keeps a third value, `NA`, for a missing registry value | The agent's Secure Boot fact has three values: on, off, and unknown. Unknown never counts as off |
 | Windows 11 requires Secure Boot capable firmware, not Secure Boot on | The Secure Boot check warns by default instead of failing |
 | The wizard sizes Recovery as about 1% of the disk | The server sizes Recovery from the image's `winre.wim` plus 250 MB, as Microsoft documents. See [Disk layout and boot files](../architecture.md#disk-layout-and-boot-files) |
+| Install Software Updates needs the ConfigMgr client and installs only updates that an admin deployed through ConfigMgr. It does not call the Windows Update Agent itself (inferred) | deployarr has no such client, so its agent drives the Windows Update Agent API directly, as MDT's `ZTIWindowsUpdate.wsf` does ([MDT 8456 reference](mdt-8456.md#windows-update)) |
+| ConfigMgr's step fails in WinPE, and MDT's script reboots and tries again there | The Windows Update action runs only in the full OS, after the [handoff to the agent service](../architecture.md#handoff-from-winpe-to-the-new-os) |
+| A pending reboot sets `SMSTSRebootRequested` and `SMSTSRetryRequested`, and the step exits 0. MDT's script does the same | The action returns `Reboot { rerun: true }` while an update waits for a reboot. See [State on disk and resume](../architecture.md#state-on-disk-and-resume) |
+| A failed update fails the step at once with the failure's HRESULT. MDT's script reboots and tries again instead | No decision now on which behavior deployarr takes. Either way, the step result lists each update with its result code and HRESULT |
+| After six passes with updates still missing, the step succeeds. MDT's script fails its eighth pass with 9902, but MDT's templates continue on error | When the action stops at its pass limit, its result lists the updates still missing. No decision now on whether that fails the step or only warns |
+| A scan waits at most an hour and a busy client gets 30 tries a minute apart, but the wait for an install job has no limit | The search, the download, and the install each have a time limit that a setting can change. When one passes, the step fails with a timeout error |
+| The step saves its job ID, so a run after an unexpected restart reconnects to the job instead of starting another | An action that a crash interrupts runs again from a new search, which finds only the updates still missing, so it needs no job ID (inferred). See [State on disk and resume](../architecture.md#state-on-disk-and-resume) |
+| The step's own log says little about each update and points to five client logs | The agent log records each update found, whether it was installed or skipped and why, and its result, as MDT's log does |
 | The 2509 `IsUEFI` enables the privilege first, but reports BIOS when it cannot enable it | No change. The agent already calls `GetFirmwareType` and uses the firmware variable check only as a fallback |
 | ConfigMgr builds an in-place upgrade from `setup.exe /auto` with `/postoobe`, `/postrollback`, and `/compat ScanOnly` | No change now, because in-place upgrades are not in the first release. This page is the reference when they are |
+| Set Dynamic Variables gathers no chassis type and no virtual machine (VM) flag. MDT's gather sets laptop, desktop, and server flags from the chassis type, and `IsVM` from make and model strings ([MDT 8456 reference](mdt-8456.md#gathered-facts)) | The agent gathers the SMBIOS chassis type, MDT's laptop, desktop, and server flags, a VM flag, and the hypervisor vendor. The VM flag comes from the CPU's hypervisor present bit and the SMBIOS VM bit, never from make or model strings. See [Agent](../architecture.md#agent) |

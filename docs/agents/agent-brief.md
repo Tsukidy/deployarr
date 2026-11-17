@@ -55,6 +55,16 @@ What should happen when the work is done, including edge cases and errors.
 - Something that must not change in this issue
 ```
 
+## Write tickets
+
+- Before you publish tickets, show the owner the breakdown as a numbered list. Give each ticket's title, its blockers, and what it delivers, and ask whether the granularity and the blockers are right. Publish only after the owner approves the list in the session. If the owner is not in the session, as in a scheduled run, publish nothing as `ready-for-agent`.
+- Label each approved ticket yourself, with its category and its state. Use `ready-for-agent` when an agent can finish it. Add `lab` when the work needs the VM lab, and say so in the body. Use `ready-for-human` when the work itself needs real hardware, external access, or manual testing, and say which. The owner approved the breakdown, so the tickets skip triage and the owner never labels them by hand.
+- Write each body in the [ticket layout](#ticket-layout). Make each ticket a sub-issue of the epic for its milestone. Work that belongs to no milestone, such as a repository chore, has no parent and leaves out `## Parent`.
+- Publish blockers first, then list them in each ticket's `## Blocked by` section by number. The Blocked by workflow turns the section into native GitHub links.
+- When you find work outside your current ticket, do not do it. Open an issue for it with `bug` or `enhancement` and `needs-triage`, never `ready-for-agent`, and mention it in your pull request.
+- A question only the owner can answer is an `enhancement` labeled `ready-for-human`, and a sub-issue of the epic for the milestone it blocks. State the question and the options, and end the body with `Answer in a comment, then close this issue as completed. Close it as not planned if the waiting tickets should not happen.` Publish it before the tickets that wait on it, and list it under their `## Blocked by`. Before you open one, search the open issues for the same question.
+- Settle any hold the owner wants while they approve the breakdown. Leave a held ticket out, or publish a question such as "Start X?" and list it as the ticket's blocker.
+
 ## Ticket layout
 
 An agent that breaks work into tickets writes each body in this layout. Each ticket is a narrow vertical slice that can be checked on its own and fits one fresh context window. Do prefactoring first, in its own ticket.
