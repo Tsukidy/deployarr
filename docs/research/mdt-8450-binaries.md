@@ -65,6 +65,7 @@ The engine is three binaries. `TsmBootstrap.exe` starts or resumes a run. `TsMan
 - A Software condition checks an MSI ProductCode or UpgradeCode with `MsiGetProductInfoW` and `MsiEnumRelatedProductsW`. It compares no versions (`TsCore!0x1801a8800`).
 - MakeModel, Location, and Computer conditions use substring tests against the gathered facts. A gateway condition of `10.0.0.1` therefore also matches `10.0.0.10` (`TsCore!0x1801a4c28`, `TsCore!0x1801a4784`, `TsCore!0x1801a0fc4`).
 - A condition that fails to evaluate is not false. It fails the step the same way a failed command does, with `_SMSTSLastActionRetCode` set to the error code (`TsManager!0x140033c10`).
+- A group condition that fails to evaluate fails the group. The group's `Execute` checks the disabled flag first and the condition second. On an error it logs `Error 0x%x in evaluating the condition for the group (%s)` and returns a failed outcome, not an engine error. It sets no `_SMSTSLastAction*` variable. It returns before it pushes the group on the stack of open groups (`TsManager!0x140033664`). The main loop then calls `EvaluateFailure` on the same group (`TsManager!0x14002f6f4`). A group with `continueOnError` jumps past its EndGroup. A group without it pops a group from the stack and passes the failure to it. With an empty stack, the run stops (`TsManager!0x140032bb8`). The failed group was never pushed, so the group it pops is its parent. The parser sets the group's continue flag only when `continueOnError` is exactly `true` (`TsCore!0x18019d2b8`, `TsManager!0x14002a3d0`, `TsManager!0x140029158`). When the run stops, its failure message names the group and gives the code in `_SMSTSLastActionRetCode`, which the group's path does not set (`TsManager!0x14002f6f4`).
 
 ### Variables
 
@@ -293,7 +294,7 @@ winpe     yes
 | `efisys.bin` waits for a key press | The deployarr boot ISO uses the no-prompt EFI boot image |
 | Saved MDT steps have no ID | deployarr's stable `NodeId` is new, and an MDT importer must create IDs |
 | MDT conditions include file version, file and folder dates, installed MSI products, and a WMI failure flag | deployarr's `Condition` gets these types and the full operator set. Make, model, location, and computer checks become variable conditions on gathered facts, with exact matching instead of MDT's substring tests |
-| A condition that fails to evaluate fails the step in MDT | deployarr's evaluator returns an error, and the error goes through the step's `on_error` |
+| A condition that fails to evaluate fails the step in MDT. A group's condition error fails the group | deployarr's evaluator returns an error. A step's error goes through the step's `on_error`. A group's error follows the group's own `continue_on_error` first and then its parent's target, as [#150](https://github.com/Tsukidy/deployarr/issues/150) decides |
 | MDT writes its state file in place and ignores a failed save | The agent writes a temporary file, flushes it, and renames it. A failed save stops the run before the next step or reboot |
 | MDT saves nothing before a step, so an interrupted step runs again | The agent marks a step in flight before it starts. A typed action converges when run again, and a command fails unless its step allows a re-run |
 | A retry with a reboot loses the step's variable changes | The agent saves state before every reboot |
