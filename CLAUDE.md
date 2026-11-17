@@ -4,6 +4,11 @@
 
 These notes cover cloud sessions on the `env` environment. `AGENTS.md` above covers the project itself.
 
+## Questions for the owner
+
+- Ask the owner every question with the `AskUserQuestion` tool, including design choices, scope checks, and approval of a ticket breakdown. A question left in reply text is easy to miss.
+- A subagent returns its open question to the main conversation, which asks it with the tool.
+
 ## Environment
 
 - The research needs `github.com`, `go.microsoft.com`, `download.microsoft.com`, `learn.microsoft.com`, and the package registries (apt, npm, PyPI, crates.io, NuGet). If the environment's network is ever set to a limited list, those hosts must be on it.
