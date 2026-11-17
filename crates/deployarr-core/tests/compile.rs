@@ -91,6 +91,14 @@ fn restart() -> Value {
     json!({ "restart": { "into": "installed_os" } })
 }
 
+fn drivers() -> Value {
+    json!({ "apply_drivers": { "selection": "auto" } })
+}
+
+fn unattend() -> Value {
+    json!({ "apply_unattend": { "template": "standard" } })
+}
+
 fn installed_msi() -> Value {
     json!({ "installed_msi": { "product_code": "23170f69-40c1-2702-2408-000001000000" } })
 }
@@ -472,9 +480,11 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
     for (name, action, allowed) in table {
         let allowed: Vec<RunIn> = allowed.iter().map(|name| run_in(name)).collect();
         for written in ["win_pe", "full_os", "either"] {
-            // The partition step comes first, so a `win_pe` restart is allowed.
+            // The partition and image steps come first, so a `win_pe` restart,
+            // `apply_drivers`, and `apply_unattend` are allowed.
             let document = root(vec![
                 step(0x02, "win_pe", partition()),
+                step(0x04, "win_pe", apply_image()),
                 step(0x03, written, action.clone()),
             ]);
 
@@ -500,7 +510,7 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
                     panic!("{name} with {written}: {errors}");
                 };
                 assert_eq!(short(*node), 0x03);
-                assert_eq!(path.indices(), [1]);
+                assert_eq!(path.indices(), [2]);
                 assert_eq!(*action, name);
                 assert_eq!(*found, run_in(written));
                 assert_eq!(listed.to_vec(), allowed);
@@ -654,6 +664,217 @@ fn a_restart_that_is_not_a_win_pe_step_passes_before_the_partition_step() {
         disabled(step(0x02, "win_pe", restart())),
         step(0x03, "win_pe", partition()),
     ]));
+}
+
+#[test]
+fn an_apply_drivers_or_apply_unattend_step_before_the_first_apply_os_image_fails() {
+    for (action, name) in [(drivers(), "apply_drivers"), (unattend(), "apply_unattend")] {
+        let cases = [
+            // Directly before the image step.
+            (
+                root(vec![
+                    step(0x02, "win_pe", action.clone()),
+                    step(0x03, "win_pe", apply_image()),
+                ]),
+                0x02,
+                vec![0],
+            ),
+            // In a group that comes before the image step's group.
+            (
+                root(vec![
+                    group(
+                        0x02,
+                        vec![
+                            step(0x03, "win_pe", partition()),
+                            step(0x04, "win_pe", action.clone()),
+                        ],
+                    ),
+                    group(0x05, vec![step(0x06, "win_pe", apply_image())]),
+                ]),
+                0x04,
+                vec![0, 1],
+            ),
+            // After a disabled image step, which the program drops.
+            (
+                root(vec![
+                    disabled(step(0x02, "win_pe", apply_image())),
+                    step(0x03, "win_pe", action.clone()),
+                    step(0x04, "win_pe", apply_image()),
+                ]),
+                0x03,
+                vec![1],
+            ),
+            // After an image step inside a disabled group.
+            (
+                root(vec![
+                    disabled(group(0x02, vec![step(0x03, "win_pe", apply_image())])),
+                    step(0x04, "win_pe", action.clone()),
+                    step(0x05, "win_pe", apply_image()),
+                ]),
+                0x04,
+                vec![1],
+            ),
+        ];
+
+        for (document, node, path) in cases {
+            let errors = compile_err(&document);
+
+            assert_eq!(
+                errors,
+                [error(
+                    node,
+                    path.clone(),
+                    Rule::BeforeOsImage { action: name }
+                )],
+                "{document}"
+            );
+            assert_eq!(
+                errors[0].to_string(),
+                format!(
+                    "{}, node {}: `{name}` acts on the applied image, so it must come after the first `apply_os_image` step",
+                    NodePath::from(path),
+                    id_text(node)
+                )
+            );
+        }
+    }
+}
+
+#[test]
+fn apply_drivers_and_apply_unattend_steps_after_the_first_apply_os_image_compile() {
+    // A second image step later does not matter. The first one comes before.
+    let document = root(vec![
+        group(
+            0x02,
+            vec![
+                step(0x03, "win_pe", partition()),
+                step(0x04, "win_pe", apply_image()),
+            ],
+        ),
+        group(
+            0x05,
+            vec![
+                step(0x06, "win_pe", drivers()),
+                step(0x07, "win_pe", unattend()),
+            ],
+        ),
+        step(0x08, "win_pe", apply_image()),
+        step(0x09, "win_pe", drivers()),
+    ]);
+
+    let program = compile_ok(&document);
+
+    assert_eq!(
+        shapes(&program),
+        [
+            Enter(0x01, 9),
+            Enter(0x02, 4),
+            Exec(0x03, FailDeployment),
+            Exec(0x04, FailDeployment),
+            Enter(0x05, 7),
+            Exec(0x06, FailDeployment),
+            Exec(0x07, FailDeployment),
+            Exec(0x08, FailDeployment),
+            Exec(0x09, FailDeployment),
+        ]
+    );
+}
+
+#[test]
+fn an_apply_os_image_step_with_a_condition_still_comes_before() {
+    // The rule ignores conditions. If the image step is skipped at run time,
+    // the agent fails the later step.
+    let cases = [
+        // The image step is in a group with a condition, and the later steps
+        // are outside that group.
+        root(vec![
+            when(
+                group(0x02, vec![step(0x03, "win_pe", apply_image())]),
+                var_exists(),
+            ),
+            step(0x04, "win_pe", drivers()),
+            step(0x05, "win_pe", unattend()),
+        ]),
+        // The image step has a condition of its own.
+        root(vec![
+            when(step(0x02, "win_pe", apply_image()), var_exists()),
+            step(0x03, "win_pe", drivers()),
+            step(0x04, "win_pe", unattend()),
+        ]),
+    ];
+
+    for document in cases {
+        compile_ok(&document);
+    }
+}
+
+#[test]
+fn a_disabled_apply_drivers_or_apply_unattend_step_before_the_image_is_not_checked() {
+    // The program drops disabled steps and everything inside a disabled
+    // group, so the order rule does not see them.
+    compile_ok(&root(vec![
+        disabled(step(0x02, "win_pe", drivers())),
+        disabled(step(0x03, "win_pe", unattend())),
+        disabled(group(
+            0x04,
+            vec![
+                step(0x05, "win_pe", drivers()),
+                step(0x06, "win_pe", unattend()),
+            ],
+        )),
+        step(0x07, "win_pe", apply_image()),
+    ]));
+}
+
+#[test]
+fn a_sequence_with_no_apply_os_image_fails_for_each_apply_drivers_and_apply_unattend() {
+    let document = root(vec![
+        step(0x02, "win_pe", partition()),
+        step(0x03, "win_pe", drivers()),
+        group(
+            0x04,
+            vec![
+                step(0x05, "win_pe", unattend()),
+                step(0x06, "win_pe", drivers()),
+            ],
+        ),
+        disabled(step(0x07, "win_pe", drivers())),
+        step(0x08, "win_pe", unattend()),
+    ]);
+
+    assert_eq!(
+        compile_err(&document),
+        [
+            error(
+                0x03,
+                vec![1],
+                Rule::BeforeOsImage {
+                    action: "apply_drivers",
+                },
+            ),
+            error(
+                0x05,
+                vec![2, 0],
+                Rule::BeforeOsImage {
+                    action: "apply_unattend",
+                },
+            ),
+            error(
+                0x06,
+                vec![2, 1],
+                Rule::BeforeOsImage {
+                    action: "apply_drivers",
+                },
+            ),
+            error(
+                0x08,
+                vec![4],
+                Rule::BeforeOsImage {
+                    action: "apply_unattend",
+                },
+            ),
+        ]
+    );
 }
 
 #[test]
