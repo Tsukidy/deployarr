@@ -57,20 +57,21 @@ GitHub issues hold the project's work. [Roadmap](docs/roadmap.md) sets the order
 - Claim a ticket before any other work, and read [Take a ticket](docs/agents/issue-tracker.md#take-a-ticket) before you claim.
 - Before you publish tickets, show the owner the numbered breakdown and get approval in the session. With no owner in the session, publish nothing as `ready-for-agent`. See [Write tickets](docs/agents/agent-brief.md#write-tickets).
 - Triage only when the owner asks. See [Triage](docs/agents/triage-labels.md#triage).
+- List your issues at the start. Take no issue that another session opens later without the owner's permission. See [Work list](docs/agents/issue-tracker.md#work-list).
 - Work you find outside your ticket becomes a new `needs-triage` issue, never part of your change. See [Write tickets](docs/agents/agent-brief.md#write-tickets).
 - Every issue carries exactly one category label and exactly one state label, and an epic is the exception. See [Triage labels](docs/agents/triage-labels.md).
 
 ## Branches and pull requests
 
-Several agents can work in this repository at once. Each one delivers its work through a pull request, and GitHub cleans up the branches.
+Several agents work here at once, each through its own pull request.
 
 - Do not commit to `main` directly. Work on your own branch, made from the latest `main`.
 - Open your pull request into `main` as a draft. Keep each pull request to one change. CI runs on drafts, and GitHub does not merge a draft.
 - Mark the pull request ready for review as your last step. Before that, run every review you planned and push its fixes, fill in the template for the final diff, and wait for CI to pass on the last commit. The owner reads ready for review as ready to merge.
 - To change a pull request after you mark it ready, convert it back to a draft first. Mark it ready again when you finish.
 - If your session ends before the work is done, leave the pull request as a draft and say in its body what remains.
-- Fill in the pull request template. Summary shows the change with the smallest view that makes it clear, such as a diff sketch, a tree, or pseudocode. Evidence shows a before and an after, such as a failing and then passing test. Merge danger says whether the change is a one-way or a two-way door, and names its blast radius. The template comes from the `pr` skill in mattpocock/skills.
-- The repository owner merges pull requests with squash and merge. The repository setting "Automatically delete head branches" is on, so GitHub deletes a pull request's branch when it is merged. Do not delete branches yourself. An agent's GitHub access may not allow it anyway. If a merged branch is still there, tell the owner.
+- Fill in the pull request template. Summary shows the change with the smallest view that makes it clear, such as a diff sketch, a tree, or pseudocode. Evidence shows a before and an after, such as a failing and then passing test. Merge danger says whether the change is a one-way or a two-way door, and names its blast radius.
+- The repository owner merges pull requests with squash and merge. The repository setting "Automatically delete head branches" is on, so GitHub deletes a pull request's branch when it is merged. Do not delete branches yourself. If a merged branch is still there, tell the owner.
 - After your pull request is merged, start any follow-up work on a new branch from the latest `main`. If your session can push only to one branch, merge the latest `main` into that branch first, then open a new pull request. Do not rebase or force-push a branch that others may have fetched.
 - A closed pull request that was not merged leaves its branch behind. Tell the owner about it.
 
