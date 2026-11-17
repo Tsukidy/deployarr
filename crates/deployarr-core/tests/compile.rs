@@ -1,8 +1,9 @@
+use deployarr_core::action::BuiltinAction;
 use deployarr_core::compile::OnError::{Continue, FailDeployment};
 use deployarr_core::compile::{
     CompileError, CompileErrors, Instr, NodePath, OnError, Pc, Program, Rule, compile,
 };
-use deployarr_core::sequence::{Group, Node, NodeId, RunIn, Step, TaskSequence};
+use deployarr_core::sequence::{Group, LoweredSequence, Node, NodeId, RunIn, Step};
 use serde_json::{Value, json};
 
 use self::Shape::{Enter, Exec};
@@ -108,8 +109,8 @@ fn var_exists() -> Value {
     json!({ "var": { "name": "AssetTag", "test": "exists" } })
 }
 
-fn parse(document: &Value) -> TaskSequence {
-    TaskSequence::from_json(&document.to_string()).expect("the document parses")
+fn parse(document: &Value) -> LoweredSequence {
+    LoweredSequence::from_json(&document.to_string()).expect("the document parses")
 }
 
 fn compile_ok(document: &Value) -> Program {
@@ -186,7 +187,7 @@ fn jump_to(pc: usize) -> OnError {
 
 /// The steps of the tree in document order, with the disabled ones and the
 /// ones inside a disabled group left out.
-fn kept_steps<'a>(group: &'a Group, out: &mut Vec<&'a Step>) {
+fn kept_steps<'a>(group: &'a Group<BuiltinAction>, out: &mut Vec<&'a Step<BuiltinAction>>) {
     for child in &group.children {
         match child {
             Node::Group(group) if group.meta.enabled => kept_steps(group, out),
@@ -198,7 +199,7 @@ fn kept_steps<'a>(group: &'a Group, out: &mut Vec<&'a Step>) {
 
 #[test]
 fn the_sample_compiles_to_a_flat_program() {
-    let sequence = TaskSequence::from_json(SAMPLE).expect("the sample parses");
+    let sequence = LoweredSequence::from_json(SAMPLE).expect("the sample parses");
 
     let program = compile(&sequence).unwrap_or_else(|errors| panic!("{errors}"));
 

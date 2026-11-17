@@ -1,0 +1,15 @@
+error[E0308]: mismatched types
+ --> tests/ui/compile_authored.rs:5:13
+  |
+5 |     compile(sequence)
+  |     ------- ^^^^^^^^ expected `&TaskSequence<BuiltinAction>`, found `&TaskSequence<Action>`
+  |     |
+  |     arguments to this function are incorrect
+  |
+  = note: expected reference `&TaskSequence<BuiltinAction>`
+             found reference `&TaskSequence<Action>`
+note: function defined here
+ --> src/compile.rs
+  |
+  | pub fn compile(sequence: &LoweredSequence) -> Result<Program, CompileErrors> {
+  |        ^^^^^^^

@@ -200,7 +200,8 @@
 										"limits": {
 											"max_runtime_secs": 300,
 											"rerun_if_interrupted": true
-										}
+										},
+										"files": []
 									}
 								}
 							}
@@ -378,7 +379,8 @@
 										"limits": {
 											"max_runtime_secs": null,
 											"rerun_if_interrupted": false
-										}
+										},
+										"files": []
 									}
 								}
 							}
@@ -430,7 +432,8 @@
 										"limits": {
 											"max_runtime_secs": null,
 											"rerun_if_interrupted": false
-										}
+										},
+										"files": []
 									}
 								}
 							}
