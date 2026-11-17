@@ -91,7 +91,7 @@ fn check_kind_id(text: &str) -> Result<(), PartError> {
     check_part(text, KIND_ID_MAX_LEN)
 }
 
-fn check_part(text: &str, max_len: usize) -> Result<(), PartError> {
+pub(crate) fn check_part(text: &str, max_len: usize) -> Result<(), PartError> {
     let mut chars = text.chars();
     match chars.next() {
         None => return Err(PartError::Empty),

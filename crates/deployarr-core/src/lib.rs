@@ -12,13 +12,17 @@ extern crate alloc;
 
 pub mod action;
 pub mod addon;
+pub mod catalog;
 pub mod compile;
 pub mod condition;
 pub mod evaluate;
+pub mod form;
 pub mod join;
+pub mod lifecycle;
 pub mod lookup;
 pub mod lower;
 pub mod non_empty;
+pub mod prompt;
 pub mod sequence;
 pub mod store;
 pub mod substitution;
