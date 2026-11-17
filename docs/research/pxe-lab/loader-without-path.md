@@ -10,7 +10,7 @@ This page records whether WinPE boots over PXE from a BCD store whose RAM disk l
 | `bios`, SeaBIOS with QEMU's iPXE ROM | `boot\bios-nopath.bcd` | None | WinPE 10.0.26100.9457 at a command prompt, with an address from dnsmasq. WinPE reports `SystemBootDevice` = `ramdisk(0)`. |
 
 - A loader with no `path` element boots WinPE on both firmware types. The boot managers load the store, the font, `boot.sdi`, and `boot.wim`, then start Windows from the RAM disk.
-- No boot requests `winload.efi` or `winload.exe` over TFTP. The boot managers read the loader from inside the RAM disk.
+- No boot requests `winload.efi` or `winload.exe` over TFTP. The boot managers read the loader from inside the RAM disk (inferred). See [What is inferred](#what-is-inferred).
 - Each run makes the same TFTP requests, with the same options, as the run with the default store in [#27](https://github.com/Tsukidy/deployarr/issues/27). Only the store's file name differs. See [Control](#control).
 - Neither VM waited for a key press. No key went to either VM before WinPE showed its command prompt.
 
@@ -99,7 +99,7 @@ The boot files come from index 1 of `sources\boot.wim` in `Windows11_Client_x64_
 | `boot/fonts/wgl4_boot.ttf` | 50096 | `23872d2eba60bbb3bd2585e925c4b48769fb6bb0cfa7f4a6ba4e8f03bcaf2c35` | Not a PE file | None |
 | `boot/x64/boot.wim` | 572691590 | `c0a18c72a7f84c36120e5681bb325e2c892e919886671e553a6129899a09097a` | Not a PE file | WinPE 10.0.26100.9457 |
 
-`wimdir` lists the OS loaders at two paths in that `boot.wim`. `wimextract` copied them to a scratch folder outside the repository. The two copies of each loader are the same file:
+`wimdir` lists each OS loader under `Windows\System32` and `Windows\System32\Boot` in that `boot.wim`, and also in a `Windows\WinSxS` component folder. The `grep` under [Commands](#commands) keeps the two `System32` paths. `wimextract` copied those to a scratch folder outside the repository. The two copies of each loader are the same file:
 
 | Paths in `boot.wim` | Bytes | SHA-256 | Issuer | Version |
 | --- | --- | --- | --- | --- |
@@ -150,7 +150,8 @@ The table lists every RRQ in order, from the prototype log. The capture holds th
 | 31 | 11:22:47.302 | `\boot\x64\boot.wim` | `tsize=0,blksize=1456` | Complete, 572691590 bytes in 51.273 seconds |
 | 32 | 11:23:38.717 | `\EFI\Microsoft\Boot\Policies\UnlockToken.pol` | `tsize=0` | ERROR 1 File not found |
 
-- RRQs 1 and 2 come from OVMF, and RRQs 3 to 32 from `bootmgfw.efi`.
+- RRQs 1 and 2 come from OVMF, which prints `NBP file downloaded successfully.` in the serial log.
+- RRQs 3 to 31 come from `bootmgfw.efi`, and RRQ 32 from the `winload.efi` that it starts (inferred). The capture and the log record only client ports and times. RRQ 3 follows the end of the `bootmgfw.efi` download, and a program cannot run before it is downloaded. RRQ 32 follows the end of the `boot.wim` download. `strings -el` finds its path in `winload.efi` from this `boot.wim`, and finds only `SecureBootUnlockToken.pol` in `bootmgfw.efi`.
 - `bootmgfw.efi` asks for `\boot\x64\BCD` first, then for the option 252 path with a leading `\`.
 - The transfer of `boot.wim` sent 393,333 blocks with window size 1 and no retransmits.
 - No request names `winload.efi`. RRQ 32 is the last TFTP request of the boot.
@@ -181,7 +182,7 @@ Frames 1 to 7 of [`loader-without-path-bios-dhcp.txt`](captures/loader-without-p
 2026-11-13T11:26:20.099+00:00 dhcp-sent port=4011 destination=10.41.0.192:68 type=ACK xid=fdd0c436 firmware=bios step=only file=boot\x64\pxeboot.n12 option_252=boot\bios-nopath.bcd
 ```
 
-Frames 38 to 41 are WinPE's own DISCOVER, OFFER, REQUEST, and ACK, with option 60 `MSFT 5.0` and no option 93. The prototype logs them as `dhcp-ignored` with `reason=no-option-93`, and dnsmasq gives WinPE `10.41.0.192` again.
+Frames 38 to 41 are WinPE's own DHCP exchange with dnsmasq. WinPE's DISCOVER in frame 38 and REQUEST in frame 40 carry option 60 `MSFT 5.0` and no option 93. The prototype logs those two as `dhcp-ignored` with `reason=no-option-93`. dnsmasq's OFFER in frame 39 and ACK in frame 41 give WinPE `10.41.0.192` again.
 
 ### TFTP requests
 
@@ -203,7 +204,7 @@ The capture holds the same 13 RRQs in the same order.
 | 12 | 11:26:24.194 | `\boot\x64\boot.wim` | `tsize=0,blksize=1456` | Complete, 572691590 bytes in 90.395 seconds |
 | 13 | 11:27:54.846 | `\EFI\Microsoft\Boot\Policies\UnlockToken.pol` | `tsize=0` | ERROR 1 File not found |
 
-- RRQ 1 comes from the iPXE ROM, RRQ 2 from `pxeboot.n12`, and RRQs 3 to 13 from `bootmgr.exe`.
+- RRQ 1 comes from the iPXE ROM. RRQ 2 comes from `pxeboot.n12`, RRQs 3 to 12 from `bootmgr.exe`, and RRQ 13 from the `winload.exe` that it starts (inferred). Each program's first request follows the end of its own download. `strings -el` finds the path of RRQ 13 in `winload.exe` from this `boot.wim`, and finds only `SecureBootUnlockToken.pol` in `bootmgr.exe`.
 - `bootmgr.exe` asks for the option 252 path first.
 - The transfer of `boot.wim` sent 393,333 blocks with window size 1 and no retransmits.
 - No request names `winload.exe`. RRQ 13 is the last TFTP request of the boot.
@@ -252,7 +253,7 @@ A `diff` of the file and options of every RRQ, from the #27 log against this pag
 > \boot\bios-nopath.bcd "tsize=0,blksize=1456"
 ```
 
-The #27 `uefi` window appeared at most 83.2 seconds after start. Its screenshots came less often, so that bound is looser than the 67.7 seconds here. The #27 `bios` window appeared at most 110.5 seconds after start.
+The #27 `uefi` window appeared after `boot.wim` finished, 62.0 seconds after start, and at most 83.2 seconds after start. The #27 `bios` window appeared after `boot.wim` finished, 97.4 seconds after start, and at most 110.5 seconds after start. Each range holds the bound for the same VM here, so the runs do not show that either store reaches WinPE faster.
 
 ## Captures
 
@@ -327,13 +328,13 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/loader-without-path-<vm>
 
 - The `uefi2023` VM. [#32](https://github.com/Tsukidy/deployarr/issues/32) runs the 2023-signed boot files there.
 - The two-stage chain with the `-nopath` stores. The BCD requests after the boot manager starts are the same in both chains in #28, so the result probably carries over (inferred).
-- A boot image that has the OS loader at only one of the two paths.
+- A boot image that has the OS loader at only one of the two paths. A run with such an image would show which path the boot managers open.
 - Physical PCs and other firmware.
 
 ## What changes in deployarr
 
 - deployarr can leave the loader's `path` out of both BCD templates, as ConfigMgr does. The [BCD](../../architecture.md#bcd) section then drops the `path \windows\system32\boot\winload.efi` element and its question. The result holds on the `uefi` VM with Secure Boot on and on the `bios` VM. #32 still has to show it on `uefi2023`.
 - Without `path`, the two templates differ only in the loader's GUID. #33 can choose between two templates and one template for both firmware types. One template would need a lab run that serves it to both VMs first.
-- The importer can check that the boot image holds the OS loaders at `Windows\System32\winload.efi` and `Windows\System32\winload.exe`, because a loader with no `path` depends on the boot manager's default path (inferred).
+- A loader with no `path` depends on the boot manager's built-in default path (inferred), and these runs do not show which of the two paths that is. Until a run shows it, the importer can check that the boot image holds `winload.efi` and `winload.exe` at both `Windows\System32` and `Windows\System32\Boot`, as this `boot.wim` does.
 - The `{bootmgr}` type `0x10100002` from `bcdedit /create {bootmgr}` does not stop either boot manager. #61 can use that.
-- The store's file name is free. Both boot managers requested `boot\uefi-nopath.bcd` and `boot\bios-nopath.bcd` exactly as option 252 named them.
+- The store does not need the name `BCD`. Both boot managers requested the path that option 252 named, with a leading `\` added, `\boot\uefi-nopath.bcd` and `\boot\bios-nopath.bcd`. The runs tested only names of the form `boot\<name>.bcd`.
