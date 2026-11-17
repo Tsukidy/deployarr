@@ -53,12 +53,12 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 1. The PC PXE-boots. The proxyDHCP service reads the client architecture (DHCP option 93) and sends Microsoft-signed boot programs for that firmware type, with DHCP option 252 naming the BCD. See [PXE](#pxe).
 2. The boot manager loads WinPE from the server over TFTP. WinPE starts `deployarr-agent` from `winpeshl.ini`.
 3. The agent initializes WinPE (`wpeinit`), loads the boot image's network and storage drivers with `drvload`, and connects to the server over HTTPS.
-4. The agent gathers facts and sends them to the server. Facts include the SMBIOS data (system, baseboard, and chassis serials, UUID, make, model, and SKU), MAC addresses, firmware type, Secure Boot state, TPM version, memory, processor cores, disks, and the hardware IDs and compatible IDs of every device.
+4. The agent gathers facts and sends them to the server. Facts include the SMBIOS data (system, baseboard, and chassis serials, UUID, make, model, SKU, and chassis type), the form factor flags (laptop, desktop, and server), the virtual machine (VM) flag, the hypervisor vendor, MAC addresses, firmware type, Secure Boot state, TPM version, memory, processor cores, disks, and the hardware IDs and compatible IDs of every device. See [Chassis and VM facts](#chassis-and-vm-facts).
 5. The server runs the lookup chain (see [Order lookup](#order-lookup)). The result is a task sequence and a set of variables, or a prompt for the technician, such as an add-on's order-number prompt or the manual list. If the task sequence activates Windows, the agent then asks for the product key. See [Activation](#activation).
 6. The server pins the task sequence version. It asks each add-on to expand its steps into built-in steps, compiles the result, and sends the compiled program and variables to the agent. See [Task sequences stay loadable](#task-sequences-stay-loadable).
 7. The agent runs the WinPE steps. A typical run checks readiness, partitions the disk, downloads and applies the OS image, injects drivers, writes the unattend file to `\Windows\Panther\unattend.xml`, runs `bcdboot`, and installs itself as a service in the offline image.
 8. The PC reboots into Windows Setup. When Setup finishes, or reaches audit mode, the agent service resumes the sequence at the next step.
-9. The agent installs applications, runs scripts, reboots as steps request, and checks that every device has a driver.
+9. The agent installs applications and Windows updates, runs scripts, reboots as steps request, and checks that every device has a driver.
 10. The agent turns off the built-in Administrator account, deletes every answer file that Windows Setup can find on the PC's disk, and reports success. It then uploads its logs, removes itself, and runs the finish action. A PC that is ready to use restarts or shuts down. A PC for the customer ends any running `sysprep.exe` and runs `sysprep /oobe /shutdown /quiet`. See [End state](#end-state).
 11. The server marks the deployment complete. Later PXE boots of that PC fall through to the local disk.
 
@@ -67,17 +67,20 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 The task sequence model lives in `deployarr-core`, a `no_std` crate with no I/O. See [Crate layout](#crate-layout). The server, the agent, and the web UI all use it. These sketches show the shape, not final code.
 
 ```rust
-pub struct TaskSequence {
+pub struct TaskSequence<A> {   // A is the action type that a step holds
 	pub id: TaskSequenceId,   // upper-case, like "W11-PRO-STD"
 	pub version: u32,         // every save creates a new version
 	pub name: String,
 	pub default_vars: DefaultVars,   // no two entries name the same variable
-	pub root: Group,
+	pub root: Group<A>,
 }
 
-pub enum Node {
-	Group(Group),
-	Step(Step),
+pub type AuthoredSequence = TaskSequence<Action>;         // what an admin edits and the server stores
+pub type LoweredSequence = TaskSequence<BuiltinAction>;   // what the compiler and the agent see
+
+pub enum Node<A> {
+	Group(Group<A>),
+	Step(Step<A>),
 }
 
 pub struct NodeMeta {
@@ -88,20 +91,26 @@ pub struct NodeMeta {
 	pub condition: Option<Condition>,
 }
 
-pub struct Group {
+pub struct Group<A> {
 	pub meta: NodeMeta,
-	pub children: Vec<Node>,
+	pub children: Vec<Node<A>>,
 }
 
-pub struct Step {
+pub struct Step<A> {
 	pub meta: NodeMeta,
 	pub run_in: RunIn,        // WinPe, FullOs, or Either. Checked against the action at save
-	pub action: Action,
+	pub action: A,
 }
 
-pub enum Action {
-	RunCommand { command: Template, working_dir: Option<Template>, exit: ExitCodes, limits: StepLimits },
-	RunPowerShell { script: ContentRef, args: Vec<Template>, exit: ExitCodes, limits: StepLimits },
+pub enum Action {   // what a stored step holds. See Task sequences stay loadable
+	Builtin(BuiltinAction),   // written in JSON exactly as a built-in action
+	AddOn(AddOnStep),
+	ApplyJoinProfile { stage: JoinStage },   // OfflineImage or FullOs
+}
+
+pub enum BuiltinAction {   // everything the agent runs
+	RunCommand { command: Template, working_dir: Option<Template>, exit: ExitCodes, limits: StepLimits, files: StepFiles },
+	RunPowerShell { script: ContentRef, args: Vec<Template>, exit: ExitCodes, limits: StepLimits, files: StepFiles },
 	SetVariable { name: SettableVarName, value: Template },   // the name cannot start with `_`
 	Restart { into: RestartTarget },
 	PartitionDisk { layout: DiskLayoutId, disk: DiskSelector },
@@ -109,9 +118,25 @@ pub enum Action {
 	ApplyDrivers { selection: DriverSelection },
 	ApplyUnattend { template: UnattendTemplateId },
 	InstallApplications { apps: AppSelection },   // One(AppId) or FromList(VarName)
+	InstallUpdates {              // full OS only. Windows Update or WSUS. See Windows Update
+		source: UpdateSource,
+		missing: MissingUpdatePolicy,
+		max_passes: NonZeroU8,    // default 7
+		exclude: Vec<UpdateExclusion>,   // default empty
+		timeouts: UpdateTimeouts,
+	},
 	VerifyDrivers { policy: MissingDriverPolicy },
+	EnableBitLocker { method: EncryptionMethod, full_disk: bool, wait_secs: Option<NonZeroU32>, tpm_failure: TpmFailure },   // full OS only
+	SuspendBitLocker { restarts: SuspendRestarts },   // full OS only. Never decrypts
 	CheckReadiness { checks: ReadinessChecks },   // Windows 11 minimums by default
 	ActivateWindows { online: bool },   // full OS only. Installs the product key typed in WinPE
+	ServerCall { send: Vec<VarName>, limits: StepLimits },   // add-on steps expand to it
+	AddProvisioningPackage { package: SecretRef, limits: StepLimits },   // the one action that takes a secret
+}
+
+pub struct StepFile {   // a file the agent writes to the step's private folder
+	pub name: FileName,
+	pub content: ContentRef,   // content only, never a secret
 }
 
 pub struct ExitCodes {          // read with success() and reboot(). No code is in both lists
@@ -142,7 +167,7 @@ pub enum Test<T> { Exists, NotExists, Equals(T), NotEquals(T), Less(T), LessEqua
 pub enum CompareOp { Equals, NotEquals, Less, LessEqual, Greater, GreaterEqual }   // for file versions and timestamps
 ```
 
-Each MDT step type that does real work becomes a typed `Action` variant with typed parameters. `RunCommand` and `RunPowerShell` cover everything else. MDT passes every step's settings as untyped variables and command lines, so a typo becomes a runtime failure. With typed actions, the editor and the server reject a bad step when you save it.
+Each MDT step type that does real work becomes a typed `BuiltinAction` variant with typed parameters. `RunCommand` and `RunPowerShell` cover everything else. MDT passes every step's settings as untyped variables and command lines, so a typo becomes a runtime failure. With typed actions, the editor and the server reject a bad step when you save it.
 
 The condition types match what MDT's engine evaluates. MDT also has make, model, location, and computer conditions, which compare by substring, so a gateway of `10.0.0.1` also matches `10.0.0.10`. deployarr expresses those as `Var` conditions on gathered facts, which compare exactly.
 
@@ -157,6 +182,9 @@ pub struct NonEmptyTemplate(Template);    // a Template that is not empty
 pub struct SettableVarName(VarName);      // a VarName that does not start with `_`
 pub struct VarAssignment { pub name: SettableVarName, pub value: Template }
 pub struct DefaultVars(Vec<VarAssignment>);   // read with as_slice(). No two names are equal in any case
+pub struct StepFiles(Vec<StepFile>);      // read with as_slice(). No two names are equal in any case
+pub struct FileName(String);              // one Windows file name, never a path
+pub struct SecretRef(String);             // names a secret that the server holds
 pub struct NonEmpty<T>(Vec<T>);           // a list with at least one item
 
 pub enum RunIn { WinPe, FullOs, Either }
@@ -164,6 +192,9 @@ pub enum RestartTarget { WinPe, InstalledOs }
 pub enum DiskSelector { FirstInternal }   // the default
 pub enum DriverSelection { Auto, Profile, ProfileAll }
 pub enum MissingDriverPolicy { Fail, Warn, Ignore }
+pub enum MissingUpdatePolicy { Fail, Warn, Ignore }      // default Warn
+pub enum UpdateSource { WindowsUpdate, Wsus(WsusUrl) }   // default WindowsUpdate
+pub enum UpdateExclusion { Kb(NonZeroU32), UpdateId(Uuid) }
 pub enum AppSelection { One(AppId), FromList(VarName) }
 
 pub struct ReadinessChecks {
@@ -181,6 +212,16 @@ pub struct ProcessorCheck { pub min_cores: u32, pub mode: CheckMode }   // proce
 
 pub enum CheckMode { Fail, Warn, Off }
 
+pub enum EncryptionMethod { OsDefault, Aes128, Aes256, XtsAes128, XtsAes256 }   // default OsDefault
+pub enum TpmFailure { Fail, Skip }   // default Fail
+pub struct SuspendRestarts(u8);      // 1 to 15. Default 1
+
+pub struct UpdateTimeouts {          // whole seconds, for one phase of one pass
+	pub search_secs: NonZeroU32,     // default 3600
+	pub download_secs: NonZeroU32,   // default 7200
+	pub install_secs: NonZeroU32,    // default 7200
+}
+
 pub struct Comparison<T> { pub op: CompareOp, pub value: T }
 pub struct FileVersion { pub major: u16, pub minor: u16, pub build: u16, pub revision: u16 }
 pub struct Timestamp(pub OffsetDateTime);
@@ -188,17 +229,22 @@ pub enum MsiProduct { ProductCode(Uuid), UpgradeCode(Uuid) }
 pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rules
 ```
 
-- `NodeId` wraps a UUID. The core crate parses and writes IDs and never generates one, so it leaves out the `uuid` crate's `v4` feature. On `wasm32-unknown-unknown`, `uuid` stops a build that has `v4` unless the build also turns on one of its randomness features: `js`, `rng-getrandom`, or `rng-rand`.
+- `NodeId` wraps a UUID. The core crate never generates a random ID, so it leaves out the `uuid` crate's `v4` feature. On `wasm32-unknown-unknown`, `uuid` stops a build that has `v4` unless the build also turns on one of its randomness features: `js`, `rng-getrandom`, or `rng-rand`. `lower` derives the IDs of the nodes it adds with the `v5` feature, which needs no randomness. See [Task sequences stay loadable](#task-sequences-stay-loadable).
 - `TaskSequenceId` holds one or more of `A` to `Z`, digits, `_`, or `-`.
 - `VarName` holds 1 to 256 ASCII letters, digits, `_`, or `-`. Two names that differ only in case are equal. The name keeps the spelling its author wrote. The length, the character classes, and the case rule are MDT's. The ASCII limit is deployarr's choice. See [Variables](#variables).
 - `SettableVarName` is a `VarName` that does not start with `_`. `SetVariable` and the entries of `default_vars` take it, so a sequence cannot set a name that belongs to the agent. Conditions and `FromList` take a `VarName`, so they can still read one.
+- `StepFiles` keeps its list private, and `StepFiles::new` rejects two files whose names are equal in any case, because Windows does not assume that names differ by case alone ([Naming Files, Paths, and Namespaces](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)). The JSON is a plain array of files.
 - `DefaultVars` keeps its list private, and `DefaultVars::new` rejects two entries whose names are equal in any case. Code that builds a sequence, such as an importer or the editor, therefore cannot write a `default_vars` list that the parser would reject. The JSON is a plain array of entries.
 - `NonEmpty<T>` holds at least one item. `All`, `Any`, and the success list of `ExitCodes` use it, so none of them can be empty.
-- `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, and `AppId` are strings that reject an empty value.
+- `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, `AppId`, and `SecretRef` are strings that reject an empty value. A `SecretRef` names a secret that the server holds, never the secret's value. It is a non-empty opaque string for now. [#189](https://github.com/Tsukidy/deployarr/issues/189) decides its shape before API level 1 freezes.
+- A step file's `FileName` holds 1 to 255 ASCII letters, digits, `.`, `_`, or `-`, and does not end with `.`. The part before its first `.` is not a name that Windows reserves for a device, such as `NUL`, in any case. Windows treats `NUL.txt` as `NUL` and advises against a name that ends with a period ([Naming Files, Paths, and Namespaces](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)). A step file's name is therefore one file in the step folder and never a path.
 - `DiskSelector` has one rule so far, the first internal, non-removable disk.
 - `MemoryCheck`, `DiskCheck`, and `ProcessorCheck` each hold a minimum and a `mode`, so the JSON for one is an object such as `{"min_mib": 4096, "mode": "fail"}`. The `uefi`, `tpm_2_0`, and `secure_boot` checks have no minimum, so each is a bare `CheckMode`, such as `"warn"`.
 - `min_mib` is in mebibytes of 2^20 bytes, so the default 4096 is 4 GiB. `min_gb` is in decimal gigabytes of 10^9 bytes, the unit that disks are sold in, because a disk sold as 64 GB holds less than 64 GiB. `min_cores` counts processor cores.
 - `max_runtime_secs` is a whole number of seconds and is never zero, because a zero limit fails every run. An earlier sketch had `max_runtime: Option<Duration>`. serde writes a `Duration` as an object with `secs` and `nanos`. deployarr limits a step in whole seconds, so the limit is one JSON integer and the field name carries the unit.
+- `wait_secs` in `EnableBitLocker` follows the same rule. `SuspendRestarts` keeps its count private, and `SuspendRestarts::new` rejects a count outside 1 to 15. Its JSON is a bare integer. [BitLocker](#bitlocker) gives the meaning of each setting.
+- `UpdateTimeouts` follows the same rules as `max_runtime_secs`. Each limit is whole seconds and never zero, and `max_passes` is never zero either. See [Windows Update](#windows-update).
+- `WsusUrl` is an `http` or `https` URL, such as `https://wsus.example.com:8531`. The parser rejects an empty value, any other scheme, and a URL with user information such as `user:pass@`, so a credential never reaches the registry or a log. `UpdateExclusion::Kb` holds a KB article number without the `KB` prefix, and `UpdateId` holds an update ID, written as a GUID without braces.
 - `ExitCodes` holds `i32` values. Windows returns a process's exit code as a 32-bit `DWORD` ([GetExitCodeProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess)), and an `i32` holds those 32 bits. An exit code at or above `0x80000000` is written as its signed value, so `0x80070005` is `-2147024891`. The unsigned spelling fails to parse. An HRESULT is a `LONG`, a 32-bit signed integer ([Windows Data Types](https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types)), so the signed value is also the HRESULT's own value.
 - `ExitCodes` keeps its fields private, and `ExitCodes::new` rejects a code that is in both `success` and `reboot`. A code means success, or success and then a reboot, never both.
 - `Test<T>` carries an operator together with its operand. `Exists` and `NotExists` take no operand, and every other operator takes one, so a `Var` or `Registry` condition can neither lack the operand it needs nor carry one that it ignores. A `Var` condition compares against a `NonEmptyTemplate`, because `NotExists` is the test for an empty variable.
@@ -215,9 +261,9 @@ pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rul
 A task sequence is stored and sent as one JSON document. `TaskSequence::from_json` parses it into the types above.
 
 - The top-level `schema_version` is 1. The parser rejects any other version.
-- Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`.
+- Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`, `EnableBitLocker` as `enable_bitlocker`, and `SuspendBitLocker` as `suspend_bitlocker`.
 - A variant with data is an object with one key, the variant's name, such as `{"run_command": {"command": "ipconfig"}}`. A variant without data is a string, such as `"win_pe"`. Each node in `children` is `{"group": ...}` or `{"step": ...}`. This is serde's externally tagged form. The other choice puts a `"type"` key inside the object. serde buffers such an object before it reads the variant, so the path of a parse error stops at `action` and does not reach the field that failed.
-- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `Option` field is none. Every other field is required.
+- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, every field of `install_updates`, `method`, `full_disk`, `tpm_failure`, `restarts`, and each field inside them. An omitted `files` list of a `RunCommand` or `RunPowerShell` action is empty (design decision), so a sequence written before step files existed still parses, and a command with no file needs no list. An omitted `Option` field is none. Every other field is required.
 - An unknown field is an error, so a misspelled field name never passes as a default.
 - The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
 - A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
@@ -230,11 +276,13 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
   - An operand on `exists` or `not_exists`, a missing operand on any other operator, or an empty `Var` operand, at the operator, such as `test.exists`.
   - `Like`, `Exists`, or `NotExists` in a file version or timestamp comparison, at `op`.
   - A negative registry integer, at the operator that holds it.
+  - A `SuspendBitLocker` count outside 1 to 15, at `restarts`.
   - A `SetVariable` step or a `default_vars` entry that names a variable that starts with `_`, at its `name`.
   - Two `default_vars` entries that name the same variable, in any case, at the second entry's name, such as `default_vars[1].name`.
+  - Two step files with the same name, in any case, at the second file's name, such as `files[1].name`.
 - The compiler rejects a `run_in` that the action cannot honor when the sequence is saved, so that the error names the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
 
-`crates/deployarr-core/tests/data/windows-11-pro.json` is a sample that uses every action and every condition.
+`crates/deployarr-core/tests/data/windows-11-pro.json` is a sample that uses every condition, and every action that `deployarr-core` implements but the ones that come from add-ons: the add-on step, the join slot, `ServerCall`, and `AddProvisioningPackage`.
 
 ## Task sequence engine
 
@@ -243,7 +291,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 The server compiles a task sequence into a flat list of instructions before it sends it to the agent:
 
 ```rust
-pub fn compile(sequence: &TaskSequence) -> Result<Program, CompileErrors>;
+pub fn compile(sequence: &LoweredSequence) -> Result<Program, CompileErrors>;
 
 pub struct Program {           // only compile builds one
 	source: (TaskSequenceId, u32),
@@ -256,7 +304,7 @@ pub enum Instr {
 	// If the condition is false, jump to `skip_to`, past the group's last child.
 	Enter { node: NodeId, condition: Option<Condition>, skip_to: Pc },
 	// If the condition is false, skip the step.
-	Exec { node: NodeId, condition: Option<Condition>, run_in: RunIn, action: Action, on_error: OnError },
+	Exec { node: NodeId, condition: Option<Condition>, run_in: RunIn, action: BuiltinAction, on_error: OnError },
 }
 
 pub enum OnError {
@@ -277,18 +325,20 @@ The compiler also rejects these mistakes when you save, which MDT finds only at 
 - A step whose `run_in` its action does not allow, by the table below, such as `ApplyOsImage` in the full OS. MDT fails such a step with error 50 when the engine reaches it.
 - A step with `run_in` `WinPe` whose condition holds an `InstalledMsi` or `Wmi` condition at any depth. Both are full OS only. See [Core data shapes](#core-data-shapes).
 - A `Restart` step with `run_in` `WinPe` that comes before the first `PartitionDisk` step in program order. Until that step, the state lives on `X:`, and a reboot loses it, so the deployment starts over from the first step. See [State on disk and resume](#state-on-disk-and-resume). A sequence with no `PartitionDisk` step therefore fails for every such `Restart`. A `Restart` with `run_in` `Either` passes. The agent fails it at run time if the state is still on `X:`.
+- A `Restart` step with `into` `WinPe` that comes after an `EnableBitLocker` step in program order. After the partition step, the state lives on the Windows volume. Once BitLocker protects that volume, the agent in WinPE cannot read the state there (inferred). See [BitLocker](#bitlocker).
 - Two nodes in one tree that share a `NodeId`. `Instr` and the errors identify a node by its ID, so an ID must be unique.
 
 | Action | Allowed `run_in` |
 | --- | --- |
 | `PartitionDisk`, `ApplyOsImage`, `ApplyDrivers`, `ApplyUnattend`, `CheckReadiness` | `WinPe` |
-| `InstallApplications`, `VerifyDrivers`, `ActivateWindows` | `FullOs` |
-| `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart` | `WinPe`, `FullOs`, or `Either` |
+| `InstallApplications`, `InstallUpdates`, `VerifyDrivers`, `ActivateWindows` | `FullOs` |
+| `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart`, `ServerCall`, `AddProvisioningPackage` | `WinPe`, `FullOs`, or `Either` |
+| `EnableBitLocker`, `SuspendBitLocker` | `FullOs` |
 
-- `Action::allowed_run_in` holds the table as one exhaustive match, so a new action does not compile until someone decides where it runs.
+- `BuiltinAction::allowed_run_in` holds the table as one exhaustive match, so a new action does not compile until someone decides where it runs.
 - `compile` returns every error in document order, not only the first.
 - Each error names the node's ID, its path in the tree, such as `root.children[1].group.children[0]`, and the rule. An ID that two nodes share cannot locate either node, so the duplicate error also names the path of the first node with that ID.
-- A disabled node is still part of the sequence that you save, so the `run_in` rule, the WinPE condition rule, and the duplicate ID rule check it. The `Restart` rule reads program order, so it skips disabled nodes (design decision).
+- A disabled node is still part of the sequence that you save, so the `run_in` rule, the WinPE condition rule, and the duplicate ID rule check it. The two `Restart` rules read program order, so they skip disabled nodes (design decision).
 
 The parser rejects other mistakes before the compiler runs, such as an empty success list or an empty `All` or `Any`. See [JSON format](#json-format).
 
@@ -315,6 +365,7 @@ pub struct RunState {
 	pub vars: Vars,
 	pub in_flight: Option<InFlight>,  // written before a step starts
 	pub last: Option<StepResult>,     // like _SMSTSLastActionSucceeded
+	pub progress: Option<StepProgress>,   // an action's own progress across its reruns
 }
 ```
 
@@ -325,6 +376,7 @@ pub struct RunState {
 - A named mutex keeps a second agent from running the same deployment. MDT's `TsmBootstrap.exe` does the same with `Global\TSMBootStrapMutex`.
 - The agent sets `in_flight` before it starts a step and clears it when it records the result. If the agent starts and finds `in_flight` set, the step was interrupted by a crash or a power loss. Typed actions are written to converge when they run again. For example, `PartitionDisk` checks the current layout first. `RunCommand` and `RunPowerShell` are not assumed to be safe to repeat, so they fail unless the step sets `rerun_if_interrupted`. MDT saves nothing before a step, so an interrupted step silently runs again. A sequence ported from MDT may need `rerun_if_interrupted` on some steps.
 - A step can return `Reboot { rerun: false }` to reboot and continue with the next step, or `Reboot { rerun: true }` to run the same step again. These map to MDT's `SMSTSRebootRequested` and `SMSTSRetryRequested`.
+- A typed action can keep its own progress in `progress`, such as the pass count of `InstallUpdates`. The action saves it during the step, with the same write, flush, and rename as any save. `progress` outlives `in_flight`. A `Reboot { rerun: true }` result clears `in_flight`, so the run after that reboot is not an interrupted run, but it keeps `progress`. A crash keeps both. The agent clears `progress` when it records the step's final result, success or failure, so no other step reads it. See [Reboots and resume](#reboots-and-resume).
 - The exit codes in `ExitCodes.reboot`, 3010 and 1641 by default, mean success and then a reboot. This is a deliberate difference from MDT, whose engine never reboots because of an exit code.
 - The agent saves state before every reboot, including a re-run. MDT's engine skips that save for a re-run, so the step's variable changes are lost. After saving, the agent writes a marker that the reboot clears: a volatile registry key in Windows, or a file on `X:` in WinPE. It refuses to resume while the marker exists. MDT's engine uses a volatile key the same way.
 - The agent runs each command in a Windows job object. When `max_runtime_secs` passes, it ends the whole process tree and fails the step. MDT's templates set no time limit, so a hung step waits forever.
@@ -468,16 +520,17 @@ After a deployment succeeds, the server stops offering PXE boot to that PC's MAC
 ## Agent
 
 - The agent is one static Rust executable built for `x86_64-pc-windows-msvc` with the static C runtime.
-- It uses Win32 APIs, not WMI, so base WinPE needs no optional components:
-  - SMBIOS: `GetSystemFirmwareTable`
+- In WinPE it uses Win32 APIs, not WMI, so base WinPE needs no optional components:
+  - SMBIOS: `GetSystemFirmwareTable`. The chassis type and the form factor flags read the type 3 structures, and the VM flag reads the type 0 structure. See [Chassis and VM facts](#chassis-and-vm-facts).
   - network adapters: `GetAdaptersAddresses`
   - firmware type: `GetFirmwareType`. The fallback is MDT's `GetFirmwareEnvironmentVariableW` check, and only with `SeSystemEnvironmentPrivilege` enabled first. Without the privilege, newer WinPE versions make that check report BIOS PCs as UEFI, which is the bug the MDT 8456 hotfix fixed.
   - disks and bus type: `IOCTL_STORAGE_QUERY_PROPERTY`. Bus type 7 is USB.
   - device hardware IDs and compatible IDs: SetupAPI with `DIGCF_PRESENT | DIGCF_ALLCLASSES`, which is what MDT's `Microsoft.BDD.PnpEnum.exe` does. Unlike PnpEnum, the agent reports an error when enumeration fails, so a failed scan never looks like a PC with no devices.
-  - CPU features: the `cpuid` instruction, for the same virtualization, NX, and 64-bit facts that MDT's `Microsoft.BDD.Utility.dll` reports.
+  - CPU features: the `cpuid` instruction, for the same virtualization, NX, and 64-bit facts that MDT's `Microsoft.BDD.Utility.dll` reports. The VM flag reads leaf 1 ECX bit 31, the hypervisor present bit, which MDT reports as `IsHypervisorRunning` ([MDT 8450 binaries reference](research/mdt-8450-binaries.md#microsoftbddutilitydll)). The hypervisor vendor reads leaf `0x40000000`.
   - memory and processor cores: `GetPhysicallyInstalledSystemMemory` and `GetLogicalProcessorInformationEx`.
   - TPM version: `Tbsi_GetDeviceInfo` from `tbs.dll` when the boot image has it and the call succeeds, and the TPM device's IDs otherwise. Base WinPE 10.0.26100.1 has no `tbs.dll`. ConfigMgr reads the TPM through WMI `Win32_Tpm` instead. See [TPM version](#tpm-version).
   - Secure Boot: the `UEFISecureBootEnabled` value under `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State`, which ConfigMgr also reads. When the value is missing, the agent reads the `SecureBoot` UEFI variable with `GetFirmwareEnvironmentVariableW`, with `SeSystemEnvironmentPrivilege` enabled. The fact has three values: on, off, and unknown. A failed read is unknown, never off. ConfigMgr keeps the same third value as `NA`.
+- In the full OS, the agent also calls WMI through COM, for `Wmi` conditions and the [BitLocker](#bitlocker) actions. It never calls WMI in WinPE. COM adds `ole32.dll` and `oleaut32.dll` to the import table, and base WinPE's [list file](research/winpe-10.1.26100.9457.md#the-list-file) holds both.
 - `RunPowerShell` steps in WinPE need the WinPE PowerShell component, which only DISM can add. See [Boot image](#boot-image).
 - `RunPowerShell` runs `powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>` and passes each argument separately. MDT's PowerShell host joins the arguments into one string and runs it as PowerShell code, which loses their quoting.
 - A CI check, `cargo xtask winpe-imports`, reads the module names in the agent's import table and delay-load import table. It fails if a name is missing from base WinPE's [list file](research/winpe-10.1.26100.9457.md#the-list-file).
@@ -491,6 +544,41 @@ After a deployment succeeds, the server stops offering PXE boot to that PC's MAC
 - The agent keeps the PC awake for the whole run with `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`, as MDT does.
 - HTTPS uses `rustls`. The agent trusts only the server CA certificate that is built into the boot image.
 - Logs use the CMTrace line format, so admins can read them with CMTrace. The final copy goes to `C:\Windows\Temp\Deployarr` and to the server.
+
+### Chassis and VM facts
+
+The agent gathers four facts about the PC's form and whether it is a virtual machine (VM). They are gathered facts, like the others in step 4 of the [Deployment flow](#deployment-flow). A `Var` condition can test them, and the variable trace shows them. MDT's gather sets similar properties ([MDT 8456 reference](research/mdt-8456.md#gathered-facts)). ConfigMgr 2509 gathers no chassis type and no VM flag ([ConfigMgr 2509 reference](research/configmgr-2509.md#set-dynamic-variables)).
+
+The SMBIOS fields and their names come from the SMBIOS specification, [DSP0134 3.7.0](https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.7.0.pdf). The CPUID leaves come from [Feature discovery](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/feature-discovery) in the Hyper-V Top Level Functional Specification (TLFS). The `deployarr-smbios` crate, which parses the [identity facts](#identity-facts), also reads the type 0 VM bit and the type 3 chassis type.
+
+- Chassis type: bits 6:0 of the Type byte at offset 05h of an SMBIOS type 3 structure (DSP0134 3.7.0, Table 16). Bit 7 flags a chassis lock and is not part of the type. The agent reads the first type 3 structure, in table order, whose type is not 12 (Docking Station) or 21 (Peripheral Chassis). The fact is empty when no such structure exists. Table 17 names the values. A PC can have more than one type 3 structure. A blade has one for itself and one for its Blade Enclosure (Table 17, the note on Blade).
+- Form factor flags: a laptop flag, a desktop flag, and a server flag. The agent reads bits 6:0 of every type 3 structure. It skips a structure whose type is 12 or 21. Each other structure sets the flag whose list in the table below holds its type. A type that no list names, such as 1 (Other) or 2 (Unknown), sets no flag. No structure clears a flag, so more than one flag can be true. These are MDT's skip and MDT's lists ([Form factor flags](research/mdt-8456.md#form-factor-flags)), so a condition ported from MDT gives MDT's answer. Where MDT reads the first `ChassisTypes` entry of a `Win32_SystemEnclosure` instance, the agent reads the type of one type 3 structure. Microsoft documents that `ChassisTypes` comes from the Type member of the type 3 structure ([`Win32_SystemEnclosure` class](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-systemenclosure)). That each instance is one type 3 structure is inferred.
+- VM flag: true when either of these signals reads true, and false otherwise. Make and model strings never set it. The log names each signal that reads true.
+  - CPUID leaf 1 sets ECX bit 31, the hypervisor present bit. The TLFS says that a set bit means a hypervisor is present, and that the bit is clear in a non-virtualized environment.
+  - The SMBIOS type 0 structure sets bit 4 of BIOS Characteristics Extension Byte 2, at offset 13h. DSP0134 3.7.0 defines the bit as "SMBIOS table describes a virtual machine", and a clear bit allows no inference (Table 9). A type 0 structure too short to hold that byte counts as a clear bit. Such a structure has a Length below 14h, as in SMBIOS 2.2 and earlier (Table 6).
+- Hypervisor vendor: when the hypervisor present bit is set, the 12-byte signature in EBX, ECX, and EDX of CPUID leaf `0x40000000`, in that order, with trailing NUL bytes removed. The fact is empty otherwise. Microsoft's hypervisor returns `Microsoft Hv` (TLFS). KVM's signature is `KVMKVMKVM` followed by three NUL bytes ([`arch/x86/include/uapi/asm/kvm_para.h:11`](https://github.com/torvalds/linux/blob/v6.8/arch/x86/include/uapi/asm/kvm_para.h#L11) in Linux v6.8). QEMU 10.2.1 puts that signature in leaf `0x40000000` of a KVM guest ([`target/i386/kvm/kvm.c:2251-2258`](https://github.com/qemu/qemu/blob/v10.2.1/target/i386/kvm/kvm.c#L2251-L2258)). With QEMU's Hyper-V enlightenments on, that leaf holds `Microsoft Hv` by default, and KVM's signature moves to leaf `0x40000100` ([`target/i386/kvm/kvm.c:1564-1569`](https://github.com/qemu/qemu/blob/v10.2.1/target/i386/kvm/kvm.c#L1564-L1569), [`target/i386/kvm/kvm.c:2161-2170`](https://github.com/qemu/qemu/blob/v10.2.1/target/i386/kvm/kvm.c#L2161-L2170), [`target/i386/cpu.c:9196-9199`](https://github.com/qemu/qemu/blob/v10.2.1/target/i386/cpu.c#L9196-L9199)). The lab VMs turn on no enlightenments ([`tools/lab/vm.sh`](../tools/lab/vm.sh)). The TLFS says that "The vendor ID signature should be used only for reporting and diagnostic purposes." The VM flag does not read the vendor.
+
+| Flag | Chassis types | MDT property |
+| --- | --- | --- |
+| Laptop | 8, 9, 10, 11, 14, 18, 30, 31, 32 | `IsLaptop` |
+| Desktop | 3, 4, 5, 6, 7, 13, 15, 16, 35, 36 | `IsDesktop` |
+| Server | 23, 28 | `IsServer` |
+
+MDT's laptop list also names 12 and 21, which the skip never lets through. Type 18 is Expansion Chassis, yet it sets the laptop flag. No list names 17 (Main Server Chassis) or 29 (Blade Enclosure). The lists stay as MDT has them. A condition that needs another type tests the chassis type itself.
+
+Strings never set the VM flag. MDT sets `IsVM` from six string tests on the make and the model. A hypervisor that those tests do not name, such as QEMU with KVM, gets `IsVM` false ([Virtual machine flag](research/mdt-8456.md#virtual-machine-flag)). The two signals that deployarr reads come from the CPU and the firmware, and neither depends on a vendor's name.
+
+The VM flag reads both signals, because each one alone can miss a VM. The lab runs QEMU 10.2.1, `ovmf` 2025.11, and `seabios` 1.17.0 ([Versions](research/pxe-lab/single-stage-chain.md#versions)). The citations below use the matching upstream tags. Nobody has checked Ubuntu's patches to them.
+
+- The SMBIOS VM bit alone misses the BIOS lab VM (inferred). QEMU 10.2.1 builds a type 0 structure only when the command line sets a type 0 field ([`hw/smbios/smbios.c:537-549`](https://github.com/qemu/qemu/blob/v10.2.1/hw/smbios/smbios.c#L537-L549), [`hw/smbios/smbios.c:566-603`](https://github.com/qemu/qemu/blob/v10.2.1/hw/smbios/smbios.c#L566-L603)). [`tools/lab/vm.sh`](../tools/lab/vm.sh) sets only a type 2 field, so the firmware adds its own type 0 structure. OVMF at `edk2-stable202511` sets Extension Byte 2 to `0x1C`, which sets bit 4 ([`OvmfPkg/SmbiosPlatformDxe/SmbiosPlatformDxe.c:22-49`](https://github.com/tianocore/edk2/blob/edk2-stable202511/OvmfPkg/SmbiosPlatformDxe/SmbiosPlatformDxe.c#L22-L49), [`:113-191`](https://github.com/tianocore/edk2/blob/edk2-stable202511/OvmfPkg/SmbiosPlatformDxe/SmbiosPlatformDxe.c#L113-L191)). SeaBIOS at `rel-1.17.0` sets it to `4`, which leaves bit 4 clear ([`src/fw/biostables.c:443-483`](https://github.com/coreboot/seabios/blob/rel-1.17.0/src/fw/biostables.c#L443-L483), [`:516-556`](https://github.com/coreboot/seabios/blob/rel-1.17.0/src/fw/biostables.c#L516-L556)).
+- KVM sets the hypervisor present bit on every lab VM (inferred). QEMU 10.2.1 reports the bit as supported under KVM ([`target/i386/kvm/kvm.c:456-460`](https://github.com/qemu/qemu/blob/v10.2.1/target/i386/kvm/kvm.c#L456-L460)), and the lab runs each VM under KVM with `-cpu host` ([`tools/lab/vm.sh`](../tools/lab/vm.sh)). The script falls back to TCG with `-cpu max` only when the host has no usable `/dev/kvm` and `LAB_ALLOW_TCG=1` is set.
+- The hypervisor present bit alone misses a VM whose hypervisor clears it. QEMU names the bit `hypervisor` among the CPU flags that a command line can turn off ([`target/i386/cpu.c:1080-1092`](https://github.com/qemu/qemu/blob/v10.2.1/target/i386/cpu.c#L1080-L1092)).
+
+The statements about the lab VMs stay inferred until the M3 check runs.
+
+The agent reads these facts in WinPE, with the other facts. It does not read them again in the full OS. Virtualization-based security (VBS) "uses hardware virtualization and the Windows hypervisor" ([VBS page for OEMs](https://learn.microsoft.com/en-us/windows-hardware/design/device-experiences/oem-vbs)). With the TLFS rule above, that hypervisor can set the hypervisor present bit on a physical PC in the full OS (inferred). Nobody has checked the bit in WinPE on a physical PC. The M3 check reads it on the real PC.
+
+The facts need no new module. The agent already reads SMBIOS with `GetSystemFirmwareTable`, which base WinPE's `kernel32.dll` exports ([WinPE 10.1.26100.9457 reference](research/winpe-10.1.26100.9457.md#functions-the-architecture-names)), and `cpuid` is an instruction. So the WinPE import check does not change.
 
 ### TPM version
 
@@ -746,7 +834,7 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 1. WinPE gets the network and storage drivers it needs to reach the disk and the server, such as Intel VMD/RST, from the boot image. The default set is every driver of class Net, SCSIAdapter, or HDC, which is MDT's default. Display and System drivers are optional. The agent loads them at start with `drvload` and reports any that fail. MDT ignores WinPE driver failures.
 2. The agent downloads the selected packages and injects them one at a time with `dism /Image:W:\ /Add-Driver /Driver:<package> /Recurse`. A failing package is recorded and skipped. MDT injects all drivers in one DISM call, so one bad driver fails the deployment.
 3. Windows Setup installs the injected drivers while it detects devices.
-4. Late in the sequence, `VerifyDrivers` lists every device with a problem code through `CM_Get_DevNode_Status`. The agent sends each device's hardware IDs to the server. If the library has a matching package that was not injected, the agent installs it with `pnputil /add-driver <inf> /install`, then checks again. This catches devices that WinPE could not see. Windows Update drivers are later work. The first release does not try them, and `MissingDriverPolicy` holds `Fail`, `Warn`, and `Ignore`.
+4. Late in the sequence, `VerifyDrivers` lists every device with a problem code through `CM_Get_DevNode_Status`. The agent sends each device's hardware IDs to the server. If the library has a matching package that was not injected, the agent installs it with `pnputil /add-driver <inf> /install`, then checks again. This catches devices that WinPE could not see. Windows Update drivers are later work. The first release does not try them, and the [Windows Update](#windows-update) step searches only for software updates. `MissingDriverPolicy` holds `Fail`, `Warn`, and `Ignore`.
 5. The step then applies its policy: fail the deployment, warn, or ignore. The UI lists missing drivers by PC type, with hardware IDs, so the next deployment of that model succeeds.
 
 ## OS images
@@ -754,7 +842,7 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 - To import an ISO, the server extracts `sources\install.wim` or `sources\install.esd` with 7-Zip. 7-Zip reads the UDF file system that Windows ISOs use and runs on Windows and Linux. The server also keeps `sources\boot.wim` as a possible WinPE base, plus the PXE boot files.
 - To import a WIM or ESD, the server takes the file directly.
 - `wimlib-imagex info` lists the editions in the image. The server exports each chosen edition into its own WIM with `wimlib-imagex export`, so the agent downloads only that edition.
-- `wimlib-imagex info` also prints each edition's ID, from the `EDITIONID` element of the image's XML, and `wimlib-imagex export` keeps it (measured with wimlib 1.14.5). The server stores the ID with the exported image. An edition ID that starts with `Core` marks a Home image. In the Windows 11 ISO that the lab uses, Home, Home N, and Home Single Language are `Core`, `CoreN`, and `CoreSingleLanguage`, and Pro is `Professional`. An image with no edition ID counts as Home for the [directory join](#directory-join) rule.
+- `wimlib-imagex info` also prints each edition's ID, from the `EDITIONID` element of the image's XML, and `wimlib-imagex export` keeps it (measured with wimlib 1.14.5). The server stores the ID with the exported image. An edition ID that starts with `Core` marks a Home image. In the Windows 11 ISO that the lab uses, Home, Home N, and Home Single Language are `Core`, `CoreN`, and `CoreSingleLanguage`, and Pro is `Professional`. An image with no edition ID counts as Home for the [directory join](#directory-join) rule and for the [`EnableBitLocker`](#home-and-other-limits) rule.
 - The content store keeps files by SHA-256. The agent checks each download against its hash.
 - The agent downloads the image over HTTPS into `W:\Deployarr\cache` on the new Windows partition, then runs `dism /Apply-Image /ImageFile:<wim> /Index:1 /ApplyDir:W:\ /ScratchDir:W:\Deployarr\scratch`. The scratch directory on disk avoids WinPE's small RAM scratch space. Downloads resume after a network drop. The target disk needs room for the image file plus the applied OS. Windows 11 already requires a 64 GB disk, which has room for both.
 - A clean install never runs `setup.exe`. MDT 8456 also applies `install.wim` for an OS imported from an ISO. Its `setup.exe` path has no caller.
@@ -771,6 +859,128 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 - Boot files are written with `bcdboot W:\Windows /s S: /f UEFI` or `/f BIOS`, explicitly. MDT omits `/s` and `/f` on UEFI.
 - WinRE is copied to `R:\Recovery\WindowsRE` and registered with `reagentc /setreimage /path R:\Recovery\WindowsRE /target W:\Windows`.
 
+## BitLocker
+
+deployarr turns BitLocker on with the `EnableBitLocker` action and suspends it with the `SuspendBitLocker` action. They match ConfigMgr's Enable BitLocker and Disable BitLocker steps. ConfigMgr's third step, Pre-provision BitLocker, has no counterpart ([ConfigMgr 2509 reference](research/configmgr-2509.md#bitlocker)).
+
+- Both actions run only in the full OS, on the volume of the running Windows.
+- deployarr's disk layouts have one Windows volume and no data volume, so neither action has a drive setting.
+- For BitLocker, the system drive "must not be encrypted" and "must differ from the operating system drive". It must use FAT32 on UEFI and NTFS on BIOS ([BitLocker overview](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)). The EFI partition of the UEFI layout and the System partition of the BIOS layout meet these rules. The same page recommends a system drive of "approximately 350 MB", more than the UEFI layout's 300 MB EFI partition. [Disk layout and boot files](#disk-layout-and-boot-files) gives the BIOS System partition no size.
+- The built-in Windows client template has no BitLocker step, so an admin adds one to a sequence that needs it (design decision). With a BitLocker step, the template could not build a Home sequence, because of the Home rule in [Home and other limits](#home-and-other-limits). MDT's template has two BitLocker steps ([MDT 8456 reference](research/mdt-8456.md#bitlocker)).
+- Both actions belong to M7 in the [roadmap](roadmap.md#m7-applications) (design decision). They need the full-OS handoff and the lab's UEFI VM with a TPM, which M3 brings, and M7 keeps them off the path from M3 to order lookup in M5, which the owner ranks high (see [Requirements](#requirements)).
+
+### No pre-provisioning in WinPE
+
+MDT and ConfigMgr can start encryption in WinPE, before the new Windows first starts. By default both run `manage-bde.exe -on <drive> -used` there, with no key protector ([MDT 8456 reference](research/mdt-8456.md#pre-provisioning-in-winpe), [ConfigMgr 2509 reference](research/configmgr-2509.md#pre-provision-bitlocker)). That needs `manage-bde.exe` from the `WinPE-SecureStartup` component, and the WMI service and the `Win32_EncryptableVolume` provider from `WinPE-WMI`. Base WinPE has none of them ([ConfigMgr 2509 reference](research/configmgr-2509.md#what-pre-provisioning-needs-in-winpe)).
+
+The owner chose a boot image of base WinPE, without `WinPE-WMI` or `WinPE-SecureStartup` ([#51](https://github.com/Tsukidy/deployarr/issues/51#issuecomment-6816910755)). The owner also chose no pre-provisioning ([#156](https://github.com/Tsukidy/deployarr/issues/156#issuecomment-6956569307)). So:
+
+- deployarr enables BitLocker only in the full OS. No action pre-provisions it in WinPE.
+- No BitLocker action allows `run_in` `WinPe`. A BitLocker step therefore never needs an optional component, and the rule in [Boot image](#boot-image) never rejects a sequence because of one.
+- Base WinPE has `fveapi.dll` and `fvevol.sys`. Nobody has tested them for pre-provisioning, and deployarr does not use them.
+
+### How the agent reaches BitLocker
+
+The agent calls the `Win32_EncryptableVolume` WMI class in `root\CIMV2\Security\MicrosoftVolumeEncryption` (design decision). The other choice runs `manage-bde.exe` and parses its text. The class gives typed results, and the agent never has to see the recovery password, as [Enable BitLocker](#enable-bitlocker) shows. MDT's `ZTIBde.wsf` and ConfigMgr's `tscore.dll` use the same class ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os), [ConfigMgr 2509 reference](research/configmgr-2509.md#bitlocker)).
+
+- Each method returns a status code, and the volume's state comes back as numbers. The agent checks every code and reads the state back without parsing text.
+- The agent calls WMI through COM, and only in the full OS, as [Agent](#agent) says. It gets the WMI locator from `CoCreateInstance` at run time ([Example: Getting WMI Data from the Local Computer](https://learn.microsoft.com/en-us/windows/win32/wmisdk/example--getting-wmi-data-from-the-local-computer)). COM adds `ole32.dll` and `oleaut32.dll` to the import table, and base WinPE's [list file](research/winpe-10.1.26100.9457.md#the-list-file) holds both.
+- These calls work only in the full OS. Base WinPE has no WMI service ([ConfigMgr 2509 reference](research/configmgr-2509.md#what-pre-provisioning-needs-in-winpe)). `ProtectKeyWithTPM` "is only applicable for the volume that contains the currently running operating system" ([ProtectKeyWithTPM](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithtpm-win32-encryptablevolume)).
+
+### Enable BitLocker
+
+`EnableBitLocker` has four settings:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `method` | `OsDefault` | `OsDefault` leaves the method to Windows, which picks XTS-AES 128 on Windows 10 1511 and later ([Encrypt](https://learn.microsoft.com/en-us/windows/win32/secprov/encrypt-win32-encryptablevolume)). `Aes128`, `Aes256`, `XtsAes128`, and `XtsAes256` pass the `EncryptionMethod` values 3, 4, 6, and 7. ConfigMgr's steps take the same five choices ([ConfigMgr 2509 reference](research/configmgr-2509.md#encryption-methods)) |
+| `full_disk` | `false` | `false` encrypts used space only. `true` encrypts the whole volume. `true` fails the step on a volume that is already encrypted in data-only mode |
+| `wait_secs` | none | None ends the step while encryption goes on. A number of seconds waits until the volume is fully encrypted, and fails the step if that time passes first |
+| `tpm_failure` | `Fail` | `Fail` fails the step when the PC has no usable TPM. `Skip` ends the step with a warning instead. The step has changed nothing by then. Any other TPM failure fails the step, whatever this setting says |
+
+The default of `wait_secs` matches MDT and ConfigMgr, and the default of `tpm_failure` matches ConfigMgr. Neither product waits for encryption by default ([MDT 8456 reference](research/mdt-8456.md#waiting-for-encryption), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)). ConfigMgr's `SkipWhenNoValidTPM` is false by default, so a TPM failure fails its step (same ConfigMgr page).
+
+The step adds two key protectors, and no others:
+
+- A TPM protector, with `ProtectKeyWithTPM`. The agent passes no platform validation profile, so Windows uses its default ([ProtectKeyWithTPM](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithtpm-win32-encryptablevolume)).
+- A recovery password, with `ProtectKeyWithNumericalPassword` and no password. "If no numerical password is specified, one is randomly generated" ([ProtectKeyWithNumericalPassword](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithnumericalpassword-win32-encryptablevolume)). The call returns only the new protector's ID.
+
+deployarr leaves the recovery password only on the PC. The owner decided that deployarr keeps no copy of it, on its server or anywhere else, and that the client backs it up ([#156](https://github.com/Tsukidy/deployarr/issues/156#issuecomment-6956569307)). So:
+
+- The agent never calls `GetKeyProtectorNumericalPassword`, the method that reads the password ([GetKeyProtectorNumericalPassword](https://learn.microsoft.com/en-us/windows/win32/secprov/getkeyprotectornumericalpassword-win32-encryptablevolume)). The password therefore never reaches the agent, a log line, an event, a file, or the server.
+- A command that an admin writes can still print the password. The agent cannot redact it, because the agent never reads the value.
+- No setting or variable supplies a password. MDT and ConfigMgr each take one from `OSDBitLockerRecoveryPassword` ([MDT 8456 reference](research/mdt-8456.md#recovery-key), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+- deployarr sends the password to no store, AD DS included. MDT writes it in plain text to a file on the key drive ([MDT 8456 reference](research/mdt-8456.md#recovery-key)). ConfigMgr escrows it to AD DS (inferred in the research), to its own database, or to both ([ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+- The agent writes no BitLocker policy values. MDT writes them only for the modes that need a PIN or a startup key ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os)). ConfigMgr writes them for every mode and for its AD DS backup ([ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+- The step result names each protector's ID and says that deployarr kept no copy of the recovery password. The client backs the password up from the PC. For example, `manage-bde -protectors -adbackup C: -id <protector ID>` backs it up to AD DS, and `-aadbackup` with the same `-id` backs it up to Microsoft Entra ID ([manage-bde protectors](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-protectors)).
+
+The first release adds no protector that needs a PIN or a startup key. With either one, "BitLocker can lock the normal startup process until the user supplies a personal identification number (PIN) or inserts a removable device that contains a startup key" ([BitLocker overview](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)). Every restart after the step would then wait for a person, which zero-touch deployment rules out. MDT and ConfigMgr offer both ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)). [Not in the first release](#not-in-the-first-release) lists them.
+
+#### Calls
+
+The step makes these calls in order. Each call checks the volume first or is safe to repeat, so a run after a crash ends in the same state:
+
+1. `GetConversionStatus`. A volume that is decrypting, status 3 or 5, fails the step, as in ConfigMgr ([GetConversionStatus](https://learn.microsoft.com/en-us/windows/win32/secprov/getconversionstatus-win32-encryptablevolume), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)). With `full_disk` set to `true`, a volume that is already encrypted in data-only mode fails the step too. `GetConversionStatus` reports that mode in its `EncryptionFlags` value (same Microsoft page).
+2. `ProtectKeyWithTPM`, unless `GetKeyProtectors` lists a TPM protector. The agent reads two answers from `GetKeyProtectors` as a volume with no protectors. One is `S_OK` with an empty list. The other is `FVE_E_NOT_ACTIVATED`, "BitLocker is not enabled on the volume. Add a key protector to enable BitLocker." ([GetKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/getkeyprotectors-win32-encryptablevolume)). [TPM failures](#tpm-failures) says what a failed call does.
+3. `ProtectKeyWithNumericalPassword`, unless `GetKeyProtectors` lists a numerical password.
+4. `Encrypt`. The agent passes the method. Unless `full_disk` is `true`, it also passes flag 1, which asks for data-only encryption. `Encrypt` starts encryption on a decrypted volume. It resumes encryption on a paused or running volume, and it returns 0 on a fully encrypted one. When `method` is not `OsDefault` and the volume is already partly or fully encrypted with another method, it returns `FVE_E_CANNOT_SET_FVEK_ENCRYPTED` ([Encrypt](https://learn.microsoft.com/en-us/windows/win32/secprov/encrypt-win32-encryptablevolume)), and the step fails.
+5. `EnableKeyProtectors`. Protectors that the step adds while the volume's protectors are suspended "will remain disabled unless EnableKeyProtectors is called" ([DisableKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/disablekeyprotectors-win32-encryptablevolume)). `EnableKeyProtectors` turns them on, and it returns 0 when they are already on ([EnableKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/enablekeyprotectors-win32-encryptablevolume)).
+6. The read-back. The volume must list a TPM protector and a numerical password. `GetConversionStatus` must report 1 or 2, fully encrypted or encryption in progress. `GetSuspendCount` must return `ERROR_NOT_SUPPORTED`, which on the OS volume means that the volume is not suspended ([GetSuspendCount](https://learn.microsoft.com/en-us/windows/win32/secprov/getsuspendcount-win32-encryptablevolume)). Otherwise the step fails.
+7. The wait, when `wait_secs` is set. The agent reads the conversion status every 10 seconds, as ConfigMgr does, until it reports 1. `GetProtectionStatus` must then report 1, protection on ([GetProtectionStatus](https://learn.microsoft.com/en-us/windows/win32/secprov/getprotectionstatus-win32-encryptablevolume)). A status other than 1 or 2, or the end of the wait, fails the step. MDT's wait and ConfigMgr's `/wait` have no time limit ([MDT 8456 reference](research/mdt-8456.md#waiting-for-encryption), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+
+A step that cannot do its work fails, unless `tpm_failure` says to skip, and the step result says why. MDT's script exits with success when its tools are missing or the OS is too old, and both BitLocker steps in its template continue on error ([MDT 8456 reference](research/mdt-8456.md#mdt-faults-that-deployarr-fixes)).
+
+- When the step fails, the agent leaves the protectors and any encryption that the step started in place (design decision). A later run of the step goes on from there, while a rollback would be one more change that a crash could interrupt. ConfigMgr's `BitLocker::Rollback` deletes the protectors that its step added and can decrypt the volume ([ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+- "If the computer turns off while encryption is in progress, encryption will automatically resume when the computer restarts" ([Win32_EncryptableVolume](https://learn.microsoft.com/en-us/windows/win32/secprov/win32-encryptablevolume)). After a crash, the step runs again from call 1, and its wait starts again with the full `wait_secs` (design decision). The agent then needs no wait state in the state file.
+
+#### TPM failures
+
+- `tpm_failure` decides only when the PC has no usable TPM. The agent counts `TBS_E_SERVICE_NOT_RUNNING` as that case, because the page describes it as "No compatible TPM is found on this computer" ([ProtectKeyWithTPM](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithtpm-win32-encryptablevolume)). The M7 check records the code that a PC without a TPM returns. If that code differs, it joins this case (design decision).
+- TPM 2.0 "is not supported in Legacy and Compatibility Support Module (CSM) modes of the BIOS" ([BitLocker overview](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)). A BIOS PC with TPM 2.0 therefore has no usable TPM for BitLocker. Nobody has checked which code `ProtectKeyWithTPM` returns there.
+- When the call returns `0x80310030`, the step fails, and its result says to remove the boot media. MDT and ConfigMgr both read that code as bootable media left in the PC, and both ask a person to remove it ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)). deployarr's boot ISO goes on USB sticks ([Boot image](#boot-image)), so a stick left in the PC can cause it (inferred).
+- Any other failure of the call fails the step, whatever `tpm_failure` says.
+- The agent never takes ownership of the TPM. MDT and ConfigMgr take ownership when the TPM has none ([MDT 8456 reference](research/mdt-8456.md#tpm-checks), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+- Windows provisions the TPM itself. "Windows takes ownership of the TPM as part of the provisioning process on each boot", and from Windows 10 1607 on it does not keep the owner password ([Change the TPM owner password](https://learn.microsoft.com/en-us/windows/security/hardware-security/tpm/change-the-tpm-owner-password)).
+- Nobody has checked that Windows has provisioned the TPM by the time the step runs. The M7 check records whether `ProtectKeyWithTPM` succeeds on the UEFI VM and on the real PC.
+
+#### Used space and full disk
+
+- Used space only is the default, as in ConfigMgr. Microsoft's page for ConfigMgr's Enable BitLocker step says "This default behavior is recommended, as it's faster and more efficient" ([Task sequence steps](https://learn.microsoft.com/en-us/intune/configmgr/osd/understand/task-sequence-steps)).
+- MDT's full-OS step encrypts the whole of a volume that WinPE did not pre-provision ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os)).
+- With used space only, "The sections of the volume containing used space will be encrypted but the free space will not" ([manage-bde on](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-on)). Data that a reused disk held before the deployment can stay readable in that free space (inferred). `full_disk` covers that case when the step starts the encryption.
+- Flag 1 "only has effect" when encryption starts "from the fully decrypted state, decryption in progress state, or decryption paused state". `Encrypt` also returns 0 on a fully encrypted volume ([Encrypt](https://learn.microsoft.com/en-us/windows/win32/secprov/encrypt-win32-encryptablevolume)). On a volume that is already encrypted in data-only mode, `full_disk` would therefore do nothing. The step fails instead, so the setting never does nothing silently (design decision). The other choice is flag 2, which wipes the free space of an encrypted volume (same page).
+
+#### Device encryption
+
+- Windows can start encryption by itself. When OOBE finishes, "device encryption is initialized on the OS drive and fixed data drives on the computer with a clear key that is the equivalent of standard BitLocker suspended state" ([BitLocker overview](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)).
+- Starting in Windows 11 24H2, "more devices are eligible for automatic and manual device encryption" (same page). The step can therefore find the volume encrypting or encrypted.
+- Calls 4 and 5 handle that state. The clear key matches a suspended state, and protectors added then stay off until call 5 ([DisableKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/disablekeyprotectors-win32-encryptablevolume)). `EnableKeyProtectors` "ensures that the volume's encryption key is not exposed in the clear on the hard disk" ([EnableKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/enablekeyprotectors-win32-encryptablevolume)). That it also ends device encryption's clear key is inferred.
+- When device encryption used a method other than `method`, call 4 fails. When it encrypted used space only and `full_disk` is `true`, call 1 fails.
+- The M7 check records the volume's state when the step starts.
+
+#### Home and other limits
+
+- Microsoft lists Pro, Enterprise, Pro Education/SE, and Education as the editions that support BitLocker enablement ([BitLocker overview](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)). Home is not among them.
+- When a sequence is saved, the server rejects an enabled `EnableBitLocker` step if the sequence counts as Home by the rule in [Directory join](#directory-join). The error names the image's edition ID.
+- The rule reads every `ApplyOsImage` step, because conditions pick the image only at run time. A sequence that names a Home image in any `ApplyOsImage` step therefore cannot hold an enabled `EnableBitLocker` step, even behind a condition.
+- A disabled `EnableBitLocker` step does not count, because the compiler drops it (design decision).
+- Neither a variable nor an add-on can add the step, so the server needs no second check after lookup (design decision). `BuiltinAction::allowed_from_addon` is false for both BitLocker actions, so an add-on step cannot expand to one. See [What runs on the PC](#what-runs-on-the-pc).
+- Nobody has checked whether `sysprep /oobe` runs while BitLocker protects the OS volume. The `CustomerOobe` end state runs it last ([End state](#end-state)). The M7 check records it. If Sysprep refuses, the server must reject `EnableBitLocker` for `CustomerOobe`, and this section changes.
+- The compiler rejects a `Restart` into WinPE after an `EnableBitLocker` step. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
+- An importer that turns MDT's Enable BitLocker step into `EnableBitLocker` must respect that rule. MDT's `Client.xml` restarts into WinPE with `smsboot.exe /target:WinPE` in its Capture Image group, after its Enable BitLocker step (`Templates/Client.xml:398-414`, `Templates/Client.xml:460`, `Templates/Client.xml:480-487`, relative to `Source/MDT.8456` in the [MDT 8456 sources](research/mdt-8456.md#sources)).
+
+### Suspend BitLocker
+
+`SuspendBitLocker` turns the volume's key protectors off for a number of restarts. It never decrypts. ConfigMgr calls the same step Disable BitLocker, and that step never decrypts either ([ConfigMgr 2509 reference](research/configmgr-2509.md#disable-bitlocker)). deployarr names the action for what it does.
+
+- When a startup component that the TPM protector's profile measures changes while protection is on, "the TPM will not release the encryption key to unlock the disk volume and the computer will enter into recovery mode" ([ProtectKeyWithTPM](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithtpm-win32-encryptablevolume)).
+- The same page says that the default profile "secures the encryption key against changes to the Core Root of Trust of Measurement (CRTM), BIOS, and Platform Extensions (PCR 0)". By that page, a firmware update is such a change. A `SuspendBitLocker` step before it keeps the PC out of recovery.
+- The one setting, `restarts`, is the number of restarts after which protection resumes. It holds 1 to 15, and the default is 1. ConfigMgr's step takes "a value between 1 (default) and 15" ([Task sequence steps](https://learn.microsoft.com/en-us/intune/configmgr/osd/understand/task-sequence-steps)).
+- `manage-bde` also takes 0, which suspends protection indefinitely ([manage-bde protectors](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-protectors)). `DisableKeyProtectors` "exposes the volume's encryption key in the clear on the hard disk" ([DisableKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/disablekeyprotectors-win32-encryptablevolume)). A count of 0 lasts until something calls `EnableKeyProtectors`, so a deployment with no later step that does would ship the PC with its key in the clear. deployarr leaves 0 out (design decision).
+- When the volume has no key protector, the step changes nothing, and its result says why.
+- Otherwise the agent calls `DisableKeyProtectors` with the count. It reads the count back with `GetSuspendCount`, which gives 0 to 15 for a suspended OS volume ([GetSuspendCount](https://learn.microsoft.com/en-us/windows/win32/secprov/getsuspendcount-win32-encryptablevolume)). The step fails unless it reads back `restarts`.
+- A run after a crash calls `DisableKeyProtectors` again. That this sets the count again on a volume that is already suspended is inferred. If it does not, the read-back fails the step.
+
 ## Applications
 
 - An application record holds its name, version, files, install command, success codes, reboot behavior, detection rule, dependencies, and supported architectures.
@@ -783,6 +993,79 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 - Dependencies install first. The server rejects dependency cycles when you save. MDT's editor rejects only an app that depends on itself.
 - A bundle is an application with no command, only an ordered list of dependencies. MDT uses the same idea.
 - `InstallApplications` takes either one application or a variable that holds a list. App lists can come from the task sequence, from a pre-staged record, or from an order row column. MDT's Install Application step chooses between these by whether a GUID field is empty.
+
+## Windows Update
+
+The `InstallUpdates` action installs software updates from Windows Update, or from a WSUS server that the step names. MDT runs `ZTIWindowsUpdate.wsf` for this ([MDT 8456 reference](research/mdt-8456.md#windows-update)), and ConfigMgr has its Install Software Updates step ([ConfigMgr 2509 reference](research/configmgr-2509.md#install-software-updates)). The owner chose how the step treats a failed update and the pass limit, where it gets updates, and where it sits in the built-in template ([#154](https://github.com/Tsukidy/deployarr/issues/154#issuecomment-6956567901)).
+
+- The action runs only in the full OS, after the [handoff to the agent service](#handoff-from-winpe-to-the-new-os). ConfigMgr's step refuses WinPE ([ConfigMgr 2509 reference](research/configmgr-2509.md#flow)). MDT's script reboots out of WinPE instead of searching there ([MDT 8456 reference](research/mdt-8456.md#where-it-runs)).
+- The agent drives the Windows Update Agent (WUA) API itself, as MDT's script does. ConfigMgr's step drives the ConfigMgr client instead, and deployarr has no such client ([ConfigMgr 2509 reference](research/configmgr-2509.md#update-source-and-filters)).
+- Microsoft lists `Wuapi.dll` as the DLL behind WUA's interfaces, such as `IUpdateSearcher` ([IUpdateSearcher::get_ServerSelection](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-iupdatesearcher-get_serverselection)). Base WinPE has no `wuapi.dll` ([list file](research/winpe-10.1.26100.9457.md#the-list-file)).
+- The agent does not import `wuapi.dll`. It creates WUA's update session object, MDT's `Microsoft.Update.Session`, at run time with `CoCreateInstance`. `ole32.dll` exports `CoCreateInstance` ([CoCreateInstance](https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-cocreateinstance)).
+- WUA's methods take `BSTR` and `VARIANT` values, such as the search criteria ([IUpdateSearcher::Search](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-iupdatesearcher-search)). The agent builds and frees them with `oleaut32.dll` functions, such as `SysAllocString` ([SysAllocString](https://learn.microsoft.com/en-us/windows/win32/api/oleauto/nf-oleauto-sysallocstring)) and `VariantClear` ([VariantClear](https://learn.microsoft.com/en-us/windows/win32/api/oleauto/nf-oleauto-variantclear)).
+- `ole32.dll` and `oleaut32.dll` are both on base WinPE's list. The [import check](#agent) therefore passes. COM loads `wuapi.dll` only when the agent creates the object in the full OS (inferred).
+- Steps in the full OS run as LocalSystem in session 0 (see [Handoff from WinPE to the new OS](#handoff-from-winpe-to-the-new-os)). Nobody has tested whether WUA searches, downloads, and installs for a caller in that context. The M7 check tests it.
+- The built-in Windows client template holds one `InstallUpdates` step, enabled, after its `InstallApplications` step. The step does not continue on error, so a failed search fails the deployment (design decision). MDT's templates hold two such steps, one before Install Applications and one after. They ship both disabled, and both continue on error ([MDT 8456 reference](research/mdt-8456.md#where-it-runs)). A task sequence can turn the step off, for example for PCs that cannot reach their update source.
+
+### Update settings
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `source` | `WindowsUpdate` | Where the step gets updates. `Wsus` names a WSUS server by its URL |
+| `missing` | `Warn` | What the step does when updates are still missing after `max_passes` passes. See [Success and failure](#success-and-failure) |
+| `max_passes` | 7 | How many passes may install updates. MDT's script also allows 7 ([MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)) |
+| `exclude` | empty | KB article numbers and update IDs that the step never installs, like MDT's `WUMU_ExcludeKB` and `WUMU_ExcludeID` ([MDT 8456 reference](research/mdt-8456.md#settings)) |
+| `timeouts` | 3,600 seconds to search, 7,200 to download, and 7,200 to install | How long one phase of one pass may take. The search default is ConfigMgr's wait for a scan ([ConfigMgr 2509 reference](research/configmgr-2509.md#waits)). The download and install limits are long, because they only have to stop a phase that hangs, and a slow link or a large update should not fail the step (design decision) |
+
+### Update source
+
+- With `WindowsUpdate`, the searcher's `ServerSelection` is `ssWindowsUpdate`, which searches "the Windows Update service over the Internet" ([ServerSelection](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-uamg/07e2bfa4-6795-4189-b007-cc50b476181a)). It searches Windows Update even when a policy on the PC, such as one that a domain applies, names a WSUS server (inferred from the same page). MDT's script searches without setting `ServerSelection` (`ZTIWindowsUpdate.wsf:263`), so it searches the default server, which follows a WSUS policy on the PC (inferred). deployarr takes `ssWindowsUpdate` so that the source is the one the step names (design decision).
+- With `WindowsUpdate`, the step changes no policy value and never registers the Microsoft Update service, so the PC's update settings stay as Windows ships them. MDT registers Microsoft Update when no WSUS server is set ([MDT 8456 reference](research/mdt-8456.md#update-source)).
+- With `Wsus`, the `ServerSelection` is `ssManagedServer`, which searches "only the managed server" (same page). The step writes the URL to `WUServer` and `WUStatusServer` under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`, and 1 to `UseWUServer` in that key's `AU` subkey. These are the values MDT writes. The step then restarts the `wuauserv` service so that WUA reads them, as MDT does ([MDT 8456 reference](research/mdt-8456.md#update-source)).
+- MDT also sets `AU\NoAutoUpdate` to 1, which turns Automatic Updates off for its step ([MDT 8456 reference](research/mdt-8456.md#update-source)). The step leaves it, so it changes only the values that choose the server (design decision). The trade-off is that Automatic Updates stays on and can scan or install while the step runs.
+- With `Wsus`, before its first write, the step saves each value's old data, or the fact that the value did not exist, in the run state's `progress`. Each run of the step writes the values again, but it saves the old data only once.
+- With `Wsus`, before the step records its final result, whatever that result is, it restores each value and restarts `wuauserv`. It writes the saved data back, or deletes a value that did not exist before. MDT leaves `WUServer`, `WUStatusServer`, and `UseWUServer` in the deployed OS ([MDT 8456 reference](research/mdt-8456.md#update-source)).
+
+### Update passes
+
+The step works in passes, and the run state's `progress` holds a pass count. Before each pass, the step compares the count with `max_passes`. While the count is lower, a pass does the following:
+
+1. It adds one to the pass count and saves the run state.
+2. It searches for `IsInstalled = 0 and IsHidden = 0 and Type = 'Software'`. `Type = 'Software'` leaves out driver updates ([IUpdateSearcher::Search](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-iupdatesearcher-search)), because drivers come from the driver library. See [Injection and verification](#injection-and-verification).
+3. It skips each update that `exclude` names, and each update whose `InstallationBehavior.CanRequestUserInput` is true ([CanRequestUserInput](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nf-wuapi-iinstallationbehavior-get_canrequestuserinput)), because no one can answer a prompt. MDT skips the same updates ([MDT 8456 reference](research/mdt-8456.md#search-and-filters)).
+4. If no update is left, the step ends with success.
+5. It accepts the license terms of each update that is left. MDT's script accepts them for every update its search finds, the skipped ones included ([MDT 8456 reference](research/mdt-8456.md#search-and-filters)). The step then downloads the updates as one batch and installs them as one batch.
+6. It reads each update's `ResultCode`, `HResult`, and `RebootRequired` ([IUpdateInstallationResult](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-iupdateinstallationresult)). An update failed when its result code is not `orcSucceeded`, which is 2 ([OperationResultCode](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/ne-wuapi-operationresultcode)). An update that failed to download counts as failed (design decision). MDT's script only logs a failed download ([MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)). An error from the whole download or install call counts as a failure of every update in the batch, with that call's HRESULT (design decision).
+7. If an update failed or needs a reboot, the step asks for a reboot and runs again after it. See [Reboots and resume](#reboots-and-resume). Otherwise the next pass starts at once, because an update that just installed can make more updates apply. MDT's script also searches again at once when nothing failed and nothing needs a reboot ([MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)).
+
+When the count reaches `max_passes`, the step starts no more passes. It runs one last search with the same criteria and skips, and installs nothing. Each update that this search finds and does not skip is a missing update (design decision). MDT's script fails at its pass limit without that search ([MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)).
+
+- The search, the download, and the install each start with WUA's asynchronous call, `BeginSearch`, `BeginDownload`, or `BeginInstall`. MDT's script uses the last two the same way ([MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)). When a phase passes its time limit, the agent calls the job's `RequestAbort` ([ISearchJob](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-isearchjob), [IDownloadJob](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-idownloadjob), [IInstallationJob](https://learn.microsoft.com/en-us/windows/win32/api/wuapi/nn-wuapi-iinstallationjob)) and fails the step with a timeout error. ConfigMgr's step waits up to an hour for a scan and has no limit on an install job ([ConfigMgr 2509 reference](research/configmgr-2509.md#waits)).
+- The agent log records each update that a search finds, whether the step installs or skips it, the reason for a skip, and its result. MDT's log has one `INSTALL` or `SKIP` line per update, with its ID, title, KB numbers, and size, and gives no reason ([MDT 8456 reference](research/mdt-8456.md#search-and-filters)). ConfigMgr's step logs little and names five client logs to read instead ([ConfigMgr 2509 reference](research/configmgr-2509.md#logs)).
+
+### Success and failure
+
+| How the step ends | Result |
+| --- | --- |
+| A search succeeds and finds nothing to install | Success |
+| The last search after `max_passes` passes finds missing updates | Set by `missing`. `Fail` fails the step. `Warn` succeeds with a warning. `Ignore` succeeds |
+| A search fails | Failure |
+| A phase passes its time limit | Failure |
+| The agent cannot create WUA's objects, or cannot write or restore a policy value | Failure |
+
+- A failed update never ends the step by itself. The step reboots and searches again until the pass limit, as MDT's script does. ConfigMgr's step fails at once with the failure's HRESULT ([ConfigMgr 2509 reference](research/configmgr-2509.md#results-reboots-and-exit-codes)).
+- Only a search that succeeds and finds nothing means that the PC is up to date. MDT counts the search error `0x8024402C` as success, so a PC with no network looks up to date ([MDT 8456 reference](research/mdt-8456.md#search-and-filters)). A PC that cannot reach its update source therefore fails the step.
+- The step result lists every update that a search found, with its update ID, title, and KB numbers. For each pass, it gives the update's result code and HRESULT, or the reason the step skipped it. It lists each failure, including one that a later pass fixed. It lists the missing updates under every `missing` value.
+- Under `Warn`, the PC finishes, and the deployment shows the warning and the list of missing updates.
+- A failed step goes through its `on_error`, like any other step. MDT's templates continue on error for both of their Windows Update steps ([MDT 8456 reference](research/mdt-8456.md#where-it-runs)).
+
+### Reboots and resume
+
+- When an update failed or waits for a reboot, the action returns `Reboot { rerun: true }`. The agent saves the run state, reboots, and runs the same step again. See [State on disk and resume](#state-on-disk-and-resume). MDT's script and ConfigMgr's step ask their engines for the same reboot and retry ([MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop), [ConfigMgr 2509 reference](research/configmgr-2509.md#results-reboots-and-exit-codes)).
+- The action keeps the pass count, the update results so far, and the saved policy values in the run state's `progress` field until the step records its final result. A run after a reboot or a crash reads it. See [State on disk and resume](#state-on-disk-and-resume). MDT keeps its pass count in a variable that its engine drops on a retry, and the count survives only through a fallback file (inferred in [MDT 8456 reference](research/mdt-8456.md#download-install-and-the-reboot-loop)).
+- A crash or a power loss during the step leaves `in_flight` set, and the action runs again. It reads its saved progress and starts a new pass from a new search, which finds only the updates still missing. It therefore needs no WUA job ID (inferred). ConfigMgr's step saves its job ID to reconnect to the job instead ([ConfigMgr 2509 reference](research/configmgr-2509.md#flow)).
+- The pass count goes up at the start of each pass, so an interrupted pass still counts. A PC that crashes in every pass still reaches `max_passes`.
+- The step restores the policy values that it saved in `progress`, not the values in the registry. A run after a crash therefore restores the values from before the step, not the ones the step wrote.
 
 ## Boot image
 
@@ -1101,9 +1384,11 @@ Every host function starts with one check, `permit(scope, capability, target)`, 
 The lookup chain's rules stay in the base, as [Lookup chain](#lookup-chain) describes. An add-on resolver returns a match and never wipe authority. `WipeAuthority::from_addon_match` in `deployarr-core` is the only way an add-on's match becomes authority. It takes the resolver's declared input kind, the input the server sent, and the match's `matched_on`.
 
 - `matched_on` is `Option<IdentityKind>`, an enum. In the first design it was a string, and the reference add-on filled it with free text ([Add-on design attacks, item 4](research/addon-design-attacks-wasmtime-50.0.1.md#item-4-wipe-authority-cannot-come-from-free-text)).
-- For an identity resolver, `matched_on` must name a kind, and the server must have sent a fact of that kind. `UsableIdentity` holds the facts that the server may send. Its only constructor drops known placeholders and returns none when nothing is left.
-- For a resolver with a prompt, `matched_on` must be none. The authority is the technician's typed answer.
+- For an identity resolver, `matched_on` must name a kind, and the server must have sent a fact of that kind. `UsableIdentity` holds the facts that the server may send. Its only constructor trims each value, drops known placeholders, and returns none when nothing is left. Its list is wider than the examples in [Identity facts](#identity-facts) (design decision), so that more shared firmware defaults never match an order. It holds common unset serials, a serial of only zeros, and a UUID or MAC address of only `0` or only `F` digits. SMBIOS defines an all-`00h` UUID as not present and an all-`FFh` UUID as not yet set ([SMBIOS 3.7.0](https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.7.0.pdf), section 7.2.1).
+- For a resolver with a prompt, `matched_on` must be none, and the server must have sent the answers to the prompt that the resolver's own add-on declares. A prompt ID is unique only within its add-on, so `PromptAnswers` names the prompt with its add-on. The authority is the technician's typed answer.
+- `PromptAnswers` holds at least one answer that is not blank (design decision), because the server never calls a prompt resolver without a typed answer. Its `Debug` prints the field keys and never the answers, because a prompt field can be secret.
 - Any other combination is an error, and the chain moves on.
+- The authority's variants hold types with private fields, so no other code can build one. `WipeAuthority` holds only the authorities that an add-on resolver leads to. [#187](https://github.com/Tsukidy/deployarr/issues/187) adds the ones for a pre-staged record and a manual pick.
 - The host writes the trace line from the fact it sent, never from add-on text.
 - `IdentityKind` lists the system serial, the baseboard serial, the chassis serial, the UUID, and the MAC address. The WIT enum `identity-kind` repeats the list, and a test compares the two. A new kind needs a new API level (design decision).
 
@@ -1131,8 +1416,8 @@ pub struct AddOnStep {
 }
 
 pub enum BuiltinAction {
-	// Every action of `Action` in Core data shapes. `RunCommand` and `RunPowerShell`
-	// gain `files: Vec<StepFile>`, which holds content, never a secret.
+	// Every action of `BuiltinAction` in Core data shapes. `RunCommand` and `RunPowerShell`
+	// hold `files: StepFiles`, which holds content, never a secret.
 	ServerCall { send: Vec<VarName>, limits: StepLimits },
 	AddProvisioningPackage { package: SecretRef, limits: StepLimits },
 }
@@ -1142,20 +1427,20 @@ pub enum BuiltinAction {
 
 Three more names in `deployarr-core` belong to this model:
 
-- `AddOnRef` is an add-on ID plus a kind ID. `Resolver::AddOn` and `JoinProfile::AddOn` each hold one.
+- `AddOnRef` is an add-on ID plus a kind ID. `Resolver::AddOn` and `JoinProfile::AddOn` each hold one. An `AddOnId` is `<publisher>.<name>`. Each part holds a lower-case ASCII letter and then lower-case ASCII letters, digits, or `-`. A `KindId` follows the same rule. The lengths, 1 to 32 characters for each part of an `AddOnId` and 1 to 63 for a `KindId`, are defaults until the owner decides the grammar, which is [one-way door](#one-way-doors) 3.
 - `Catalog` is the set of step kind, join kind, resolver, and importer descriptors, from installed add-ons and from remembered ones. The UI and `validate` read it.
-- `deferred` lists every enabled add-on step and `ApplyJoinProfile` join slot in a sequence. The server must expand each one before it compiles.
+- `deferred` lists every enabled add-on step and `ApplyJoinProfile` join slot in a sequence. The server must expand each one before it compiles. It skips a step inside a disabled group, because the compiler drops that step too.
 
 How a stored step behaves:
 
-- **An add-on step is plain data.** In the [JSON format](#json-format) it is `{"add_on": {"addon": "deployarr.autopilot", "kind": "register", "config_version": 1, "config": {"group_tag": "%OrderGroupTag%"}}}`.
+- **An add-on step is plain data.** In the [JSON format](#json-format) it is `{"add_on": {"addon": "deployarr.autopilot", "kind": "register", "config_version": 1, "config": {"group_tag": "%OrderGroupTag%"}}}`. A join slot is `{"apply_join_profile": {"stage": "full_os"}}`, or `offline_image` for the other stage.
 - **The config keeps its bytes.** The step keeps the JSON text that was saved, a `Box<RawValue>`. Parsed into a `serde_json::Value`, a config came back with its keys reordered and a 23-digit integer turned into a float ([Add-on design attacks, item 6](research/addon-design-attacks-wasmtime-50.0.1.md#item-6-stored-steps-lose-bytes-and-fields)).
 - **`Action` reads one key and dispatches.** `Action` has a hand-written `Deserialize`. It reads the object's one key and passes the value on without buffering it:
   - `add_on` goes to `AddOnStep`.
   - `apply_join_profile` goes to the `ApplyJoinProfile` join slot.
   - Any other key goes to `BuiltinAction` through its enum access.
 - **`Action` never uses `#[serde(untagged)]`.** A derived `Action` would need it on `Builtin`, so that a built-in action keeps its own key in JSON. An untagged variant makes serde buffer the whole input first, as an internally tagged enum does. A `Box<RawValue>` field did not parse inside an internally tagged enum (item 6), and an untagged variant buffers the same way, so the add-on step's config would fail. The first design's untagged fallback also hid the real parse error behind one generic message ([Add-on design attacks, finding 23](research/addon-design-attacks-wasmtime-50.0.1.md#finding-23-unknown-fields-on-stored-steps-vanish)).
-- **M0 tests the parser.** That the hand-written `Deserialize` keeps the config's bytes is inferred until M0's round-trip check passes. So is the full path of a parse error inside an add-on step or a built-in action.
+- **M0 tests the parser.** `crates/deployarr-core/tests/addon.rs` shows that the hand-written `Deserialize` keeps the config's bytes, with its keys out of order and the integer `12345678901234567890123`. A bad field inside an add-on step or a built-in action fails with its full path, such as `root.children[0].step.action.add_on.config_version`. The tests of the JSON format parse every sequence through it too.
 - **Unknown fields are errors.** The envelope refuses unknown fields, as every built-in action does. A step from a newer schema is then an error, not a silent loss ([Add-on design attacks, item 6](research/addon-design-attacks-wasmtime-50.0.1.md#item-6-stored-steps-lose-bytes-and-fields)).
 - **Saving runs no add-on code.** `validate` checks the config against the kind's schema at its config version. An unknown kind is a warning, not an error. Only planning a deployment runs add-on code.
 - **A removed add-on's step still shows.** The server keeps a descriptor, the label and the schema, for every step kind and config version that was ever installed, and never deletes it. The editor therefore shows a removed add-on's step as a read-only form with a banner ([MDT 8450 ConfigMgr integration reference](research/mdt-8450-configmgr-integration.md#what-changes-in-deployarr) item 1). The admin can move, disable, or delete the step. The compiler drops a disabled step, so the sequence deploys again.
@@ -1171,14 +1456,18 @@ Planning runs in two parts before the compiler:
 
 `compile` then takes the `LoweredSequence`, so a program that names an add-on does not type-check.
 
-`lower` keeps the step's `NodeMeta` on a group that holds the expansion. The step's condition and `continue_on_error` therefore still apply. `lower` rejects these:
+`lower` keeps the step's `NodeMeta` on a group that holds the expansion. The step's condition and `continue_on_error` therefore still apply. Each child of the expansion is a `Step<Action>`, so that `lower` can see an add-on step inside it. `lower` rejects these:
 
 - a missing expansion
 - an action outside the six that an add-on may return
 - a child with another `run_in`
-- a nested add-on step
+- a nested add-on step or join slot
+- an expansion for a node that `deferred` does not list (design decision), because it is a fault in the host that ignoring it would hide
+- an add-on step or join slot with `run_in` `WinPe` whose condition holds an `InstalledMsi` or `Wmi` condition at any depth, disabled or not. The compiler checks this rule on steps, and the group that replaces the step keeps its condition. `validate` reports the same step as an error, so a save catches it.
 
-The IDs of the new nodes derive from the step's ID, so the same input gives the same program (design decision).
+An add-on step or join slot that `deferred` skips needs no expansion. `lower` turns it into an empty group with the step's `NodeMeta`, and the compiler drops that group.
+
+The IDs of the new nodes derive from the step's ID, so the same input gives the same program (design decision). The ID of child `i` is the version 5 UUID whose namespace is the step's ID and whose name is `i` in decimal ASCII digits. Each child keeps the rest of the `NodeMeta` that its add-on gave it, such as its own condition, `continue_on_error`, and `enabled` (design decision), so that an add-on can make one of its steps conditional or optional. The step's own condition, `continue_on_error`, and `enabled` stay on the group.
 
 ### What runs on the PC
 
@@ -1241,7 +1530,7 @@ The web UI is the only admin interface in the first release. After it, a desktop
 
 The screens are these:
 
-- Deployments: live progress, step timeline, logs, variable trace, and missing drivers.
+- Deployments: live progress, step timeline, logs, variable trace, missing drivers, and missing updates.
 - Task sequences: a tree editor with a step palette, a typed form for each action, a condition builder, version history, and templates. Step kinds from add-ons appear in the palette under the add-on's name, with forms drawn from their schemas. Import opens a deployarr export, or another format through an importer add-on such as the MDT importer.
 - OS images: import an ISO or WIM, then choose editions.
 - Drivers: import packages, browse by hardware ID, manage profiles, and view missing-driver reports.
@@ -1305,8 +1594,7 @@ An add-on author sees one trait with default bodies and the `deployarr-core` typ
 
 These are planned for later and kept out of the first release on purpose:
 
-- Windows Update during deployment
-- BitLocker
+- BitLocker protectors that need a PIN or a startup key (see [Enable BitLocker](#enable-bitlocker))
 - user state migration and in-place upgrades
 - multicast
 - PXE across routed subnets through a DHCP relay

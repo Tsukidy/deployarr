@@ -11,14 +11,19 @@
 extern crate alloc;
 
 pub mod action;
+pub mod addon;
 pub mod compile;
 pub mod condition;
 pub mod evaluate;
+pub mod join;
+pub mod lookup;
+pub mod lower;
 pub mod non_empty;
 pub mod sequence;
 pub mod store;
 pub mod substitution;
 pub mod template;
+pub mod validate;
 pub mod variable;
 
 mod rfc3339;

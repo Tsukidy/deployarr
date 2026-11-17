@@ -2,12 +2,12 @@ use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
 use deployarr_core::action::{
-    Action, AppSelection, CheckMode, DiskCheck, DiskSelector, ExitCodes, MemoryCheck,
-    ProcessorCheck, ReadinessChecks, StepLimits,
+    Action, AppSelection, BuiltinAction, CheckMode, DiskCheck, DiskSelector, ExitCodes,
+    MemoryCheck, ProcessorCheck, ReadinessChecks, StepLimits,
 };
 use deployarr_core::condition::{Comparison, Condition, FileVersion, RegData, Test};
 use deployarr_core::sequence::{
-    DefaultVars, DefaultVarsError, Node, NodeMeta, ParseError, TaskSequence, TaskSequenceId,
+    AuthoredSequence, DefaultVars, DefaultVarsError, Node, NodeMeta, ParseError, TaskSequenceId,
 };
 use deployarr_core::template::Template;
 use deployarr_core::variable::{SettableVarName, VarAssignment, VarName};
@@ -23,35 +23,42 @@ fn sample() -> Value {
     serde_json::from_str(SAMPLE).expect("the sample is JSON")
 }
 
-fn parse(document: &Value) -> Result<TaskSequence, ParseError> {
-    TaskSequence::from_json(&document.to_string())
+fn parse(document: &Value) -> Result<AuthoredSequence, ParseError> {
+    AuthoredSequence::from_json(&document.to_string())
 }
 
 #[test]
 fn sample_round_trips_unchanged() {
-    let sequence = TaskSequence::from_json(SAMPLE).expect("the sample parses");
+    let sequence = AuthoredSequence::from_json(SAMPLE).expect("the sample parses");
 
     let written = serde_json::to_string(&sequence).expect("a task sequence serializes");
 
     let written_value: Value = serde_json::from_str(&written).expect("the output is JSON");
     assert_eq!(written_value, sample());
-    assert_eq!(TaskSequence::from_json(&written), Ok(sequence));
+    assert_eq!(AuthoredSequence::from_json(&written), Ok(sequence));
 }
 
 fn action_name(action: &Action) -> &'static str {
+    let action = match action {
+        Action::Builtin(action) => action,
+        Action::AddOn(_) => return "AddOn",
+        Action::ApplyJoinProfile { .. } => return "ApplyJoinProfile",
+    };
     match action {
-        Action::RunCommand { .. } => "RunCommand",
-        Action::RunPowerShell { .. } => "RunPowerShell",
-        Action::SetVariable { .. } => "SetVariable",
-        Action::Restart { .. } => "Restart",
-        Action::PartitionDisk { .. } => "PartitionDisk",
-        Action::ApplyOsImage { .. } => "ApplyOsImage",
-        Action::ApplyDrivers { .. } => "ApplyDrivers",
-        Action::ApplyUnattend { .. } => "ApplyUnattend",
-        Action::InstallApplications { .. } => "InstallApplications",
-        Action::VerifyDrivers { .. } => "VerifyDrivers",
-        Action::CheckReadiness { .. } => "CheckReadiness",
-        Action::ActivateWindows { .. } => "ActivateWindows",
+        BuiltinAction::RunCommand { .. } => "RunCommand",
+        BuiltinAction::RunPowerShell { .. } => "RunPowerShell",
+        BuiltinAction::SetVariable { .. } => "SetVariable",
+        BuiltinAction::Restart { .. } => "Restart",
+        BuiltinAction::PartitionDisk { .. } => "PartitionDisk",
+        BuiltinAction::ApplyOsImage { .. } => "ApplyOsImage",
+        BuiltinAction::ApplyDrivers { .. } => "ApplyDrivers",
+        BuiltinAction::ApplyUnattend { .. } => "ApplyUnattend",
+        BuiltinAction::InstallApplications { .. } => "InstallApplications",
+        BuiltinAction::VerifyDrivers { .. } => "VerifyDrivers",
+        BuiltinAction::CheckReadiness { .. } => "CheckReadiness",
+        BuiltinAction::ActivateWindows { .. } => "ActivateWindows",
+        BuiltinAction::ServerCall { .. } => "ServerCall",
+        BuiltinAction::AddProvisioningPackage { .. } => "AddProvisioningPackage",
     }
 }
 
@@ -94,7 +101,7 @@ impl VariantsSeen {
         }
     }
 
-    fn visit(&mut self, node: &Node) {
+    fn visit(&mut self, node: &Node<Action>) {
         match node {
             Node::Group(group) => {
                 self.visit_meta(&group.meta);
@@ -110,9 +117,12 @@ impl VariantsSeen {
     }
 }
 
+// The sample is a sequence without add-ons. It leaves out the add-on step, the
+// join slot, and the two built-in actions that add-on steps expand to,
+// `ServerCall` and `AddProvisioningPackage`. `tests/addon.rs` covers those.
 #[test]
-fn sample_uses_every_action_and_condition_variant() {
-    let sequence = TaskSequence::from_json(SAMPLE).expect("the sample parses");
+fn sample_uses_every_condition_and_every_action_outside_add_ons() {
+    let sequence = AuthoredSequence::from_json(SAMPLE).expect("the sample parses");
     let mut seen = VariantsSeen::default();
     for child in &sequence.root.children {
         seen.visit(child);
@@ -151,10 +161,13 @@ fn sample_uses_every_action_and_condition_variant() {
     );
 }
 
-fn only_step_action(document: Value) -> Action {
+fn only_step_action(document: Value) -> BuiltinAction {
     let sequence = parse(&document).expect("the document parses");
     match sequence.root.children.as_slice() {
-        [Node::Step(step)] => step.action.clone(),
+        [Node::Step(step)] => match &step.action {
+            Action::Builtin(action) => action.clone(),
+            other => panic!("expected a built-in action, found {other:?}"),
+        },
         other => panic!("expected one step, found {other:?}"),
     }
 }
@@ -195,7 +208,7 @@ fn omitted_exit_codes_and_limits_take_the_documented_defaults() {
         "run_command": { "command": "ipconfig /all" },
     })));
 
-    let Action::RunCommand {
+    let BuiltinAction::RunCommand {
         working_dir,
         exit,
         limits,
@@ -223,7 +236,7 @@ fn omitted_readiness_checks_are_the_windows_11_minimums() {
 
     assert_eq!(
         action,
-        Action::CheckReadiness {
+        BuiltinAction::CheckReadiness {
             checks: ReadinessChecks {
                 memory: MemoryCheck {
                     min_mib: 4096,
@@ -253,7 +266,7 @@ fn a_readiness_check_that_sets_one_field_keeps_the_other_defaults() {
 
     assert_eq!(
         action,
-        Action::CheckReadiness {
+        BuiltinAction::CheckReadiness {
             checks: ReadinessChecks {
                 disk: DiskCheck {
                     min_gb: 64,
@@ -272,7 +285,7 @@ fn an_omitted_disk_is_the_first_internal_disk() {
         "partition_disk": { "layout": "uefi-gpt" },
     })));
 
-    let Action::PartitionDisk { disk, .. } = action else {
+    let BuiltinAction::PartitionDisk { disk, .. } = action else {
         panic!("expected PartitionDisk, found {action:?}");
     };
     assert_eq!(disk, DiskSelector::FirstInternal);
@@ -284,7 +297,7 @@ fn a_runtime_limit_is_whole_seconds() {
         "run_command": { "command": "setup.exe", "limits": { "max_runtime_secs": 90 } },
     })));
 
-    let Action::RunCommand { limits, .. } = action else {
+    let BuiltinAction::RunCommand { limits, .. } = action else {
         panic!("expected RunCommand, found {action:?}");
     };
     assert_eq!(limits.max_runtime_secs, NonZeroU32::new(90));
@@ -574,9 +587,9 @@ fn an_unknown_action_fails_and_the_error_names_the_action_field() {
 
 #[test]
 fn text_that_is_not_one_json_document_fails() {
-    assert!(TaskSequence::from_json("").is_err());
-    assert!(TaskSequence::from_json("{\"schema_version\": 1,").is_err());
-    assert!(TaskSequence::from_json(&format!("{SAMPLE} {SAMPLE}")).is_err());
+    assert!(AuthoredSequence::from_json("").is_err());
+    assert!(AuthoredSequence::from_json("{\"schema_version\": 1,").is_err());
+    assert!(AuthoredSequence::from_json(&format!("{SAMPLE} {SAMPLE}")).is_err());
 }
 
 // States that the JSON once allowed but that cannot run. Each one fails to
@@ -804,9 +817,9 @@ fn conditions_and_application_lists_can_read_a_variable_that_starts_with_an_unde
     let [Node::Step(step)] = sequence.root.children.as_slice() else {
         panic!("expected one step");
     };
-    let Action::InstallApplications {
+    let Action::Builtin(BuiltinAction::InstallApplications {
         apps: AppSelection::FromList(list),
-    } = &step.action
+    }) = &step.action
     else {
         panic!(
             "expected InstallApplications from a list, found {:?}",
@@ -952,7 +965,7 @@ fn a_code_in_both_success_and_reboot_fails() {
             .to_string()
             .replace(r#""EXIT""#, exit);
 
-        let error = TaskSequence::from_json(&text).expect_err(exit);
+        let error = AuthoredSequence::from_json(&text).expect_err(exit);
 
         assert_eq!(error.path(), path, "{exit}: {error}");
         assert!(error.to_string().contains("in both"), "{exit}: {error}");
@@ -972,7 +985,7 @@ fn an_exit_code_at_or_above_0x80000000_is_written_as_its_signed_value() {
         "reboot": [],
     })));
 
-    let Action::RunCommand { exit, .. } = action else {
+    let BuiltinAction::RunCommand { exit, .. } = action else {
         panic!("expected RunCommand, found {action:?}");
     };
     assert_eq!(exit.success(), [0, -2_147_024_891]);
@@ -989,7 +1002,7 @@ fn an_exit_code_at_or_above_0x80000000_is_written_as_its_signed_value() {
 fn an_omitted_list_in_exit_takes_its_default() {
     let action = only_step_action(run_command_with_exit(json!({ "success": [0, 1] })));
 
-    let Action::RunCommand { exit, .. } = action else {
+    let BuiltinAction::RunCommand { exit, .. } = action else {
         panic!("expected RunCommand, found {action:?}");
     };
     assert_eq!(exit.success(), [0, 1]);

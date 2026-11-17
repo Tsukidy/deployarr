@@ -4,27 +4,39 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
-use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
-use crate::action::Action;
+use crate::action::{Action, BuiltinAction};
 use crate::condition::Condition;
 use crate::validated_string::validated_string;
 use crate::variable::{SettableVarName, VarAssignment};
 
 pub const SCHEMA_VERSION: u32 = 1;
 
+/// A task sequence whose steps hold actions of type `A`.
+///
+/// An admin edits an [`AuthoredSequence`], and the server stores it. The
+/// compiler and the agent see only a [`LoweredSequence`], which
+/// [`crate::lower::lower`] makes when a deployment is planned.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskSequence {
+pub struct TaskSequence<A> {
     pub id: TaskSequenceId,
     pub version: u32,
     pub name: String,
     pub default_vars: DefaultVars,
-    pub root: Group,
+    pub root: Group<A>,
 }
 
-impl TaskSequence {
+/// What an admin edits and the server stores. A step can hold a step from an
+/// add-on or a join slot.
+pub type AuthoredSequence = TaskSequence<Action>;
+
+/// What the compiler and the agent see. Every step holds a built-in action.
+pub type LoweredSequence = TaskSequence<BuiltinAction>;
+
+impl<A: DeserializeOwned> TaskSequence<A> {
     pub fn from_json(json: &str) -> Result<Self, ParseError> {
         let mut deserializer = serde_json::Deserializer::from_str(json);
         let sequence =
@@ -65,13 +77,13 @@ impl core::error::Error for ParseError {}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Document {
+struct Document<A> {
     schema_version: SchemaVersion,
     id: TaskSequenceId,
     version: u32,
     name: String,
     default_vars: DefaultVars,
-    root: Group,
+    root: Group<A>,
 }
 
 /// A task sequence's variable defaults. No two entries name the same
@@ -289,16 +301,16 @@ impl<'de> DeserializeSeed<'de> for UniqueName<'_> {
 }
 
 #[derive(Serialize)]
-struct DocumentRef<'a> {
+struct DocumentRef<'a, A> {
     schema_version: SchemaVersion,
     id: &'a TaskSequenceId,
     version: u32,
     name: &'a str,
     default_vars: &'a DefaultVars,
-    root: &'a Group,
+    root: &'a Group<A>,
 }
 
-impl<'de> Deserialize<'de> for TaskSequence {
+impl<'de, A: Deserialize<'de>> Deserialize<'de> for TaskSequence<A> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let Document {
             schema_version: SchemaVersion,
@@ -307,7 +319,7 @@ impl<'de> Deserialize<'de> for TaskSequence {
             name,
             default_vars,
             root,
-        } = Document::deserialize(deserializer)?;
+        } = Document::<A>::deserialize(deserializer)?;
         Ok(Self {
             id,
             version,
@@ -318,7 +330,7 @@ impl<'de> Deserialize<'de> for TaskSequence {
     }
 }
 
-impl Serialize for TaskSequence {
+impl<A: Serialize> Serialize for TaskSequence<A> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let Self {
             id,
@@ -407,9 +419,9 @@ pub struct NodeId(pub Uuid);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Node {
-    Group(Group),
-    Step(Step),
+pub enum Node<A> {
+    Group(Group<A>),
+    Step(Step<A>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -424,17 +436,17 @@ pub struct NodeMeta {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Group {
+pub struct Group<A> {
     pub meta: NodeMeta,
-    pub children: Vec<Node>,
+    pub children: Vec<Node<A>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Step {
+pub struct Step<A> {
     pub meta: NodeMeta,
     pub run_in: RunIn,
-    pub action: Action,
+    pub action: A,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

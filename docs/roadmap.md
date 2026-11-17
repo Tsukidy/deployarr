@@ -12,6 +12,7 @@ From milestone 1 on, every check that needs a PC or a VM runs in a lab that `xta
 - The lab host's CPU must support SSE4.2 and POPCNT, as well as the six features in the next bullet. The Windows 11 notes on Microsoft's page [Supported Windows guest operating systems for Hyper-V on Windows, Windows Server, and Azure Local](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/supported-windows-guest-operating-systems-for-hyper-v-on-windows) say "Windows 11 requires an increased CPU instruction for installation and boot (POPCNT and SSE4.2)." The [lab check](lab-setup.md#5-check-the-lab) fails when the host's CPU lacks any of these eight features.
 - The lab host's CPU must support PAE, NX, SSE4.1, CMPXCHG16B, LAHF/SAHF, and PrefetchW. Section 3.5 of Microsoft's [Minimum Hardware Requirements for Windows 11](https://download.microsoft.com/download/7/8/8/788bf5ab-0751-4928-a22c-dffdc23c27f2/Minimum%20Hardware%20Requirements%20for%20Windows%2011.pdf) requires them. Section 5 holds virtual machines to the same minimum, so a VM on `qemu64` falls short of it.
 - The VMs sit on an isolated bridge with a plain DHCP server. deployarr provides only PXE. The DHCP server does not serve the bridge from deployarr's network stack, because deployarr does not share UDP 67 on an interface that a DHCP server on its host serves ([DHCP](architecture.md#dhcp)). For example, it runs in its own network namespace on the bridge. The one exception is the [M4 check](#m4-pxe) for the setting that skips port 67. The lab's network script does not do this yet, and [#139](https://github.com/Tsukidy/deployarr/issues/139) tracks the change.
+- The [M7 check](#m7-applications) of the `InstallUpdates` step needs VMs that reach Windows Update, because a failed search fails the step ([Windows Update](architecture.md#windows-update)). For that check, the lab host gives the bridge an uplink through NAT, so the VMs reach the internet and nothing outside reaches the VMs. Other checks keep the bridge without an uplink. A check without the uplink that deploys with the built-in Windows client template turns the step off in its sequence. The lab's network script has no uplink yet, and [#174](https://github.com/Tsukidy/deployarr/issues/174) tracks the change.
 - The OS under test is the multi-edition Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11), with Home and Pro, the editions the owner deploys. Lab VMs install Windows with no product key and stay unactivated. Tests of the `ActivateWindows` step then install Microsoft's KMS client setup key for Pro, which cannot activate without a KMS host (see [Activation](architecture.md#activation)). The real PC from milestone 3 on tests the key from its sticker.
 - virtio disk and network devices test the driver path, because Windows 11 has no inbox drivers for them. They must come from the deployarr driver library and the WinPE driver set.
 - Each UEFI test VM has a virtual TPM 2.0, QEMU's `tpm-crb` device backed by `swtpm` in TPM 2.0 mode. [`tools/lab/vm.sh`](../tools/lab/vm.sh) starts the backend with `swtpm socket --tpm2`. `build_dsdt` in QEMU 8.2.2's [`hw/i386/acpi-build.c`](https://github.com/qemu/qemu/blob/v8.2.2/hw/i386/acpi-build.c#L1794-L1810), lines 1794 to 1810, declares the device with the ACPI hardware ID (`_HID`) `MSFT0101` and no compatible ID (`_CID`). OVMF installs the ACPI tables that QEMU builds, in `InstallAcpiTables` in [`OvmfPkg/AcpiPlatformDxe/AcpiPlatform.c`](https://github.com/tianocore/edk2/blob/edk2-stable202402/OvmfPkg/AcpiPlatformDxe/AcpiPlatform.c#L44-L46) at tag `edk2-stable202402`. The [triage of #72](https://github.com/Tsukidy/deployarr/issues/72#issuecomment-6826925253) read the same IDs from a Linux guest on OVMF. No lab VM therefore shows the agent a TPM that lists `MSFT0101` only as a compatible ID.
@@ -99,7 +100,7 @@ Check:
 Scope:
 - OS import from an ISO (7-Zip) or a WIM or ESD, with single-edition export through `wimlib-imagex`.
 - The boot image builder and the boot ISO.
-- Agent WinPE mode: `wpeinit`, `drvload`, network, the console screen, and fact gathering (SMBIOS, adapters, firmware, Secure Boot, TPM, memory, processor cores, disks, device IDs).
+- Agent WinPE mode: `wpeinit`, `drvload`, network, the console screen, and fact gathering (SMBIOS, chassis type, form factor flags, VM flag, hypervisor vendor, adapters, firmware, Secure Boot, TPM, memory, processor cores, disks, device IDs).
 - The readiness check, with Microsoft's Windows 11 minimums as defaults.
 - Disk layouts for UEFI and BIOS, image download and apply, `bcdboot`, WinRE, and the unattend file.
 - The offline service install, the handoff to the new OS, the finish action for both end states, turning off the built-in Administrator account, and answer file cleanup.
@@ -115,6 +116,8 @@ Check:
 - Each `CustomerOobe` run records the image state that audit mode shows, and whether the System Preparation Tool window was open when the agent ran `sysprep`. It also records whether the customer's OOBE shows the license terms page.
 - No run leaves an answer file in any place that [Answer files](architecture.md#answer-files) lists.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
+- The UEFI VM and the BIOS VM report the VM flag as true and the hypervisor vendor as `KVMKVMKVM`. The lab records which VM signals each VM set. See [Chassis and VM facts](architecture.md#chassis-and-vm-facts).
+- The real PC reports the VM flag as false and an empty hypervisor vendor. The lab records its chassis type and form factor flags.
 - On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. It reports the TPM version that the PC has. Its log names the device ID that matched, whether it is a hardware ID or a compatible ID, and the device's status and problem code. The device must have started with no problem code. If base WinPE lacks the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
 - Those TPM reads use a boot image built from the ADK's `winpe.wim`, which has no `tbs.dll`. They test the [TPM version](architecture.md#tpm-version) mapping, and whether `tpm.sys` starts in base WinPE.
 - A VM shows a prompt from a `PromptSpec` that the server sends, such as one that a test add-on declares. It accepts typed input and scanner-style input, and it applies the declared pattern.
@@ -244,6 +247,7 @@ Check:
 Scope:
 - The application library, including the MSI reader, success codes, reboot behavior, detection rules, and dependencies.
 - App lists that come from a task sequence, a pre-staged record, or an order column.
+- The `InstallUpdates` step for Windows Update and WSUS, with its passes, reboots, and policy restore, enabled in the built-in Windows client template after applications. See [Windows Update](architecture.md#windows-update).
 
 Check:
 - A lab deployment installs four apps:
@@ -251,6 +255,26 @@ Check:
   - a two-app dependency chain
   - one app that detection marks as already installed, which is skipped
 - An app that exits with an unexpected code fails its step.
+- The UEFI VM deploys with the built-in Windows client template through the lab uplink. Its `InstallUpdates` step runs as LocalSystem in session 0, installs updates in one or more passes with reboots between them, and ends when a search finds nothing to install. The step result lists each update with its result code, and the lab records the number of passes. The `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate` key and the update services that WUA lists are the same before and after the step.
+- A step with `source` set to a WSUS URL where nothing listens fails, because its search fails. Afterwards the `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate` key holds the values it held before the step.
+- A `RunCommand` step sets `WUServer` and `AU\UseWUServer` under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`. A later `InstallUpdates` step runs with `source` set to a different WSUS URL. Afterwards both values hold the data that the `RunCommand` step set.
+- Tests with a fake Windows Update Agent cover an update that fails once and then installs, an update that still fails at `max_passes` under each `missing` value, a failed search, a phase past its time limit, and a crash in each phase. The pass count and the saved policy values survive every reboot and crash.
+
+Scope of BitLocker:
+- `EnableBitLocker` and `SuspendBitLocker`: their types in `deployarr-core`, the compiler rule for a `Restart` into WinPE after `EnableBitLocker`, the server's Home rule, and the agent's calls to `Win32_EncryptableVolume` in the full OS. See [BitLocker](architecture.md#bitlocker).
+- Both actions in `crates/deployarr-core/tests/data/windows-11-pro.json`, the sample that uses every action ([#185](https://github.com/Tsukidy/deployarr/issues/185)).
+
+Check of BitLocker:
+- On the UEFI VM, which runs Pro, a sequence with an `EnableBitLocker` step that sets `wait_secs` finishes. The OS volume is then fully encrypted with protection on. Its key protectors are one TPM protector and one numerical password. The run records the volume's conversion status and protection status when the step started, and whether `ProtectKeyWithTPM` succeeded.
+- The lab reads that volume's recovery password on the VM. No agent log, event, server table, or file that deployarr wrote holds it. The deployment shows the numerical password protector's ID.
+- The lab cuts the VM's power during that step's wait. After the restart, the step ends with the same protectors and no second numerical password.
+- With `full_disk` set to `true` and `wait_secs` too short for the encryption, such as 10, the step fails, and its result names the timeout.
+- With the deployarr boot ISO still attached, the run records whether `ProtectKeyWithTPM` returns `0x80310030`. If it does, the step fails, and its result says to remove the boot media.
+- The same sequence runs once with each end state. The `CustomerOobe` run records whether `sysprep /oobe` ran while BitLocker protected the volume.
+- A real PC that runs Pro does the same with its own TPM, and records the same states.
+- The UEFI VM runs the sequence once without its virtual TPM, with the readiness check's `tpm_2_0` check off. The step fails by default. With `tpm_failure` set to `skip`, it ends with a warning, and the volume has no key protector and is not encrypted.
+- On the encrypted UEFI VM, a `SuspendBitLocker` step with `restarts` set to 2 turns protection off. Protection stays off after the next restart and is on again after the second.
+- The server refuses to save a sequence that applies a Home image and holds an enabled `EnableBitLocker` step, and the error names the edition ID. The compiler rejects a `Restart` into WinPE after an `EnableBitLocker` step.
 
 ### M8. Task sequence editor and management UI
 
@@ -268,7 +292,7 @@ Scope:
   - `deployarr.mdt-import`, an importer for MDT task sequences (`ts.xml`) that applies the conversions listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#what-changes-in-deployarr). The owner can move it after the first release. The importer extension point then leaves API level 1.
 
 Check:
-- Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab. It deploys to the UEFI VM, with Microsoft's KMS client setup key for Pro and `online` off.
+- Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab. The lab has no uplink for this check, so the sequence has its `InstallUpdates` step turned off. It deploys to the UEFI VM, with Microsoft's KMS client setup key for Pro and `online` off.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
 - The UEFI VM, which runs Pro, joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
 - The BIOS VM, which runs Home, has no pre-staged record, so lookup reaches its order row by baseboard serial. The row sets a `Domain` profile. The deployment stops before the disk changes, and its error names the edition ID and the profile.
@@ -304,8 +328,7 @@ Check:
 
 None of these are scheduled yet:
 
-- a Windows Update step
-- BitLocker
+- BitLocker protectors that need a PIN or a startup key
 - an auto-logon session for installers that fail as LocalSystem
 - iPXE and wimboot over HTTP for BIOS or Secure Boot off
 - multicast
