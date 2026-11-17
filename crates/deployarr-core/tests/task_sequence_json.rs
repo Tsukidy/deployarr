@@ -1175,10 +1175,6 @@ fn a_bad_update_setting_fails_and_the_error_names_its_field() {
             json!({ "source": { "wsus": "wsus.example.com:8531" } }),
             ".source.wsus",
         ),
-        (
-            json!({ "source": { "wsus": "HTTPS://wsus.example.com:8531" } }),
-            ".source.wsus",
-        ),
         (json!({ "source": { "wsus": "https://" } }), ".source.wsus"),
         (
             json!({ "source": { "wsus": "https://:8531/" } }),
@@ -1192,9 +1188,51 @@ fn a_bad_update_setting_fails_and_the_error_names_its_field() {
             json!({ "source": { "wsus": "https://wsus.example.com:8531\n" } }),
             ".source.wsus",
         ),
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com:notaport" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com:8531:99" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com:65536" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com:+8531" } }),
+            ".source.wsus",
+        ),
+        // An IPv6 address outside brackets.
+        (
+            json!({ "source": { "wsus": "https://fd00::5" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://[fd00::5" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://[]:8531" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://[fd00::5]8531" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://wsus[1].example.com" } }),
+            ".source.wsus",
+        ),
         // A WSUS source without its URL.
         (json!({ "source": "wsus" }), ".source.wsus"),
         (json!({ "source": "microsoft_update" }), ".source"),
+        (json!({ "source": { "microsoft_update": null } }), ".source"),
+        (
+            json!({ "source": { "windows_update": "x" } }),
+            ".source.windows_update",
+        ),
         (json!({ "missing": "retry" }), ".missing"),
         (json!({ "exclude": [{ "kb": 0 }] }), ".exclude[0].kb"),
         (
@@ -1249,24 +1287,49 @@ fn an_unknown_update_setting_fails_and_the_error_names_it() {
 
 #[test]
 fn a_wsus_url_with_user_information_fails_and_the_error_holds_none_of_it() {
-    for url in [
+    let urls = [
         "https://admin:Hunter2@wsus.example.com:8531",
         "http://admin@wsus.example.com",
         "https://admin:Hunter2@wsus.example.com:8531/ClientWebService",
         "https://wsus.example.com\\admin:Hunter2@wsus.example.com",
         "ftp://admin:Hunter2@wsus.example.com",
         "https://admin:Hunter 2@wsus.example.com",
-    ] {
-        let document = install_updates(json!({ "source": { "wsus": url } }));
+        // A `#`, `/`, or `?` in the password ends the authority early, so the
+        // parser reads the rest of the password as the port.
+        "https://admin:p#ss@wsus.example.com:8531",
+        "https://admin:pa/ss@wsus.example.com:8531",
+        "https://admin:p?ss@wsus.example.com",
+    ];
+    let mut cases: Vec<(Value, &str)> = urls
+        .iter()
+        .map(|url| (json!({ "wsus": url }), ".source.wsus"))
+        .collect();
+    // The URL itself written as the source, where `{"wsus": ...}` belongs.
+    cases.extend([
+        (json!("https://admin:Hunter2@wsus.example.com"), ".source"),
+        (
+            json!({ "https://admin:Hunter2@wsus.example.com": null }),
+            ".source",
+        ),
+        (
+            json!({ "windows_update": "https://admin:Hunter2@wsus.example.com" }),
+            ".source.windows_update",
+        ),
+    ]);
 
-        let error = assert_fails_at(&document, &format!("{INSTALL_UPDATES}.source.wsus"));
+    for (source, field) in cases {
+        let document = install_updates(json!({ "source": source }));
+
+        let error = assert_fails_at(&document, &format!("{INSTALL_UPDATES}{field}"));
 
         for text in [error.to_string(), format!("{error:?}")] {
             assert!(
                 !text.contains("admin") && !text.contains("Hunter"),
-                "{url}: {text}"
+                "{source}: {text}"
             );
         }
+    }
+    for url in urls {
         let error = url.parse::<WsusUrl>().expect_err(url);
         for text in [error.to_string(), format!("{error:?}")] {
             assert!(
@@ -1285,11 +1348,40 @@ fn a_wsus_url_is_an_http_or_https_url_that_names_a_host() {
         "https://wsus.example.com",
         "https://10.0.0.5:8531/",
         "https://[fd00::5]:8531",
+        "https://[fd00::5]/",
+        "https://wsus.example.com:65535",
+        // An empty port means the default port.
+        "https://wsus.example.com:/",
         // An `@` after the authority is part of the path, not user information.
         "https://wsus.example.com:8531/updates@site",
     ] {
         let parsed: WsusUrl = url.parse().unwrap_or_else(|error| panic!("{url}: {error}"));
 
         assert_eq!(parsed.as_str(), url);
+    }
+}
+
+#[test]
+fn a_wsus_url_scheme_in_upper_case_is_written_in_lower_case() {
+    for (url, written) in [
+        (
+            "HTTPS://WSUS.example.com:8531/Path",
+            "https://WSUS.example.com:8531/Path",
+        ),
+        ("Http://wsus:8530", "http://wsus:8530"),
+    ] {
+        let document = install_updates(json!({ "source": { "wsus": url } }));
+
+        let sequence = parse(&document).unwrap_or_else(|error| panic!("{url}: {error}"));
+
+        assert_eq!(
+            written_settings(&sequence)["source"],
+            json!({ "wsus": written }),
+            "{url}"
+        );
+        let text = serde_json::to_string(&sequence).expect("a task sequence serializes");
+        assert_eq!(AuthoredSequence::from_json(&text), Ok(sequence), "{url}");
+        let parsed: WsusUrl = url.parse().unwrap_or_else(|error| panic!("{url}: {error}"));
+        assert_eq!(parsed.as_str(), written);
     }
 }

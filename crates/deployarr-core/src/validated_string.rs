@@ -1,7 +1,10 @@
+/// Defines a string type that `$validate` checks. The optional `$canonical`
+/// function takes the checked text and returns its canonical form, which the
+/// type then holds and writes.
 macro_rules! validated_string {
     (
         $(#[$meta:meta])*
-        $name:ident, $error:ty, $validate:path
+        $name:ident, $error:ty, $validate:path $(, $canonical:path)?
     ) => {
         $(#[$meta])*
         #[derive(Debug, Clone, serde::Deserialize)]
@@ -19,6 +22,7 @@ macro_rules! validated_string {
 
             fn try_from(text: alloc::string::String) -> Result<Self, Self::Error> {
                 $validate(&text)?;
+                $(let text = $canonical(text);)?
                 Ok(Self(text))
             }
         }
