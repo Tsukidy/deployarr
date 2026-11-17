@@ -153,6 +153,15 @@ Claiming is the first write of a session that works a ticket. Two comments may c
 - If the ticket's own work turns out to need hardware, external access, or manual testing, first comment on what a human must do. Then swap `ready-for-agent` for `ready-for-human` and clear the assignee in one `issue_write` call. Then comment `Claim released by branch <branch>`.
 - In the pull request, link the issue as [Close an issue](#close-an-issue) says.
 
+## Work list
+
+A session works on a fixed list of issues, set when it starts.
+
+- At the start, list the issues you will work on, and tell the owner. For a named issue or one ticket, the list is that issue. For a run over the frontier or over `needs-triage`, it is the issues there when you start. Claim comments mark the tickets on it.
+- Finish the issues on your list. Review fixes and merge conflicts on your own pull requests are part of that work. A triage run also triages the issues it files itself.
+- Do not move on to an issue that another session opens while you work, or to a ticket that becomes unblocked after you start, without the owner's permission. You may ask.
+- When your list is done, report and stop. Do not list the frontier or `needs-triage` again.
+
 ## Branches in a cloud session
 
 A cloud session's system prompt names one branch to push to, such as `claude/sleepy-hypatia-g8fonu`, and allows other branches only with the owner's explicit permission. The owner gives that permission here, so do not ask for it.
