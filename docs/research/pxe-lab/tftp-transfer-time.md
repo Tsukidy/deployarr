@@ -6,7 +6,7 @@ This page records how long `boot.wim` takes over TFTP for each block and window 
 
 With no `ramdisktftpblocksize` and no `ramdisktftpwindowsize` in the BCD, both boot managers request the font, `boot.sdi`, and `boot.wim` with `blksize=1456` and no `windowsize`. The prototype then sends one block per ACK, a window of 1.
 
-`boot.wim` is 572,691,590 bytes. The network is the lab bridge `br-lab` on the lab host, with an MTU of 1500 and no rate limit. The `uefi` VM has a virtio-net card, and the `bios` VM has QEMU's emulated `e1000`. The server is the PXE prototype in Python. Each time is the prototype's `seconds` for the `boot.wim` transfer, from the request to the last ACK.
+`boot.wim` is 572,691,590 bytes. The network is the lab bridge `br-lab` on the lab host, with an MTU of 1500. It is a software bridge with no physical link and no rate limit, so it has no fixed line rate. The fastest transfer, 121.4 MB/s or about 971 Mbit/s, shows that it carries at least that much. The `uefi` VM has a virtio-net card, and the `bios` VM has QEMU's emulated `e1000`. The server is the PXE prototype in Python. Each time is the prototype's `seconds` for the `boot.wim` transfer, from the request to the last ACK.
 
 | Block size | Window size | `uefi` time | `uefi` MB/s | `bios` time | `bios` MB/s |
 | --- | --- | --- | --- | --- | --- |
@@ -26,7 +26,8 @@ With no `ramdisktftpblocksize` and no `ramdisktftpwindowsize` in the BCD, both b
 MB/s is 10<sup>6</sup> bytes a second, the image size divided by the time.
 
 - Each boot manager requests exactly the block and window size that the BCD sets. The prototype grants each one, because each is within its limits of 32768 and 32.
-- Every transfer completed with no retransmits, and every boot reached WinPE 10.0.26100.9457.
+- Every `boot.wim` transfer completed with no retransmits, and every boot reached WinPE 10.0.26100.9457.
+- At 4096 and 8192 bytes, six `boot.sdi` transfers never completed, because the boot managers do not ACK an empty last block. See [Empty last block](#empty-last-block).
 - On `uefi`, a larger window and a larger block each shorten the transfer. 32768 and 32 take 4.7 seconds, 10.3 times faster than the default's 48.7 seconds.
 - On `bios`, a window above 8 gains nothing at 1456 bytes, and the transfer stays near 40 seconds. A larger block gains more. 32768 and 32 take 13.4 seconds, 6.7 times faster than the default's 89.5 seconds.
 
@@ -34,7 +35,7 @@ MB/s is 10<sup>6</sup> bytes a second, the image size divided by the time.
 
 The prototype logs every RRQ with its options. With the BCD's TFTP elements set, three requests change, on both VMs. The other requests, with their options, match those of the default store in the same series and in #27.
 
-| File | With no TFTP elements | With `blksize` 32768 and `windowsize` 32 in the BCD |
+| File | With no TFTP elements | With `ramdisktftpblocksize` 32768 and `ramdisktftpwindowsize` 32 in the BCD |
 | --- | --- | --- |
 | `\boot\fonts\wgl4_boot.ttf` | `tsize=0,blksize=1456` | `tsize=0,blksize=32768,windowsize=32` |
 | `\boot\boot.sdi` | `tsize=0,blksize=1456` | `tsize=0,blksize=32768,windowsize=32` |
@@ -54,12 +55,12 @@ The prototype logs every RRQ with its options. With the BCD's TFTP elements set,
 | Network | `br-lab` at `10.41.0.1/24`, MTU 1500, started with `tools/lab/network.sh up`. dnsmasq hands out addresses on it, and the prototype answers PXE on ports 67 and 4011. |
 | Chain | `--chain single`. The first ACK names the boot manager and carries option 252. |
 | TFTP root | `~/deployarr-lab/runs/30/tftp-root`. It holds the store variants in `boot/`, and links `boot/boot.sdi`, `boot/fonts`, and `boot/x64` to the same paths in `~/deployarr-lab/tftp/2011`, which [step 6 of the lab guide](../../lab-setup.md#6-get-the-windows-files) builds. |
-| `uefi` VM | `q35` with SMM, OVMF `OVMF_CODE_4M.ms.fd`, a fresh copy of `OVMF_VARS_4M.ms.fd` with Microsoft's 2011 and 2023 keys, TPM 2.0 through swtpm, a virtio-net card with no option ROM, MAC `52:54:00:41:00:11`, 2 vCPUs, 4 GB |
+| `uefi` VM | `q35` with SMM, OVMF `OVMF_CODE_4M.ms.fd` with Secure Boot on (inferred, see [What is inferred](#what-is-inferred)), a fresh copy of `OVMF_VARS_4M.ms.fd` with Microsoft's 2011 and 2023 keys, TPM 2.0 through swtpm, a virtio-net card with no option ROM, MAC `52:54:00:41:00:11`, 2 vCPUs, 4 GB |
 | `bios` VM | `pc` with `smbios-entry-point-type=32`, SeaBIOS, QEMU's `e1000` card with its iPXE ROM, MAC `52:54:00:41:00:21`, 2 vCPUs, 4 GB |
 
 The `uefi` series ran from 19:42:39 to 19:51:39 UTC, and the `bios` series from 19:51:59 to 20:04:59. Each series booted its VM 12 times, once for each row of the result table, in the table's order. Each boot started with the VM's folder deleted, so its disk, firmware variables, and TPM state were new. Each boot used its own prototype process.
 
-The series script wrote the wall clock and `/proc/uptime` at each step. The two clocks never drifted apart by more than 0.81 seconds between steps, so the lab host did not stand still during a transfer.
+The series script wrote the wall clock and `/proc/uptime` at each step. `/proc/uptime` rose at every step, so the lab host did not restart during a series. The journal logs no clock change from 19:40 to 20:21. The wall clock stamps come from `date -u +%3N`, and the lab host's `date` is uutils coreutils 0.10.0, which drops the leading zeros when the milliseconds are below 100. So a few stamps misprint their milliseconds, and the Details table takes the one VM start this affects from `/proc/uptime`.
 
 ### BCD stores
 
@@ -92,7 +93,7 @@ The rows with no BCD element use `uefi.bcd` and `bios.bcd`, copied under other n
 | `libhivex-bin` | 1.3.24-2.1build2 |
 | Python | 3.14.4 |
 
-The firmware files, the boot files, and `boot.wim` are the same as in [#61](https://github.com/Tsukidy/deployarr/issues/61), on the same lab host on the same day. Its pull request, [#170](https://github.com/Tsukidy/deployarr/pull/170), lists their versions and SHA-256. `boot.wim` is index 1 of `sources\boot.wim` in `Windows11_Client_x64_en-us_26300_9457.iso`, Microsoft Windows PE (amd64), build 26100.9457, SHA-256 `c0a18c72a7f84c36120e5681bb325e2c892e919886671e553a6129899a09097a`. `bootmgfw.efi` is 10.0.28000.367 and `bootmgr.exe` is 10.0.26100.9444, both signed through the Microsoft Windows Production PCA 2011.
+The firmware files, the boot files, and `boot.wim` are the same as in [#61](https://github.com/Tsukidy/deployarr/issues/61), on the same lab host on the same day. Its page, [Versions](bootmgr-object-type.md#versions) of the `{bootmgr}` object type page, lists their versions and SHA-256. `boot.wim` is index 1 of `sources\boot.wim` in `Windows11_Client_x64_en-us_26300_9457.iso`, Microsoft Windows PE (amd64), build 26100.9457, SHA-256 `c0a18c72a7f84c36120e5681bb325e2c892e919886671e553a6129899a09097a`. `bootmgfw.efi` is 10.0.28000.367 and `bootmgr.exe` is 10.0.26100.9444, both signed through the Microsoft Windows Production PCA 2011.
 
 ## Details
 
@@ -106,15 +107,36 @@ The firmware files, the boot files, and `boot.wim` are the same as in [#61](http
 | 4096 | 1 | 139,818 | 34.6 s | 40.3 s |
 | 8192 | 1 | 69,909 | 21.7 s | 24.2 s |
 | 16384 | 1 | 34,955 | 17.6 s | 25.2 s |
-| 32768 | 1 | 17,478 | 15.3 s | 20.6 s |
+| 32768 | 1 | 17,478 | 15.3 s | 21.4 s |
 | 8192 | 8 | 69,909 | 15.0 s | 23.2 s |
 | 32768 | 32 | 17,478 | 12.9 s | 21.2 s |
 | 1456, no element, again | 1, no element | 393,333 | 56.9 s | 98.8 s |
 
 - The VM start time is when the series script started `vm.sh`, and the end is the `transfer-finished` line of `boot.wim`.
+- In the `bios` run with 32768 and 1, the wall clock stamp of the VM start reads 20:00:58.896, a misprint of 20:00:58.089. `/proc/uptime` puts that step 1.12 seconds after the prototype start, as in every other run. That cell uses the corrected time.
 - Every run made the same number of RRQs as #27, 32 on `uefi` and 13 on `bios`. The last RRQ, for `\EFI\Microsoft\Boot\Policies\UnlockToken.pol`, came after `boot.wim` in every run.
 - A screenshot 15 seconds after that request shows a WinPE command window in every run.
 - `boot.sdi`, 3,170,304 bytes, took 0.282 seconds on `uefi` and 0.532 seconds on `bios` with no BCD elements, and 0.026 and 0.071 seconds with 32768 and 32.
+
+### Empty last block
+
+`boot.sdi` is 3,170,304 bytes, exactly 774 blocks of 4096 and 387 blocks of 8192. At those sizes the prototype ends the file with an empty DATA block, as RFC 1350 asks. Neither boot manager ACKs that block.
+
+| Run | Retransmits | Seconds | Outcome |
+| --- | --- | --- | --- |
+| `uefi`, 4096 and 1 | 5 | 30.167 | `timeout` |
+| `uefi`, 8192 and 1 | 5 | 29.067 | `stopped` |
+| `uefi`, 8192 and 8 | 5 | 22.449 | `stopped` |
+| `bios`, 4096 and 1 | 5 | 30.221 | `timeout` |
+| `bios`, 8192 and 1 | 5 | 30.134 | `timeout` |
+| `bios`, 8192 and 8 | 6 | 30.117 | `timeout` |
+
+- Each of the six logs `bytes_acked=3170304`, so the boot manager acknowledged every byte. The last ACK in the full captures is for block 774 or 387.
+- The boot manager requests `boot.wim` 0.05 to 0.19 seconds after it requests `boot.sdi`. The prototype resends the empty block every 5 seconds until its retries run out, or until the series stops it first, as in the two `stopped` rows.
+- The boot goes on, and `boot.wim` loads in the meantime. No other file in these runs is an exact number of blocks.
+- The boot managers stop reading once they hold the `tsize` bytes (inferred).
+
+### Default runs
 
 The default runs on this page and on the earlier lab pages give the spread of one setting:
 
@@ -174,7 +196,7 @@ for name, new in {"35000007": blksize, "35000008": windowsize}.items():
 open(dst, "wb").write(data)
 ```
 
-Each series started one capture, then booted the VM once for each store, as [Run an experiment](../../lab-setup.md#run-an-experiment) says. `$LAB` is the checkout of `main` at `d799a1b`, `<vm>` is `uefi` or `bios`, and `<cfg>` names the store, such as `b1456-w4`.
+Each series started one capture, then started a prototype and booted the VM once for each store. [Run an experiment](../../lab-setup.md#run-an-experiment) starts the prototype before the capture. In both orders, the prototype and the capture run before the VM starts. `$LAB` is the checkout of `main` at `d799a1b`, `<vm>` is `uefi` or `bios`, and `<cfg>` names the store, such as `b1456-w4`.
 
 ```bash
 sudo dumpcap -i br-lab -f 'udp and udp[8:2] != 3' -w - > ~/deployarr-lab/captures/tftp-transfer-time-<vm>.pcapng 2> ~/deployarr-lab/captures/tftp-transfer-time-<vm>-dumpcap.log &
@@ -200,9 +222,11 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/tftp-transfer-time-<vm>.
 
 ## What is inferred
 
-- On `bios`, the client side limits the rate of small blocks (inferred). With 1456-byte blocks, the transfer stays between 9,700 and 9,900 blocks a second for windows of 8 to 32. The same prototype sent about 55,500 blocks a second to `uefi` with window 32. The runs do not show whether `bootmgr.exe`, the iPXE ROM's PXE interface, or QEMU's `e1000` sets the limit.
+- On `bios`, the client side limits the rate of small blocks (inferred). With 1456-byte blocks, the transfer runs at 9,728 to 9,942 blocks a second for windows of 8 to 32. The same prototype sent about 55,500 blocks a second to `uefi` with window 32. The runs do not show whether `bootmgr.exe`, the iPXE ROM's PXE interface, or QEMU's `e1000` sets the limit.
 - The boot managers read the TFTP elements from the store they loaded (inferred). The request options change only for the files that come after the store, and only when the store changes.
-- A block larger than 1472 bytes travels as IP fragments on this MTU of 1500 (inferred from the sizes). The capture filter drops fragments, so the captures do not show them.
+- A block larger than 1468 bytes travels as IP fragments on this MTU of 1500 (inferred from the sizes). Each DATA packet adds a 4-byte TFTP header, an 8-byte UDP header, and a 20-byte IPv4 header. The capture filter drops fragments, so the captures do not show them.
+
+- Secure Boot was on in every `uefi` run (inferred). No run here queried it. Each run started from a fresh copy of the same `OVMF_VARS_4M.ms.fd` as #61, whose WinPE reported `UEFISecureBootEnabled` = 1 on the same day with the same `vm.sh`.
 
 ## Not covered
 
@@ -219,3 +243,4 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/tftp-transfer-time-<vm>.
 - On `bios`, a window above 8 gave nothing at 1456 bytes, and block size mattered more than window size. A default that sets both a large block and a window serves both firmware types here.
 - The lab bridge loses no packets. #33 chooses the default values. A setting to lower them would serve networks where large blocks or windows lose packets, which no run here measured.
 - The server must handle requests with and without `windowsize`, and `windowsize=1`, as the prototype does. All three occur.
+- When a file is an exact number of blocks, both boot managers leave the empty last block without an ACK. [TFTP](../../architecture.md#tftp) needs a rule for that case. Without one, the server resends the block for 30 seconds and counts a delivered file as failed.
