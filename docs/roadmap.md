@@ -9,8 +9,9 @@ From milestone 1 on, every check that needs a PC or a VM runs in a lab that `xta
 - The lab host is a Linux machine with KVM. Hyper-V is not a lab host, for two reasons. The [M3 check](#m3-bare-metal-deployment-from-boot-media) needs a BIOS VM that finishes with Windows 11. Microsoft's page [Should I create a generation 1 or 2 virtual machine in Hyper-V?](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/plan/should-i-create-a-generation-1-or-2-virtual-machine-in-hyper-v) shows that a BIOS VM on Hyper-V is a generation 1 VM. The page marks Windows 11 as unsupported on generation 1. The [M6 check](#m6-drivers) needs virtio disk, network, and balloon devices. The page's device table lists no virtio device.
 - UEFI test VMs use QEMU with OVMF firmware that has Secure Boot on and Microsoft's keys enrolled. Legacy BIOS test VMs use SeaBIOS.
 - Every test VM runs with `-cpu host` under KVM, so the guest sees the lab host's processor. A VM started without `-cpu` runs QEMU's default model, `qemu64`, which lacks SSE4.1 and PrefetchW. On QEMU 8.2.2, QMP `query-cpu-model-expansion` reports `sse4.1` and `3dnowprefetch` (PrefetchW) as false for `qemu64`.
+- The lab host's CPU must support SSE4.2 and POPCNT, as well as the six features in the next bullet. The Windows 11 notes on Microsoft's page [Supported Windows guest operating systems for Hyper-V on Windows, Windows Server, and Azure Local](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/supported-windows-guest-operating-systems-for-hyper-v-on-windows) say "Windows 11 requires an increased CPU instruction for installation and boot (POPCNT and SSE4.2)." The [lab check](lab-setup.md#5-check-the-lab) fails when the host's CPU lacks any of these eight features.
 - The lab host's CPU must support PAE, NX, SSE4.1, CMPXCHG16B, LAHF/SAHF, and PrefetchW. Section 3.5 of Microsoft's [Minimum Hardware Requirements for Windows 11](https://download.microsoft.com/download/7/8/8/788bf5ab-0751-4928-a22c-dffdc23c27f2/Minimum%20Hardware%20Requirements%20for%20Windows%2011.pdf) requires them. Section 5 holds virtual machines to the same minimum, so a VM on `qemu64` falls short of it.
-- The VMs sit on an isolated bridge with a plain DHCP server. deployarr provides only PXE.
+- The VMs sit on an isolated bridge with a plain DHCP server. deployarr provides only PXE. The DHCP server does not serve the bridge from deployarr's network stack, because deployarr does not share UDP 67 on an interface that a DHCP server on its host serves ([DHCP](architecture.md#dhcp)). For example, it runs in its own network namespace on the bridge. The one exception is the [M4 check](#m4-pxe) for the setting that skips port 67. The lab's network script does not do this yet, and [#139](https://github.com/Tsukidy/deployarr/issues/139) tracks the change.
 - The OS under test is the multi-edition Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11), with Home and Pro, the editions the owner deploys. Lab VMs install Windows with no product key and stay unactivated. Tests of the `ActivateWindows` step then install Microsoft's KMS client setup key for Pro, which cannot activate without a KMS host (see [Activation](architecture.md#activation)). The real PC from milestone 3 on tests the key from its sticker.
 - virtio disk and network devices test the driver path, because Windows 11 has no inbox drivers for them. They must come from the deployarr driver library and the WinPE driver set.
 - Each UEFI test VM has a virtual TPM 2.0, QEMU's `tpm-crb` device backed by `swtpm` in TPM 2.0 mode. [`tools/lab/vm.sh`](../tools/lab/vm.sh) starts the backend with `swtpm socket --tpm2`. `build_dsdt` in QEMU 8.2.2's [`hw/i386/acpi-build.c`](https://github.com/qemu/qemu/blob/v8.2.2/hw/i386/acpi-build.c#L1794-L1810), lines 1794 to 1810, declares the device with the ACPI hardware ID (`_HID`) `MSFT0101` and no compatible ID (`_CID`). OVMF installs the ACPI tables that QEMU builds, in `InstallAcpiTables` in [`OvmfPkg/AcpiPlatformDxe/AcpiPlatform.c`](https://github.com/tianocore/edk2/blob/edk2-stable202402/OvmfPkg/AcpiPlatformDxe/AcpiPlatform.c#L44-L46) at tag `edk2-stable202402`. The [triage of #72](https://github.com/Tsukidy/deployarr/issues/72#issuecomment-6826925253) read the same IDs from a Linux guest on OVMF. No lab VM therefore shows the agent a TPM that lists `MSFT0101` only as a compatible ID.
@@ -34,7 +35,7 @@ Scope:
 - The add-on shapes in `deployarr-core`, from [Task sequences stay loadable](architecture.md#task-sequences-stay-loadable) and the sections around it:
   - `AddOnId`, `KindId`, and `AddOnRef`, with strict parsers.
   - The generic `TaskSequence<A>`, the authored `Action` with an add-on step and the `ApplyJoinProfile` join slot, and `BuiltinAction` with `ServerCall`, `AddProvisioningPackage`, and step files that hold content only. An add-on step's config is raw JSON text, and every action shape refuses unknown fields.
-  - `deferred`, `substitute`, and `compile` over the lowered type only.
+  - `deferred`, `lower`, and `compile` over the lowered type only.
   - `Resolver::AddOn` in place of the order resolvers, and `JoinProfile::AddOn` in place of the Entra ID and Autopilot profiles.
   - `FormSchema`, `PromptSpec`, and `Catalog`, with a field parser that gives each kind only its own keys.
   - The lifecycle planner `plan(registry, change, facts)`, with its `Change`, `Plan`, and `Refusal` types.
@@ -45,14 +46,14 @@ Check:
 - A test rebuilds the group, condition, and phase structure of MDT's `Client.xml` in the deployarr model and compiles it. This proves the model can express everything MDT's standard sequence uses.
 - Table tests cover the condition rules listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#conditions): integer versus string comparison, `Like` wildcards, `Exists` on an empty value, and missing files and registry values. Each place where deployarr differs from MDT on purpose has its own test.
 - The parser rejects an empty success list and an empty `All` or `Any`.
-- The compiler rejects a `run_in` the action cannot honor, a WinPE `Restart` before the state moves to disk, and a duplicate `NodeId`.
+- The compiler rejects a `run_in` the action cannot honor, a WinPE step with an `InstalledMsi` or `Wmi` condition, a WinPE `Restart` before the state moves to disk, and a duplicate `NodeId`.
 
 Check of the add-on shapes:
 - A task sequence with a step from an add-on that no catalog knows round-trips through JSON byte for byte, and `validate` returns a warning, not an error. The step's config holds keys out of order and the integer `12345678901234567890123`, and both come back unchanged (item 6).
 - A built-in `SetVariable` with an extra field, an add-on step with an extra envelope field, and an unknown action type each fail to parse (item 6).
 - A bad field inside an add-on step's envelope, and one inside a built-in action at the top level of a step, each fail with the field's full path, such as `root.children[0].step.action.add_on.config_version` (item 6).
 - A `trybuild` test shows that a call of `compile` on an authored sequence does not compile.
-- `substitute` rejects a missing expansion, an action outside the six that an add-on may return, a child with another `run_in`, and a nested add-on step. The same input gives the same node IDs.
+- `lower` rejects a missing expansion, an action outside the six that an add-on may return, a child with another `run_in`, and a nested add-on step. The same input gives the same node IDs.
 - An expansion with a `RunCommand` whose step file names a secret fails to parse, because a step file holds content only (item 9).
 - Table tests cover every field kind. Each has a valid value and an invalid value. An unknown key such as `allow_write = true`, a key that belongs to another kind, and an unknown kind each fail the parse (item 10).
 - Table tests cover every refusal of `plan`: an incompatible level, a revoked key, a key outside its scope, a downgrade without confirmation, an uninstall while a sequence uses the add-on, and a second open operation. A waiting operation has three cases of its own. Force for the same package takes it over, `cancel` abandons it, and any other change is refused with the waiting operation named (item 14).
@@ -114,7 +115,8 @@ Check:
 - Each `CustomerOobe` run records the image state that audit mode shows, and whether the System Preparation Tool window was open when the agent ran `sysprep`. It also records whether the customer's OOBE shows the license terms page.
 - No run leaves an answer file in any place that [Answer files](architecture.md#answer-files) lists.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
-- On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. It reports the TPM version that the PC has, and its log names the device ID that matched and whether it is a hardware ID or a compatible ID. If base WinPE lacks the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
+- On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. It reports the TPM version that the PC has. Its log names the device ID that matched, whether it is a hardware ID or a compatible ID, and the device's status and problem code. The device must have started with no problem code. If base WinPE lacks the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
+- Those TPM reads use a boot image built from the ADK's `winpe.wim`, which has no `tbs.dll`. They test the [TPM version](architecture.md#tpm-version) mapping, and whether `tpm.sys` starts in base WinPE.
 - A VM shows a prompt from a `PromptSpec` that the server sends, such as one that a test add-on declares. It accepts typed input and scanner-style input, and it applies the declared pattern.
 
 ### M4. PXE
@@ -126,6 +128,7 @@ Scope:
 
 Check:
 - Both VM types PXE-boot WinPE from deployarr with no key press while a separate DHCP server hands out addresses.
+- Both VM types PXE-boot WinPE from deployarr with the setting that skips port 67, while a DHCP server on deployarr's host serves the bridge and sends option 60 `PXEClient` ([DHCP](architecture.md#dhcp)).
 - A UEFI VM whose deployment succeeded gets no reply and boots from its disk. A BIOS VM whose deployment succeeded gets `abortpxe.com`.
 - A VM with no pre-staged record and no order row PXE-boots WinPE, and its disk is unchanged.
 - A TFTP test suite covers option-less requests, window size clamping, a retransmitted request, an ACK in the middle of a window, and a missing file.
@@ -197,7 +200,7 @@ Order lookup is high priority. M5 starts when M3 and M-A pass, and runs alongsid
 Order lookup is an optional add-on. A server without it still deploys from pre-staged records and the manual list.
 
 Scope:
-- `deployarr:sql` in the add-on host, with `tiberius` for SQL Server and `sqlx` for PostgreSQL, MySQL, and MariaDB. It covers named parameter rewriting, binding, the [write guard](architecture.md#write-guards) of each engine, row and time caps, pools that are rebuilt when a connection changes, and the host's connection test. See [SQL connections](architecture.md#sql-connections).
+- `deployarr:sql` in the add-on host, with `tiberius` for SQL Server and `sqlx` for PostgreSQL, MySQL, and MariaDB. It covers named parameter rewriting, binding, the [write guard](architecture.md#write-guards) of each engine, the `SELECT` check for MySQL and MariaDB `sql_text` values, row and time caps, pools that are rebuilt when a connection changes, and the host's connection test. See [SQL connections](architecture.md#sql-connections).
 - The lookup chain with `Resolver::AddOn`, the skip rules, and the trace:
   1. pre-staged record
   2. the add-on's resolver by baseboard serial
@@ -210,10 +213,11 @@ Scope:
 
 Check:
 - Integration tests pass against SQL Server, PostgreSQL, MySQL, and MariaDB containers in CI. A cloud session cannot run SQL Server, so this check runs in CI or the lab. The SQL Server test uses `Encrypt=true` and a CA given on the connection form.
-- On PostgreSQL, MySQL, and MariaDB, the integration tests check the [write guards](architecture.md#write-guards) with an account that may write. Named queries that run `INSERT`, `TRUNCATE TABLE`, and `DROP TABLE` each fail and leave the data unchanged (item 2). A named query that sets the session to read-write, or one that starts a read-write transaction, does not let the next named query on the same connection write. A named query that holds two statements fails and changes nothing. The known MariaDB gaps are not part of this check. They are a query that starts with `SET STATEMENT` ([#104](https://github.com/Tsukidy/deployarr/issues/104)) and a compound statement ([#118](https://github.com/Tsukidy/deployarr/issues/118)).
+- On PostgreSQL, MySQL, and MariaDB, the integration tests check the [write guards](architecture.md#write-guards) with an account that may write. Named queries that run `INSERT`, `TRUNCATE TABLE`, and `DROP TABLE` each fail and leave the data unchanged (item 2). A named query that sets the session to read-write, or one that starts a read-write transaction, does not let the next named query on the same connection write. A named query that holds two statements fails and changes nothing. These tests send their named queries to the engine guard without the `SELECT` check, so a server that skips the `ROLLBACK` fails them on MariaDB.
 - On SQL Server, `TRUNCATE TABLE orders` and `DROP TABLE orders`, saved as named queries, run with an account that may write. The test records whether the rollback restored the table and its rows. If it did not, the rollback leaves the design, and [Write guards](architecture.md#write-guards) says so (item 2).
 - A parameter that holds `'; DROP TABLE orders; --` is bound and returns no row.
 - The host refuses to save a `sql_text` setting with two statements, or with a parameter that the field does not declare. A guest that names a query path that is not one of its `sql_text` settings gets `no-such-query`.
+- On MySQL and MariaDB, the host refuses to save a `sql_text` setting that fails the `SELECT` check, and names the reason. Tests of the check refuse `SET STATEMENT tx_read_only=0 FOR TRUNCATE TABLE orders`, a `BEGIN NOT ATOMIC` block, and an `IF` block. They refuse each one bare, after a leading comment, and inside an executable comment. They also refuse `#x`, a carriage return, `SELECT 1`, a line feed, and then a `BEGIN NOT ATOMIC` block. They accept `SELECT` and `WITH ... SELECT`.
 - A VM whose baseboard serial is in the test order table deploys the order's OS with no input.
 - A VM with an unknown serial stops at the order number prompt, deploys after the number is typed, and does not touch its disk before that.
 - A VM with only placeholder serials never reaches the add-on's identity resolver.

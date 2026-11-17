@@ -7,6 +7,12 @@ that is not UTF-8, an em or en dash, or a curly quote. It checks the
 repository this script lives in, from any working directory:
 
     python3 tools/check_docs.py
+
+It skips nested checkouts. A folder below the repository root that holds a
+.git file or folder is another checkout, such as an agent worktree under
+.claude/worktrees/, a submodule, or a clone. Git does not track the files in
+it as part of this repository, so the check does not read them. A run from
+inside a worktree checks that worktree's own files.
 """
 import os
 import re
@@ -35,8 +41,16 @@ SKIP_DIRS = {".git", "target", "node_modules"}
 
 
 def markdown_files(root):
+    """Yield the path, relative to root, of each Markdown file in the checkout at root.
+
+    It skips the folders in SKIP_DIRS and every folder below root that holds
+    a .git entry, which marks a nested checkout.
+    """
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in SKIP_DIRS and not os.path.lexists(os.path.join(dirpath, d, ".git"))
+        ]
         for name in filenames:
             if name.endswith(".md"):
                 yield os.path.relpath(os.path.join(dirpath, name), root)

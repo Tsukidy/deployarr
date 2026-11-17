@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Exhaustive check of the claim protocol in docs/agents/issue-tracker.md and
-the hand-off steps under "Take a ticket" in AGENTS.md.
+the hand-off steps under "Take a ticket" on the same page.
 
 The model holds one ticket: an append-only comment log, the assignee flag, the
 state label, whether it carries the `lab` label, whether an open issue blocks
