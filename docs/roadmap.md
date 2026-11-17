@@ -194,7 +194,7 @@ Order lookup is high priority. M5 starts when M3 and M-A pass, and runs alongsid
 Order lookup is an optional add-on. A server without it still deploys from pre-staged records and the manual list.
 
 Scope:
-- `deployarr:sql` in the add-on host, with `tiberius` for SQL Server and `sqlx` for PostgreSQL, MySQL, and MariaDB. It covers named parameter rewriting, binding, the [write guard](architecture.md#write-guards) of each engine, row and time caps, pools that are rebuilt when a connection changes, and the host's connection test. See [SQL connections](architecture.md#sql-connections).
+- `deployarr:sql` in the add-on host, with `tiberius` for SQL Server and `sqlx` for PostgreSQL, MySQL, and MariaDB. It covers named parameter rewriting, binding, the [write guard](architecture.md#write-guards) of each engine, the `SELECT` check for MySQL and MariaDB `sql_text` values, row and time caps, pools that are rebuilt when a connection changes, and the host's connection test. See [SQL connections](architecture.md#sql-connections).
 - The lookup chain with `Resolver::AddOn`, the skip rules, and the trace:
   1. pre-staged record
   2. the add-on's resolver by baseboard serial
@@ -207,10 +207,11 @@ Scope:
 
 Check:
 - Integration tests pass against SQL Server, PostgreSQL, MySQL, and MariaDB containers in CI. A cloud session cannot run SQL Server, so this check runs in CI or the lab. The SQL Server test uses `Encrypt=true` and a CA given on the connection form.
-- On PostgreSQL, MySQL, and MariaDB, the integration tests check the [write guards](architecture.md#write-guards) with an account that may write. Named queries that run `INSERT`, `TRUNCATE TABLE`, and `DROP TABLE` each fail and leave the data unchanged (item 2). A named query that sets the session to read-write, or one that starts a read-write transaction, does not let the next named query on the same connection write. A named query that holds two statements fails and changes nothing. The known MariaDB gaps are not part of this check. They are a query that starts with `SET STATEMENT` ([#104](https://github.com/Tsukidy/deployarr/issues/104)) and a compound statement ([#118](https://github.com/Tsukidy/deployarr/issues/118)).
+- On PostgreSQL, MySQL, and MariaDB, the integration tests check the [write guards](architecture.md#write-guards) with an account that may write. Named queries that run `INSERT`, `TRUNCATE TABLE`, and `DROP TABLE` each fail and leave the data unchanged (item 2). A named query that sets the session to read-write, or one that starts a read-write transaction, does not let the next named query on the same connection write. A named query that holds two statements fails and changes nothing. These tests send their named queries to the engine guard without the `SELECT` check, so a server that skips the `ROLLBACK` fails them on MariaDB.
 - On SQL Server, `TRUNCATE TABLE orders` and `DROP TABLE orders`, saved as named queries, run with an account that may write. The test records whether the rollback restored the table and its rows. If it did not, the rollback leaves the design, and [Write guards](architecture.md#write-guards) says so (item 2).
 - A parameter that holds `'; DROP TABLE orders; --` is bound and returns no row.
 - The host refuses to save a `sql_text` setting with two statements, or with a parameter that the field does not declare. A guest that names a query path that is not one of its `sql_text` settings gets `no-such-query`.
+- On MySQL and MariaDB, the host refuses to save a `sql_text` setting that fails the `SELECT` check, and names the reason. Tests of the check refuse `SET STATEMENT tx_read_only=0 FOR TRUNCATE TABLE orders`, a `BEGIN NOT ATOMIC` block, and an `IF` block. They refuse each one bare, after a leading comment, and inside an executable comment. They also refuse `#x`, a carriage return, `SELECT 1`, a line feed, and then a `BEGIN NOT ATOMIC` block. They accept `SELECT` and `WITH ... SELECT`.
 - A VM whose baseboard serial is in the test order table deploys the order's OS with no input.
 - A VM with an unknown serial stops at the order number prompt, deploys after the number is typed, and does not touch its disk before that.
 - A VM with only placeholder serials never reaches the add-on's identity resolver.
