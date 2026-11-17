@@ -114,7 +114,7 @@ Each line is one event: a UTC time in milliseconds, the event name, then `key=va
 | `transfer-finished` | One line per transfer, with the outcome `complete`, `timeout`, `client-error`, `stopped`, or `error` |
 | `internal-error` | A bug in the prototype. The server keeps running, and the transfer that hit it ends with the outcome `error`. |
 
-The names of the option 250 sub-options in the log are inferred from WDS header names.
+The names of the option 250 sub-options in the log are inferred from WDS header names. Codes 1 to 9 and 11 to 16 have names, from `WdsBp.h`. Any other code shows as `unknown(<code>)`. A `0xFF` byte where a code would start ends the sub-options and shows as `end(255)`. Bytes that hold no sub-option, such as those after `end(255)`, show as `unparsed=`.
 
 The DATA and ACK lines cost time, and they cost the most with a window. These are the medians of 5 runs each for a 64 MiB file, sent over loopback to a Python client with `blksize` 1456, on a cloud VM with 4 CPUs:
 
@@ -132,6 +132,7 @@ The reply layout follows `sccmpxe.exe` from ConfigMgr 2509. The prototype differ
 - It pads every reply to 300 bytes, the BOOTP minimum. `sccmpxe` does not pad, so its OFFER is 280 bytes.
 - It zeros `sname` in every reply and `file` in an OFFER. `sccmpxe` echoes the request's bytes.
 - It answers a second request whose option 250 has no sub-option 1. `sccmpxe` drops that request.
+- It picks the second-stage boot file from option 93, through `_FIRMWARE_BY_ARCH` in `policy.py`. `sccmpxe` picks it from option 250 sub-option 1, as the [ConfigMgr 2509 reference](../../docs/research/configmgr-2509.md#two-stage-boot-chain) says. A BIOS PC sends option 93 = 0 whatever its CPU, so only sub-option 1 tells x64 from x86.
 - On port 67 it does not answer a REQUEST that has no option 250. `sccmpxe` handles a REQUEST the same way on both ports.
 - With `--answer-without-guid` it answers a request that has no option 97. `sccmpxe` drops that request.
 - It never sends option 243, which holds ConfigMgr's variables file and key.
