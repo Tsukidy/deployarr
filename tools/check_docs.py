@@ -50,8 +50,10 @@ SKIP_DIRS = {".git", "target", "node_modules"}
 # The most bytes the always-loaded agent files may total. It was their size
 # after #65, plus the placement rule that #66 adds to AGENTS.md, which came to
 # 13,010 bytes, rounded up to the next 500. For #201 the owner raised it to
-# 13,700, so that the work list rule fits without cutting other text.
-AGENT_FILES_BUDGET = 13700
+# 13,700, so that the work list rule fits without cutting other text. For
+# #203 the owner raised it to 14,000, so that the rules against cutting text
+# and against recording answers the owner did not give fit.
+AGENT_FILES_BUDGET = 14000
 REQUIRED_AGENT_FILES = ("AGENTS.md", "CLAUDE.md")
 IMPORT_HOPS = 4
 # An @path import. A backslash before a space keeps the space in the path.
@@ -317,8 +319,9 @@ def check_agent_files(root):
         lines = [f"always-loaded agent files: {total:,} bytes, over the budget of {AGENT_FILES_BUDGET:,} bytes"]
         lines += [f"  {size:>{width},}  {path}" for path, size in sizes.items()]
         lines.append(
-            "  Move task-specific content to its task's doc, behind a one-line link,"
-            " or ask the owner to raise AGENT_FILES_BUDGET in tools/check_docs.py."
+            "  Do not delete or shorten existing text to fit. Ask the owner whether to move"
+            " named text to its task's doc, behind a one-line link, or to raise"
+            " AGENT_FILES_BUDGET in tools/check_docs.py."
         )
         problems.append("\n".join(lines))
     return total, problems

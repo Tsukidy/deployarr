@@ -6,6 +6,10 @@
 
 <!-- Before and after. A test that failed and now passes, command output, or a screenshot. -->
 
+## Removed text
+
+<!-- Each existing line this change deletes, shortens, or rewrites. For each, say who asked for it, the ticket or the owner, and where its content lives now. Write None when the change only adds. -->
+
 ## Merge danger
 
 **Door:** <!-- one-way or two-way. A two-way door is cheap to roll back. -->

@@ -10,6 +10,7 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 - A subagent returns its open question to the main conversation, which asks it with the tool.
 - Put your recommended option first, marked `(Recommended)`.
 - Record an answer about an issue on it as an `Owner input:` comment before you act.
+- Record only what the owner said. An answer that picks no option, or disputes the question, approves nothing. Answer it and ask again.
 
 ## Environment
 
