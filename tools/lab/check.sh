@@ -79,7 +79,7 @@ echo "Writing the evidence to $out"
 # capture to stdout, and this script opens the file.
 dumpcap -q -i "$BRIDGE" -f 'udp and udp[8:2] != 3' -w - >"$out/capture.pcapng" 2>"$out/dumpcap.log" &
 pids+=($!)
-python3 "$repo/tools/pxe-prototype/pxe_prototype.py" \
+python3 -B "$repo/tools/pxe-prototype/pxe_prototype.py" \
     --server-ip "$SERVER_IP" --interface "$BRIDGE" --root "$root" \
     --chain two-stage --no-block-log --log-file "$out/prototype.log" >"$out/prototype.out" 2>&1 &
 pids+=($!)
