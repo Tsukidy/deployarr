@@ -12,6 +12,7 @@ From milestone 1 on, every check that needs a PC or a VM runs in a lab that `xta
 - The lab host's CPU must support SSE4.2 and POPCNT, as well as the six features in the next bullet. The Windows 11 notes on Microsoft's page [Supported Windows guest operating systems for Hyper-V on Windows, Windows Server, and Azure Local](https://learn.microsoft.com/en-us/windows-server/virtualization/hyper-v/supported-windows-guest-operating-systems-for-hyper-v-on-windows) say "Windows 11 requires an increased CPU instruction for installation and boot (POPCNT and SSE4.2)." The [lab check](lab-setup.md#5-check-the-lab) fails when the host's CPU lacks any of these eight features.
 - The lab host's CPU must support PAE, NX, SSE4.1, CMPXCHG16B, LAHF/SAHF, and PrefetchW. Section 3.5 of Microsoft's [Minimum Hardware Requirements for Windows 11](https://download.microsoft.com/download/7/8/8/788bf5ab-0751-4928-a22c-dffdc23c27f2/Minimum%20Hardware%20Requirements%20for%20Windows%2011.pdf) requires them. Section 5 holds virtual machines to the same minimum, so a VM on `qemu64` falls short of it.
 - The VMs sit on an isolated bridge with a plain DHCP server. deployarr provides only PXE. The DHCP server does not serve the bridge from deployarr's network stack, because deployarr does not share UDP 67 on an interface that a DHCP server on its host serves ([DHCP](architecture.md#dhcp)). For example, it runs in its own network namespace on the bridge. The one exception is the [M4 check](#m4-pxe) for the setting that skips port 67. The lab's network script does not do this yet, and [#139](https://github.com/Tsukidy/deployarr/issues/139) tracks the change.
+- The [M7 check](#m7-applications) of the `InstallUpdates` step needs VMs that reach Windows Update, because a failed search fails the step ([Windows Update](architecture.md#windows-update)). For that check, the lab host gives the bridge an uplink through NAT, so the VMs reach the internet and nothing outside reaches the VMs. Other checks keep the bridge without an uplink. A check without the uplink that deploys with the built-in Windows client template turns the step off in its sequence. The lab's network script has no uplink yet, and [#174](https://github.com/Tsukidy/deployarr/issues/174) tracks the change.
 - The OS under test is the multi-edition Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11), with Home and Pro, the editions the owner deploys. Lab VMs install Windows with no product key and stay unactivated. Tests of the `ActivateWindows` step then install Microsoft's KMS client setup key for Pro, which cannot activate without a KMS host (see [Activation](architecture.md#activation)). The real PC from milestone 3 on tests the key from its sticker.
 - virtio disk and network devices test the driver path, because Windows 11 has no inbox drivers for them. They must come from the deployarr driver library and the WinPE driver set.
 - Each UEFI test VM has a virtual TPM 2.0, QEMU's `tpm-crb` device backed by `swtpm` in TPM 2.0 mode. [`tools/lab/vm.sh`](../tools/lab/vm.sh) starts the backend with `swtpm socket --tpm2`. `build_dsdt` in QEMU 8.2.2's [`hw/i386/acpi-build.c`](https://github.com/qemu/qemu/blob/v8.2.2/hw/i386/acpi-build.c#L1794-L1810), lines 1794 to 1810, declares the device with the ACPI hardware ID (`_HID`) `MSFT0101` and no compatible ID (`_CID`). OVMF installs the ACPI tables that QEMU builds, in `InstallAcpiTables` in [`OvmfPkg/AcpiPlatformDxe/AcpiPlatform.c`](https://github.com/tianocore/edk2/blob/edk2-stable202402/OvmfPkg/AcpiPlatformDxe/AcpiPlatform.c#L44-L46) at tag `edk2-stable202402`. The [triage of #72](https://github.com/Tsukidy/deployarr/issues/72#issuecomment-6826925253) read the same IDs from a Linux guest on OVMF. No lab VM therefore shows the agent a TPM that lists `MSFT0101` only as a compatible ID.
@@ -246,6 +247,7 @@ Check:
 Scope:
 - The application library, including the MSI reader, success codes, reboot behavior, detection rules, and dependencies.
 - App lists that come from a task sequence, a pre-staged record, or an order column.
+- The `InstallUpdates` step for Windows Update and WSUS, with its passes, reboots, and policy restore, enabled in the built-in Windows client template after applications. See [Windows Update](architecture.md#windows-update).
 
 Check:
 - A lab deployment installs four apps:
@@ -253,6 +255,10 @@ Check:
   - a two-app dependency chain
   - one app that detection marks as already installed, which is skipped
 - An app that exits with an unexpected code fails its step.
+- The UEFI VM deploys with the built-in Windows client template through the lab uplink. Its `InstallUpdates` step runs as LocalSystem in session 0, installs updates in one or more passes with reboots between them, and ends when a search finds nothing to install. The step result lists each update with its result code, and the lab records the number of passes. The `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate` key and the update services that WUA lists are the same before and after the step.
+- A step with `source` set to a WSUS URL where nothing listens fails, because its search fails. Afterwards the `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate` key holds the values it held before the step.
+- A `RunCommand` step sets `WUServer` and `AU\UseWUServer` under `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`. A later `InstallUpdates` step runs with `source` set to a different WSUS URL. Afterwards both values hold the data that the `RunCommand` step set.
+- Tests with a fake Windows Update Agent cover an update that fails once and then installs, an update that still fails at `max_passes` under each `missing` value, a failed search, a phase past its time limit, and a crash in each phase. The pass count and the saved policy values survive every reboot and crash.
 
 ### M8. Task sequence editor and management UI
 
@@ -270,7 +276,7 @@ Scope:
   - `deployarr.mdt-import`, an importer for MDT task sequences (`ts.xml`) that applies the conversions listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#what-changes-in-deployarr). The owner can move it after the first release. The importer extension point then leaves API level 1.
 
 Check:
-- Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab. It deploys to the UEFI VM, with Microsoft's KMS client setup key for Pro and `online` off.
+- Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab. The lab has no uplink for this check, so the sequence has its `InstallUpdates` step turned off. It deploys to the UEFI VM, with Microsoft's KMS client setup key for Pro and `online` off.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
 - The UEFI VM, which runs Pro, joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
 - The BIOS VM, which runs Home, has no pre-staged record, so lookup reaches its order row by baseboard serial. The row sets a `Domain` profile. The deployment stops before the disk changes, and its error names the edition ID and the profile.
@@ -306,7 +312,6 @@ Check:
 
 None of these are scheduled yet:
 
-- a Windows Update step
 - BitLocker
 - an auto-logon session for installers that fail as LocalSystem
 - iPXE and wimboot over HTTP for BIOS or Secure Boot off
