@@ -1,8 +1,8 @@
 """Summarize a check.sh run: one PASS or FAIL line per check, then RESULT.
 
 Usage: python3 check_summary.py <evidence folder>
-The folder holds dhcp-fields.tsv, prototype.log, and serial-<vm>.log, which
-check.sh writes. Exits 1 when a check fails.
+The folder holds cpu-flags.txt, dhcp-fields.tsv, prototype.log, and
+serial-<vm>.log, which check.sh writes. Exits 1 when a check fails.
 """
 
 import re
@@ -16,6 +16,43 @@ VMS = {
     "bios": ("52:54:00:41:00:21", "4c414200-0000-4000-8000-000000000021", "0"),
 }
 DISCOVER, ACK = "1", "5"
+
+# The processor features that Windows 11 needs, with their flags in
+# /proc/cpuinfo. The Test lab section of docs/roadmap.md lists the features.
+# Linux names the flags in arch/x86/include/asm/cpufeatures.h.
+CPU_FEATURES = {
+    "PAE": "pae",
+    "NX": "nx",
+    "SSE4.1": "sse4_1",
+    "CMPXCHG16B": "cx16",
+    "LAHF/SAHF": "lahf_lm",
+    "PrefetchW": "3dnowprefetch",
+    "SSE4.2": "sse4_2",
+    "POPCNT": "popcnt",
+}
+
+
+def join(names):
+    """Join names as "a", "a and b", or "a, b, and c"."""
+    if len(names) < 3:
+        return " and ".join(names)
+    return ", ".join(names[:-1]) + ", and " + names[-1]
+
+
+def cpu_result(path):
+    """The result for the host CPU, from the flags lines of /proc/cpuinfo.
+
+    Each logical processor has its own flags line. A feature counts only when
+    every flags line lists it.
+    """
+    text = path.read_text(errors="replace") if path.exists() else ""
+    flag_sets = [set(m.group(1).split()) for m in re.finditer(r"^flags\s*:(.*)$", text, re.MULTILINE)]
+    if not flag_sets:
+        return False, f"host CPU: found no flags line in {path.name}"
+    missing = [f"{name} ({flag})" for name, flag in CPU_FEATURES.items() if not all(flag in flags for flags in flag_sets)]
+    if missing:
+        return False, "host CPU: lacks " + join(missing)
+    return True, "host CPU: has " + join(list(CPU_FEATURES))
 
 
 def dhcp_rows(path):
@@ -48,7 +85,7 @@ def answered_on_4011(log_lines):
 def main(out):
     rows = dhcp_rows(out / "dhcp-fields.tsv")
     answered = answered_on_4011((out / "prototype.log").read_text().splitlines())
-    results = []
+    results = [cpu_result(out / "cpu-flags.txt")]
     for vm, (mac, uuid, arch) in VMS.items():
         mine = [r for r in rows if r[0] == mac]
         results.append((

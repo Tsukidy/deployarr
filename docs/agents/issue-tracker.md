@@ -113,9 +113,7 @@ To claim a ticket:
 
 For an issue that your prompt names, each step that says to pick another ticket means stop and tell the owner instead.
 
-Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone. A session that triages an issue or breaks an epic into tickets does not claim it.
-
-`tools/claim_model.py` checks every interleaving of these steps, the release steps below, and the hand-off steps under Take a ticket in `AGENTS.md`: not planned, waiting on a question, ready-for-human, and the hand-off to the lab. It covers two and three sessions, crashes, an owner who answers questions and frees stale claims, a session named in a prompt that frees a gone branch, and a session on the lab host beside sessions that are not. It finds no state where two sessions hold a ticket, where a session works a ticket it should not, or where a ticket stays held or assigned after every session released it. It assumes the claim comments are never edited or deleted, and it does not cover reopening an issue or a pull request that waits for review. The Tools workflow runs it on every pull request. Change the model in the same pull request as any of these steps.
+`tools/claim_model.py` checks every interleaving of these steps, the release steps below, and the hand-off steps under [Take a ticket](#take-a-ticket): not planned, waiting on a question, ready-for-human, and the hand-off to the lab. It covers two and three sessions, crashes, an owner who answers questions and frees stale claims, a session named in a prompt that frees a gone branch, and a session on the lab host beside sessions that are not. It finds no state where two sessions hold a ticket, where a session works a ticket it should not, or where a ticket stays held or assigned after every session released it. It assumes the claim comments are never edited or deleted, and it does not cover reopening an issue or a pull request that waits for review. The Tools workflow runs it on every pull request. Change the model in the same pull request as any of these steps.
 
 ### Release a claim
 
@@ -137,6 +135,22 @@ The owner frees a stale claim in one of two ways:
 - Name the issue and that branch in a new session's prompt. That session posts the same comment and then claims the ticket as usual.
 
 Do not delete the gone session's claim comment. A deletion can hand the ticket to an earlier session that withdrew.
+
+## Take a ticket
+
+Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone.
+
+- If your prompt names an issue for you to work on, work on that issue, whatever its labels, and keep its state label. A prompt that asks you to triage an issue or break an epic into tickets is not a request to work on it, and you do not claim it.
+- If the prompt gives input, such as a decision or lab results, first post it on the issue as a comment that starts with `Owner input:`, so a later session can find it.
+- Claim a named issue with the steps in [Claim](#claim). If another branch holds it and the prompt names that branch as gone, release that branch's claim as described under [Stale claims](#stale-claims) first.
+- Otherwise, take the first ticket on the [frontier](#frontier). Never take an issue in any other state.
+- Claim it with the steps in [Claim](#claim).
+- Before you start, read each issue in the `## Blocked by` section with its comments. Follow any answer the owner gave there, and read the ticket's comments for `Owner input:` and for partial work that an earlier session pushed.
+- If a blocker was closed as not planned, the ticket should not happen. Comment `Not planned, because #<blocker> was closed as not planned.` Then close the ticket as not planned, swap its state label for `wontfix`, and clear the assignee, all in one `issue_write` call. Then comment `Claim released by branch <branch>`. If a blocker was closed as a duplicate, follow the duplicates to the first issue that was not closed as one, and replace the blocker with it in one body edit. Then check that issue like any other blocker. If it is open, [release your claim](#release-a-claim). If it was closed as not planned, close the ticket as above.
+- If you need an answer from the owner, open a question as described under [Write tickets](agent-brief.md#write-tickets). In one body edit, add it to the ticket's `## Blocked by` section. Comment `Waiting on #<question>. Partial work: branch <branch>, pushed`, or `not pushed`. Then [release your claim](#release-a-claim). The ticket keeps its label and returns to the frontier when the owner closes the question.
+- If the ticket's own work turns out to need the VM lab, and your prompt does not name `lab`, first comment on what the session on the lab host must do. Then add `lab` and clear the assignee in one `issue_write` call. Then comment `Claim released by branch <branch>`.
+- If the ticket's own work turns out to need hardware, external access, or manual testing, first comment on what a human must do. Then swap `ready-for-agent` for `ready-for-human` and clear the assignee in one `issue_write` call. Then comment `Claim released by branch <branch>`.
+- In the pull request, link the issue as [Close an issue](#close-an-issue) says.
 
 ## Pull requests as a triage surface
 
