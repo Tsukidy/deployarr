@@ -252,13 +252,16 @@ Check:
   - one app that detection marks as already installed, which is skipped
 - An app that exits with an unexpected code fails its step.
 
-Scope for BitLocker:
+Scope of BitLocker:
 - `EnableBitLocker` and `SuspendBitLocker`: their types in `deployarr-core`, the compiler rule for a `Restart` into WinPE after `EnableBitLocker`, the server's Home rule, and the agent's calls to `Win32_EncryptableVolume` in the full OS. See [BitLocker](architecture.md#bitlocker).
+- Both actions in `crates/deployarr-core/tests/data/windows-11-pro.json`, the sample that uses every action ([#185](https://github.com/Tsukidy/deployarr/issues/185)).
 
 Check of BitLocker:
 - On the UEFI VM, which runs Pro, a sequence with an `EnableBitLocker` step that sets `wait_secs` finishes. The OS volume is then fully encrypted with protection on. Its key protectors are one TPM protector and one numerical password. The run records the volume's conversion status and protection status when the step started, and whether `ProtectKeyWithTPM` succeeded.
 - The lab reads that volume's recovery password on the VM. No agent log, event, server table, or file that deployarr wrote holds it. The deployment shows the numerical password protector's ID.
 - The lab cuts the VM's power during that step's wait. After the restart, the step ends with the same protectors and no second numerical password.
+- With `full_disk` set to `true` and `wait_secs` too short for the encryption, such as 10, the step fails, and its result names the timeout.
+- With the deployarr boot ISO still attached, the run records whether `ProtectKeyWithTPM` returns `0x80310030`. If it does, the step fails, and its result says to remove the boot media.
 - The same sequence runs once with each end state. The `CustomerOobe` run records whether `sysprep /oobe` ran while BitLocker protected the volume.
 - A real PC that runs Pro does the same with its own TPM, and records the same states.
 - The UEFI VM runs the sequence once without its virtual TPM, with the readiness check's `tpm_2_0` check off. The step fails by default. With `tpm_failure` set to `skip`, it ends with a warning, and the volume has no key protector and is not encrypted.
