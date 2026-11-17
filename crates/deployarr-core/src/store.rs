@@ -79,8 +79,8 @@ pub enum Source {
     /// A lookup chain match: a pre-staged record, or a row that a resolver
     /// returned.
     ///
-    /// The architecture's trace also names the resolver. `Source` cannot yet,
-    /// because the lookup chain's `Resolver` type is not in `deployarr-core`.
+    /// The architecture's trace also names the resolver, a
+    /// [`crate::lookup::Resolver`]. `Source` does not name it yet.
     Lookup,
     /// A technician's answer to a prompt.
     Prompt,
