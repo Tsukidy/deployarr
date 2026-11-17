@@ -13,8 +13,9 @@ import check_docs  # noqa: E402
 from check_docs import AGENT_FILES_BUDGET  # noqa: E402
 
 ADVICE = (
-    "Move task-specific content to its task's doc, behind a one-line link,"
-    " or ask the owner to raise AGENT_FILES_BUDGET in tools/check_docs.py."
+    "Do not delete or shorten existing text to fit. Ask the owner whether to move"
+    " named text to its task's doc, behind a one-line link, or to raise"
+    " AGENT_FILES_BUDGET in tools/check_docs.py."
 )
 
 
