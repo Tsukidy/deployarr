@@ -35,7 +35,7 @@ Scope:
 - The add-on shapes in `deployarr-core`, from [Task sequences stay loadable](architecture.md#task-sequences-stay-loadable) and the sections around it:
   - `AddOnId`, `KindId`, and `AddOnRef`, with strict parsers.
   - The generic `TaskSequence<A>`, the authored `Action` with an add-on step and the `ApplyJoinProfile` join slot, and `BuiltinAction` with `ServerCall`, `AddProvisioningPackage`, and step files that hold content only. An add-on step's config is raw JSON text, and every action shape refuses unknown fields.
-  - `deferred`, `substitute`, and `compile` over the lowered type only.
+  - `deferred`, `lower`, and `compile` over the lowered type only.
   - `Resolver::AddOn` in place of the order resolvers, and `JoinProfile::AddOn` in place of the Entra ID and Autopilot profiles.
   - `FormSchema`, `PromptSpec`, and `Catalog`, with a field parser that gives each kind only its own keys.
   - The lifecycle planner `plan(registry, change, facts)`, with its `Change`, `Plan`, and `Refusal` types.
@@ -53,7 +53,7 @@ Check of the add-on shapes:
 - A built-in `SetVariable` with an extra field, an add-on step with an extra envelope field, and an unknown action type each fail to parse (item 6).
 - A bad field inside an add-on step's envelope, and one inside a built-in action at the top level of a step, each fail with the field's full path, such as `root.children[0].step.action.add_on.config_version` (item 6).
 - A `trybuild` test shows that a call of `compile` on an authored sequence does not compile.
-- `substitute` rejects a missing expansion, an action outside the six that an add-on may return, a child with another `run_in`, and a nested add-on step. The same input gives the same node IDs.
+- `lower` rejects a missing expansion, an action outside the six that an add-on may return, a child with another `run_in`, and a nested add-on step. The same input gives the same node IDs.
 - An expansion with a `RunCommand` whose step file names a secret fails to parse, because a step file holds content only (item 9).
 - Table tests cover every field kind. Each has a valid value and an invalid value. An unknown key such as `allow_write = true`, a key that belongs to another kind, and an unknown kind each fail the parse (item 10).
 - Table tests cover every refusal of `plan`: an incompatible level, a revoked key, a key outside its scope, a downgrade without confirmation, an uninstall while a sequence uses the add-on, and a second open operation. A waiting operation has three cases of its own. Force for the same package takes it over, `cancel` abandons it, and any other change is refused with the waiting operation named (item 14).
