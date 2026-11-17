@@ -102,7 +102,7 @@ Scope:
 - Agent WinPE mode: `wpeinit`, `drvload`, network, the console screen, and fact gathering (SMBIOS, adapters, firmware, Secure Boot, TPM, memory, processor cores, disks, device IDs).
 - The readiness check, with Microsoft's Windows 11 minimums as defaults.
 - Disk layouts for UEFI and BIOS, image download and apply, `bcdboot`, WinRE, and the unattend file.
-- The offline service install, the handoff to the new OS, the finish action for both end states, and cleanup.
+- The offline service install, the handoff to the new OS, the finish action for both end states, turning off the built-in Administrator account, and answer file cleanup.
 - The product key prompt and the `ActivateWindows` step.
 - The agent renders any `PromptSpec` that the server sends. The product key prompt becomes a field on the same screen. See [What runs on the PC](architecture.md#what-runs-on-the-pc).
 
@@ -110,7 +110,10 @@ Check:
 - A UEFI VM with Secure Boot on and a BIOS VM both boot the deployarr ISO. Each finishes with Windows 11 in its configured end state, with no input, using a pre-staged record. The UEFI VM installs Pro, and the BIOS VM installs Home. Neither run types a key, so their sequence has no `ActivateWindows` step.
 - One real PC does the same with the edition its sticker names, and its product key typed at the prompt. `slmgr /dli` on that PC shows the last five characters of that key.
 - On the UEFI VM, a sequence with an `ActivateWindows` step and `online` off takes Microsoft's KMS client setup key for Pro, and `slmgr /dli` shows `T83GX`. The same key with one character changed fails the step, and the deployment shows the error. The lab records the error code.
-- The UEFI VM runs once with each end state. With `ReadyToUse`, it boots to the sign-in screen with no OOBE. With `CustomerOobe`, it shuts down, shows OOBE on its next boot, and has no account that deployarr created. Neither leaves a cached answer file in `%WINDIR%\Panther`.
+- The UEFI VM, which installs Pro, and the BIOS VM, which installs Home, each run once with each end state. With `ReadyToUse`, each boots to the sign-in screen with no OOBE. With `CustomerOobe`, each shuts down, shows OOBE on its next boot, and has no account that deployarr created.
+- On both VMs, the built-in Administrator account is off after each run. For `CustomerOobe`, the lab reads its state before the customer's OOBE and again after it.
+- Each `CustomerOobe` run records the image state that audit mode shows, and whether the System Preparation Tool window was open when the agent ran `sysprep`. It also records whether the customer's OOBE shows the license terms page.
+- No run leaves an answer file in any place that [Answer files](architecture.md#answer-files) lists.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
 - On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. It reports the TPM version that the PC has. Its log names the device ID that matched, whether it is a hardware ID or a compatible ID, and the device's status and problem code. The device must have started with no problem code. If base WinPE lacks the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
 - Those TPM reads use a boot image built from the ADK's `winpe.wim`, which has no `tbs.dll`. They test the [TPM version](architecture.md#tpm-version) mapping, and whether `tpm.sys` starts in base WinPE.

@@ -56,10 +56,10 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 4. The agent gathers facts and sends them to the server. Facts include the SMBIOS data (system, baseboard, and chassis serials, UUID, make, model, and SKU), MAC addresses, firmware type, Secure Boot state, TPM version, memory, processor cores, disks, and the hardware IDs and compatible IDs of every device.
 5. The server runs the lookup chain (see [Order lookup](#order-lookup)). The result is a task sequence and a set of variables, or a prompt for the technician, such as an add-on's order-number prompt or the manual list. If the task sequence activates Windows, the agent then asks for the product key. See [Activation](#activation).
 6. The server pins the task sequence version. It asks each add-on to expand its steps into built-in steps, compiles the result, and sends the compiled program and variables to the agent. See [Task sequences stay loadable](#task-sequences-stay-loadable).
-7. The agent runs the WinPE steps. A typical run checks readiness, partitions the disk, downloads and applies the OS image, injects drivers, writes the unattend file, runs `bcdboot`, and installs itself as a service in the offline image.
+7. The agent runs the WinPE steps. A typical run checks readiness, partitions the disk, downloads and applies the OS image, injects drivers, writes the unattend file to `\Windows\Panther\unattend.xml`, runs `bcdboot`, and installs itself as a service in the offline image.
 8. The PC reboots into Windows Setup. When Setup finishes, or reaches audit mode, the agent service resumes the sequence at the next step.
 9. The agent installs applications, runs scripts, reboots as steps request, and checks that every device has a driver.
-10. The agent uploads its logs, removes itself, and runs the finish action. A PC that is ready to use restarts or shuts down. A PC for the customer runs `sysprep /oobe /shutdown`. See [End state](#end-state).
+10. The agent turns off the built-in Administrator account, deletes every answer file that Windows Setup can find on the PC's disk, and reports success. It then uploads its logs, removes itself, and runs the finish action. A PC that is ready to use restarts or shuts down. A PC for the customer ends any running `sysprep.exe` and runs `sysprep /oobe /shutdown /quiet`. See [End state](#end-state).
 11. The server marks the deployment complete. Later PXE boots of that PC fall through to the local disk.
 
 ## Core data shapes
@@ -342,6 +342,7 @@ The engine is a pure state machine over an `Executor` trait, so it is tested on 
 - Step processes read and set variables through the agent, with the `deployarr-agent var get` and `var set` commands over a local channel that the agent opens for each step. There is no command that clears every variable. MDT scripts change a shared-memory store directly, and its `Clear()` method erases the engine's own state.
 - A variable can be marked secret, and it stays secret when a later write sets it again. Secrets never reach a log line or an event. The CMTrace writer and the event stream both redact them. Redaction masks every stretch of text that any secret value covers, so overlapping secrets leave no fragment. The mask repeats a character that no secret contains, so no secret can show through it. Redaction also masks every value a secret variable held before, because a step can copy a secret into a plain variable before the secret changes. Logs show templates before substitution, as MDT's engine does.
 - Every variable records where its value came from: a gathered fact, a rule, a lookup match, a prompt, a step, a sequence default, or the agent. A lookup match names its resolver, and for an add-on resolver also the add-on. The UI shows this trace for each deployment. MDT writes a similar trace into `ZTIGather.log`.
+- Some variables fill settings in the unattend file, such as the `ReadyToUse` OOBE settings. Where MDT has a variable for one of those settings, deployarr keeps MDT's name. See [Ready-to-use OOBE settings](#ready-to-use-oobe-settings).
 
 ## Order lookup
 
@@ -545,22 +546,103 @@ MDT resumes in the new OS through auto-logon as Administrator with a logon count
 
 This removes the stored Administrator password and the logon count from the deployment. It also makes the PC deploy the same way whether or not anyone is in front of it.
 
-The trade-off is that steps run as LocalSystem in session 0, with no desktop. A few installers fail without a logged-on user. For those, a later milestone adds a per-step option that runs the step in an auto-logon session with a one-time password. The agent removes that password after the step.
+The trade-off is that steps run as LocalSystem in session 0, with no desktop. A few installers fail without a logged-on user. For those, a later milestone adds a per-step option that runs the step in an auto-logon session with a one-time password. The agent removes that password after the step. That option never uses the built-in Administrator account or the unattend file's `AutoLogon` setting. See [Built-in Administrator account](#built-in-administrator-account).
 
 ## End state
 
 The owner ships some PCs ready to use and others ready for the customer, so each deployment picks one of two end states. The `EndState` variable holds the choice. A task sequence sets its default, and an order column or a pre-staged record can override it, because a value that is already set beats a sequence default. The server accepts only `ReadyToUse` and `CustomerOobe`, and it rejects any other value before the disk changes.
 
-- `ReadyToUse`: the unattend file skips OOBE and creates the local admin account with the PC's own password (see [Server](#server)). The finish action restarts the PC or shuts it down.
-- `CustomerOobe`: the unattend file sets `Microsoft-Windows-Deployment | Reseal | Mode` to `Audit` in the oobeSystem pass. Setup then ignores the other oobeSystem settings and starts the auditSystem pass ([Reseal Mode](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-reseal-mode)). The agent service runs the rest of the sequence in audit mode. Its last action is `sysprep /oobe /shutdown`, which Microsoft documents for a PC that goes to a customer ([Boot Windows to audit mode or OOBE](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe)). It does not pass `/generalize`, because the image stays on the PC it was applied to.
+- `ReadyToUse`: the unattend file skips OOBE with the settings in [Ready-to-use OOBE settings](#ready-to-use-oobe-settings). It creates the local admin account with the PC's own password (see [Server](#server)). The finish action restarts the PC or shuts it down.
+- `CustomerOobe`: the unattend file sets `Microsoft-Windows-Deployment | Reseal | Mode` to `Audit` in the oobeSystem pass. Setup then ignores the other oobeSystem settings and starts the auditSystem pass ([Reseal Mode](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-reseal-mode)). The agent service runs the rest of the sequence in audit mode. Its last action is `sysprep /oobe /shutdown /quiet`. Microsoft documents `sysprep /oobe /shutdown` for a PC that goes to a customer ([Boot Windows to audit mode or OOBE](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe)). It does not pass `/generalize`, because the image stays on the PC it was applied to.
+
+In both end states, after the sequence's last reboot, the agent turns off the built-in Administrator account and deletes every answer file that Windows Setup can find on the PC's disk. Both finish before the agent reports success, and both are safe to run again after a crash. See [Built-in Administrator account](#built-in-administrator-account) and [Answer files](#answer-files).
 
 In `CustomerOobe`:
 
-- The agent service must continue in audit mode. `IMAGE_STATE_COMPLETE` means that the specialize and oobeSystem passes are complete ([Windows Setup states](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-states)). A PC in audit mode has not finished OOBE, so the service cannot wait for that value alone (inferred). The M3 lab records the value that audit mode shows.
+- The agent service must continue in audit mode. `IMAGE_STATE_COMPLETE` means that the specialize and oobeSystem passes are complete ([Windows Setup states](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-states)). A PC in audit mode has not finished OOBE, so the service cannot wait for that value alone (inferred). The same table says that an image in `IMAGE_STATE_SPECIALIZE_RESEAL_TO_AUDIT` "has successfully completed the specialize configuration pass and will continue into audit mode when Setup is initiated". Audit mode may show that value (inferred). The M3 lab records the value that audit mode shows.
 - The agent reports success, uploads its logs, and removes its service before it runs `sysprep`, because the shutdown ends its run. The customer's first boot starts no deployarr code.
+- When the PC boots into audit mode, "the System Preparation (Sysprep) Tool appears" ([Boot Windows to audit mode or OOBE](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe)). Before it runs `sysprep`, the agent ends any `sysprep.exe` process that is already running, such as that window. Microsoft's system builder guide closes the window before it runs Sysprep from a command prompt. It says "If Sysprep is open, close it and open an elevated command prompt" ([System builder deployment](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/system-builder-deployment?view=windows-10)). In the guide's [Windows 11 view](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/system-builder-deployment?view=windows-11), an automated process starts in audit mode "and the Sysprep window will be closed". Nobody has tested whether `sysprep` from the service works while the window is open. The M3 lab records whether the window was open when the agent ran `sysprep`.
+- `/quiet` "Runs the Sysprep tool without displaying on-screen confirmation messages. You can use this option if you automate the Sysprep tool" ([Sysprep command-line options](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/sysprep-command-line-options)). The service runs in session 0, where nobody sees such a message (inferred).
 - The PC keeps no account or password that deployarr created. The M3 lab confirms it.
 
-In both states, the agent deletes the cached answer files in `%WINDIR%\Panther` before the finish action. Microsoft says to delete the cached answer file before a PC goes to a customer ([Windows Setup automation overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)), and deployarr's answer file can hold passwords.
+### Ready-to-use OOBE settings
+
+Microsoft's Automate OOBE page says "OOBE screens that aren't configured in Unattend will display when a user goes through OOBE." It lists the settings that automate OOBE, all in the oobeSystem pass ([Automate OOBE](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/automate-oobe)). In that pass, the built-in `ReadyToUse` unattend template sets each of them.
+
+The owner sets up OOBE as each client directs ([#113](https://github.com/Tsukidy/deployarr/issues/113#issuecomment-6855426248)). So each setting except `LocalAccounts` comes from a task sequence variable. A task sequence, a rule, an order column, or a pre-staged record can set the variable, as for any variable (see [Variables](#variables)). The template's value is the default. It applies when nothing sets the variable, and a value set for a client overrides it. The agent reads each variable when it writes the unattend file.
+
+The four locale settings belong to `Microsoft-Windows-International-Core`. `LocalAccounts` belongs to `Microsoft-Windows-Shell-Setup | UserAccounts`, and the other settings belong to `Microsoft-Windows-Shell-Setup | OOBE`.
+
+| Setting | Variable | Default |
+| --- | --- | --- |
+| `InputLocale` | `KeyboardLocale` | `0409:00000409` |
+| `SystemLocale` | `SystemLocale` | The value of `UserLocale` |
+| `UILanguage` | `UILanguage` | `en-US` |
+| `UserLocale` | `UserLocale` | `en-US` |
+| `LocalAccounts` | None | The local admin account, with the PC's own password |
+| `HideEULAPage` | `HideEULAPage` | `true` |
+| `HideLocalAccountScreen` | `HideLocalAccountScreen` | `true` |
+| `HideOEMRegistrationScreen` | `HideOEMRegistrationScreen` | `true` |
+| `HideOnlineAccountScreens` | `HideOnlineAccountScreens` | `true` |
+| `HideWirelessSetupInOOBE` | `HideWirelessSetupInOOBE` | `true` |
+| `ProtectYourPC` | `ProtectYourPC` | `3` |
+
+- MDT maps its `KeyboardLocale`, `UILanguage`, and `UserLocale` variables to the same settings (`scripts/ZTIConfigure.xml:181-194`, and the [MDT 8456 reference](research/mdt-8456.md#unattend)). deployarr keeps those names, so rules written for MDT port over. MDT has no `SystemLocale` variable. Its `UserLocale` mapping sets both `SystemLocale` and `UserLocale` (`scripts/ZTIConfigure.xml:185-190`). deployarr's `SystemLocale` takes the value of `UserLocale` when nothing sets it, so an MDT rule that sets only `UserLocale` still sets both.
+- MDT has no variable for any `OOBE` setting. Its template sets four of the `Hide` settings to `true` and `ProtectYourPC` to `1` (`Templates/Unattend_x64.xml.10.0:149-156`). The names of the `OOBE` variables and of `SystemLocale` are deployarr's choice. Each one is the setting's own name, as MDT's `UILanguage` and `UserLocale` are.
+- The locale defaults are the values in MDT's template (`Templates/Unattend_x64.xml.10.0:162-165`). They match the lab's `en-us` Windows 11 ISO. The MDT paths in this section are relative to `Source/MDT.8456` in the [MDT 8456 sources](research/mdt-8456.md#sources).
+- `LocalAccounts` has no variable. It holds the local admin account with the PC's own password, which the server makes for each PC (see [Server](#server)). The account is never the built-in Administrator account.
+- The server accepts only `true` and `false` for the `Hide` variables, and only `1`, `2`, or `3` for `ProtectYourPC`. It rejects any other value before the disk changes, as it does for `EndState`.
+- `ProtectYourPC` values `1` and `2` turn on Express settings, and `3` turns them off. The setting has "no default value. If a value is not set, the Get going fast page opens during setup" ([ProtectYourPC](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-oobe-protectyourpc)). The template's default, `3`, turns Express settings off.
+- `HideLocalAccountScreen` "applies only to the Windows Server editions" ([HideLocalAccountScreen](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-oobe-hidelocalaccountscreen)). The template sets it anyway, because the Automate OOBE page lists it and MDT's template sets it.
+- Microsoft says "Windows 11 Pro for personal use and Windows 11 Home require internet connectivity and a Microsoft account during initial device setup" ([Windows 11 specifications](https://www.microsoft.com/en-us/windows/windows-11-specifications)). The owner reports that Home and Pro finish setup without internet through audit mode and the unattend file ([#25](https://github.com/Tsukidy/deployarr/issues/25#issuecomment-6837445895)). The M3 check tests both end states on Home, on the lab's isolated network.
+- These variables change only `ReadyToUse`. In `CustomerOobe`, Setup ignores the other oobeSystem settings, and the customer's OOBE runs with no answer file.
+- No unattend file that deployarr writes sets `SkipMachineOOBE` or `SkipUserOOBE`. The Automate OOBE page warns "Don't use the SkipMachineOOBE setting to automate OOBE." The SkipMachineOOBE page says that the setting has been deprecated since Windows 8, and that "you should never ship a computer with the SkipMachineOOBE setting configured to true" ([SkipMachineOOBE](https://learn.microsoft.com/en-us/previous-versions/windows/hardware/previsioning-framework/dn965788%28v=vs.85%29)). The SkipUserOOBE page says "This setting has been deprecated since Windows 7" ([SkipUserOOBE](https://learn.microsoft.com/en-us/previous-versions/windows/hardware/previsioning-framework/dn965789%28v=vs.85%29)).
+- The server rejects an unattend template that sets `AutoLogon`, `SkipMachineOOBE`, or `SkipUserOOBE`.
+
+`HideEULAPage` hides the Microsoft Software License Terms page. Microsoft's page for the setting says "OEMs and System Builders can only use this setting for testing prior to shipment" ([HideEULAPage](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-oobe-hideeulapage)). Each client's settings decide whether a `ReadyToUse` PC hides the page. When they set `HideEULAPage` to `false`, the license terms page shows at the deployment's first boot. The agent service waits until Setup finishes (see [Handoff from WinPE to the new OS](#handoff-from-winpe-to-the-new-os)), so the deployment waits until someone at the PC accepts the terms (inferred). A PC whose end user must accept the license terms uses `CustomerOobe`, where the customer's OOBE runs with no answer file.
+
+### Built-in Administrator account
+
+Microsoft's page for system builders says "Original equipment manufacturers (OEMs) and system builders are required to disable the built-in administrator account before delivering the computers to customers" ([Enable and disable the built-in Administrator account](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/enable-and-disable-the-built-in-administrator-account)). The page names `sysprep /generalize` as one way to turn the account off. `CustomerOobe` does not pass `/generalize`, and `ReadyToUse` runs no `sysprep`.
+
+Microsoft's pages disagree on when audit mode turns the account on and when Windows turns it off by itself:
+
+- The auditSystem page says "When booting into Audit Mode, the built-in Administrator account is automatically enabled, is used to run scripts during auditUser pass by default, and is used to sign in automatically" ([auditSystem](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/auditsystem)).
+- The Audit mode overview says "After you log on to the system, the built-in administrator account is immediately disabled during the auditUser configuration pass. The next time that the computer reboots, the built-in administrator account remains disabled" ([Audit mode overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/audit-mode-overview)).
+- Boot Windows to audit mode or OOBE says "Booting to audit mode starts the computer in the built-in administrator account, which is then automatically removed during the generalize configuration pass" ([Boot Windows to audit mode or OOBE](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/boot-windows-to-audit-mode-or-oobe)). `CustomerOobe` runs no generalize pass.
+- The Enable and disable page says "For new installations, after the end user creates a user account in OOBE, the built-in Administrator account is disabled" (same page as above).
+
+deployarr relies on none of these statements:
+
+- In both end states, the agent turns off the built-in Administrator account after the sequence's last reboot and before it reports success. It waits for the last reboot because, by the auditSystem page, a boot into audit mode turns the account on again (inferred).
+- The agent finds the account by its well-known relative ID, 500, not by its name. The account's SID is `S-1-5-domain-500`, and "it can be renamed" ([Security identifiers](https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/understand-security-identifiers)).
+- The agent then reads the account's state back. If the account is still on, the deployment fails. The Security identifiers page also says that the account "can't be deleted, disabled, or locked out". That conflicts with the Enable and disable page, which Microsoft wrote for system builders. deployarr follows the Enable and disable page, and the read-back catches an account that stays on.
+- An account that is already off is not an error, so the step is safe to run again after a crash.
+- The M3 lab reads the account's state after each run. In `CustomerOobe`, it reads the state again after the customer's OOBE.
+
+The unattend file never involves the account:
+
+- The local admin account that the `ReadyToUse` unattend file creates is a separate account, in `UserAccounts | LocalAccounts`. It is never the built-in Administrator account.
+- No unattend file that deployarr writes sets `AutoLogon` or turns on the built-in Administrator account. The agent runs as a service, so it needs no signed-in user. The auditSystem page says "It is not necessary to explicitly enable the built-in Administrator account or specify an autologon of the account using an answer file in order to run commands in the auditSystem and auditUser passes. Doing so can prevent the image or device from entering the Out-Of-Box Experience (OOBE) successfully." The AutoLogon page says "Make sure AutoLogon is disabled on computers that are delivered to customers" ([AutoLogon](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-autologon)).
+
+### Answer files
+
+The agent writes the unattend file to one place. In WinPE, it writes `\Windows\Panther\unattend.xml` in the applied image. Microsoft's steps for an offline image put the answer file at that path, and "When Windows Setup runs, it finds and uses this answer file" ([Windows Setup automation overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)). MDT copies its unattend file to the same path (`scripts/LTIApply.wsf:1032-1036` in the [MDT 8456 sources](research/mdt-8456.md#sources)). The same Microsoft page says of `%WINDIR%\Panther` "Do not use, modify, or overwrite the answer file in this directory." A freshly applied image has no answer file there yet, so the agent's write replaces none (inferred).
+
+The agent never writes an answer file to `\Windows\Panther\Unattend`. The same page says that an answer file there "will replace the cached answer file at the beginning of each configuration pass". It adds "As a result, the sensitive data for the specialize configuration pass is no longer cleared" and "Unless the cached answer file must be overridden, embed the answer files at a location that has a lower precedence."
+
+Microsoft also says "Before you deliver the computer to a customer, you must delete the cached answer file in the %WINDIR%\panther directory" (same page). deployarr's answer file can hold the local admin password and a domain join password. Windows Setup searches several places for an answer file at the beginning of each configuration pass (same page). Sysprep "processes any settings in the oobeSystem configuration pass in an answer file before OOBE starts" ([Sysprep command-line options](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/sysprep-command-line-options)). So in both end states, before the agent reports success, it deletes each answer file that the implicit search order can find on the PC's disk. It deletes these files even when deployarr did not write them:
+
+- the file that the `HKLM\System\Setup\UnattendFile` value names, when it is on that disk, and the value itself
+- `Unattend.xml` and `Autounattend.xml` in `%WINDIR%\Panther` and in `%WINDIR%\Panther\Unattend`
+- `Unattend.xml` in `%WINDIR%\System32\Sysprep`
+- `Unattend.xml` and `Autounattend.xml` at the root of `%SYSTEMDRIVE%`
+
+Cleanup follows these rules:
+
+- A file that is already gone is not an error, so cleanup is safe to run again after a crash. A file that cannot be deleted fails the deployment.
+- The search order's table says that Setup searches `%WINDIR%\Panther\Unattend` "only on downlevel installations". Boot Windows to audit mode or OOBE still puts an answer file there in an offline image, and Windows then boots into audit mode. So cleanup covers that folder too.
+- Setup also searches the root of removable media for `Autounattend.xml`. The boot media holds no `Unattend.xml` or `Autounattend.xml` at its root.
 
 ## Activation
 
