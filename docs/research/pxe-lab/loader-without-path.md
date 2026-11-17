@@ -151,7 +151,7 @@ The table lists every RRQ in order, from the prototype log. The capture holds th
 | 32 | 11:23:38.717 | `\EFI\Microsoft\Boot\Policies\UnlockToken.pol` | `tsize=0` | ERROR 1 File not found |
 
 - RRQs 1 and 2 come from OVMF, which prints `NBP file downloaded successfully.` in the serial log.
-- RRQs 3 to 31 come from `bootmgfw.efi`, and RRQ 32 from the `winload.efi` that it starts (inferred). The capture and the log record only client ports and times. RRQ 3 follows the end of the `bootmgfw.efi` download, and a program cannot run before it is downloaded. RRQ 32 follows the end of the `boot.wim` download. `strings -el` finds its path in `winload.efi` from this `boot.wim`, and finds only `SecureBootUnlockToken.pol` in `bootmgfw.efi`.
+- RRQs 3 to 31 come from `bootmgfw.efi`, and RRQ 32 from the `winload.efi` that it starts (inferred). Neither the capture nor the log names the program that sent a request. RRQ 3 follows the end of the `bootmgfw.efi` download, and a program cannot run before it is downloaded. RRQ 32 follows the end of the `boot.wim` download. `strings -el` finds its path in `winload.efi` from this `boot.wim`, and finds only `SecureBootUnlockToken.pol` in `bootmgfw.efi`.
 - `bootmgfw.efi` asks for `\boot\x64\BCD` first, then for the option 252 path with a leading `\`.
 - The transfer of `boot.wim` sent 393,333 blocks with window size 1 and no retransmits.
 - No request names `winload.efi`. RRQ 32 is the last TFTP request of the boot.
