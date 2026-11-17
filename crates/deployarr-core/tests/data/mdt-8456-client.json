@@ -1,0 +1,1284 @@
+{
+	"schema_version": 1,
+	"id": "MDT-8456-CLIENT",
+	"version": 1,
+	"name": "Standard Client Task Sequence",
+	"default_vars": [
+		{
+			"name": "PHASE",
+			"value": "PREINSTALL"
+		},
+		{
+			"name": "DeploymentType",
+			"value": "NEWCOMPUTER"
+		}
+	],
+	"root": {
+		"meta": {
+			"id": "00000000-0000-4000-8000-000000000002",
+			"name": "Standard Client Task Sequence",
+			"enabled": true,
+			"continue_on_error": false
+		},
+		"children": [
+			{
+				"group": {
+					"meta": {
+						"id": "00000000-0000-4000-8000-000000000012",
+						"name": "Initialization",
+						"enabled": true,
+						"continue_on_error": false
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000013",
+									"name": "Gather local only",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGather.wsf\""
+									}
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"group": {
+					"meta": {
+						"id": "00000000-0000-4000-8000-000000000021",
+						"name": "Validation",
+						"enabled": true,
+						"continue_on_error": false,
+						"condition": {
+							"any": [
+								{
+									"var": {
+										"name": "PHASE",
+										"test": {
+											"equals": "VALIDATION"
+										}
+									}
+								}
+							]
+						}
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000031",
+									"name": "Validate",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "win_pe",
+								"action": {
+									"check_readiness": {}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000040",
+									"name": "Check BIOS",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBIOSCheck.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000043",
+									"name": "Next Phase",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"set_variable": {
+										"name": "PHASE",
+										"value": "STATECAPTURE"
+									}
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"group": {
+					"meta": {
+						"id": "00000000-0000-4000-8000-000000000047",
+						"name": "State Capture",
+						"enabled": true,
+						"continue_on_error": false,
+						"condition": {
+							"var": {
+								"name": "PHASE",
+								"test": {
+									"equals": "STATECAPTURE"
+								}
+							}
+						}
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000055",
+									"name": "Generate Application Migration File",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIAppXmlGen.wsf\" /capture"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000061",
+									"name": "Capture User State",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "USMTOfflineMigration",
+											"test": {
+												"not_equals": "TRUE"
+											}
+										}
+									}
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIUserState.wsf\" /capture"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000071",
+									"name": "Capture Groups",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGroups.wsf\" /capture"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000074",
+									"name": "Capture Network Settings",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%ScriptRoot%\\ZTINicConfig.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"group": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000077",
+									"name": "Refresh only",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "DeploymentType",
+											"test": {
+												"equals": "REFRESH"
+											}
+										}
+									}
+								},
+								"children": [
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000085",
+												"name": "Disable BDE Protectors",
+												"enabled": true,
+												"continue_on_error": false
+											},
+											"run_in": "either",
+											"action": {
+												"run_command": {
+													"command": "cscript.exe \"%SCRIPTROOT%\\ZTIDisableBDEProtectors.wsf\""
+												}
+											}
+										}
+									},
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000091",
+												"name": "Apply Windows PE",
+												"enabled": true,
+												"continue_on_error": false
+											},
+											"run_in": "either",
+											"action": {
+												"run_command": {
+													"command": "cscript.exe \"%SCRIPTROOT%\\LTIApply.wsf\" /PE"
+												}
+											}
+										}
+									}
+								]
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000095",
+									"name": "Next Phase",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"set_variable": {
+										"name": "PHASE",
+										"value": "PREINSTALL"
+									}
+								}
+							}
+						},
+						{
+							"group": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000098",
+									"name": "Refresh only",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "DeploymentType",
+											"test": {
+												"equals": "REFRESH"
+											}
+										}
+									}
+								},
+								"children": [
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000106",
+												"name": "Restart computer",
+												"enabled": true,
+												"continue_on_error": false
+											},
+											"run_in": "either",
+											"action": {
+												"restart": {
+													"into": "win_pe"
+												}
+											}
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			},
+			{
+				"group": {
+					"meta": {
+						"id": "00000000-0000-4000-8000-000000000116",
+						"name": "Preinstall",
+						"enabled": true,
+						"continue_on_error": false,
+						"condition": {
+							"var": {
+								"name": "PHASE",
+								"test": {
+									"equals": "PREINSTALL"
+								}
+							}
+						}
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000124",
+									"name": "Gather local only",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGather.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"group": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000131",
+									"name": "New Computer only",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "DeploymentType",
+											"test": {
+												"equals": "NEWCOMPUTER"
+											}
+										}
+									}
+								},
+								"children": [
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000139",
+												"name": "Validate",
+												"enabled": true,
+												"continue_on_error": false
+											},
+											"run_in": "win_pe",
+											"action": {
+												"check_readiness": {}
+											}
+										}
+									},
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000148",
+												"name": "Format and Partition Disk (BIOS)",
+												"enabled": true,
+												"continue_on_error": false,
+												"condition": {
+													"var": {
+														"name": "IsUEFI",
+														"test": {
+															"not_equals": "True"
+														}
+													}
+												}
+											},
+											"run_in": "win_pe",
+											"action": {
+												"partition_disk": {
+													"layout": "bios-mbr"
+												}
+											}
+										}
+									},
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000189",
+												"name": "Format and Partition Disk (UEFI)",
+												"enabled": true,
+												"continue_on_error": false,
+												"condition": {
+													"var": {
+														"name": "IsUEFI",
+														"test": {
+															"equals": "True"
+														}
+													}
+												}
+											},
+											"run_in": "win_pe",
+											"action": {
+												"partition_disk": {
+													"layout": "uefi-gpt"
+												}
+											}
+										}
+									},
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000238",
+												"name": "Copy scripts",
+												"enabled": true,
+												"continue_on_error": false
+											},
+											"run_in": "either",
+											"action": {
+												"run_command": {
+													"command": "cscript.exe \"%SCRIPTROOT%\\LTICopyScripts.wsf\""
+												}
+											}
+										}
+									}
+								]
+							}
+						},
+						{
+							"group": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000242",
+									"name": "Offline User State Capture",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "USMTOfflineMigration",
+											"test": {
+												"equals": "TRUE"
+											}
+										}
+									}
+								},
+								"children": [
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000250",
+												"name": "Offline User State Capture",
+												"enabled": true,
+												"continue_on_error": false
+											},
+											"run_in": "either",
+											"action": {
+												"run_command": {
+													"command": "cscript.exe \"%SCRIPTROOT%\\ZTIUserState.wsf\" /capture"
+												}
+											}
+										}
+									},
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000253",
+												"name": "Unload USMT Hive",
+												"enabled": true,
+												"continue_on_error": true
+											},
+											"run_in": "either",
+											"action": {
+												"run_command": {
+													"command": "cmd /c REG UNLOAD HKLM\\$DEST$SOFTWARE"
+												}
+											}
+										}
+									}
+								]
+							}
+						},
+						{
+							"group": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000257",
+									"name": "Refresh only",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "DeploymentType",
+											"test": {
+												"equals": "REFRESH"
+											}
+										}
+									}
+								},
+								"children": [
+									{
+										"step": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000265",
+												"name": "Backup",
+												"enabled": true,
+												"continue_on_error": false
+											},
+											"run_in": "either",
+											"action": {
+												"run_command": {
+													"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBackup.wsf\""
+												}
+											}
+										}
+									}
+								]
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000269",
+									"name": "Configure",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "win_pe",
+								"action": {
+									"apply_unattend": {
+										"template": "standard"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000272",
+									"name": "Enable BitLocker (Offline)",
+									"enabled": true,
+									"continue_on_error": true
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBDE.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000275",
+									"name": "Inject Drivers",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "win_pe",
+								"action": {
+									"apply_drivers": {
+										"selection": "auto"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000282",
+									"name": "Apply Patches",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIPatches.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000288",
+									"name": "Next Phase",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"set_variable": {
+										"name": "PHASE",
+										"value": "INSTALL"
+									}
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"group": {
+					"meta": {
+						"id": "00000000-0000-4000-8000-000000000292",
+						"name": "Install",
+						"enabled": true,
+						"continue_on_error": false,
+						"condition": {
+							"var": {
+								"name": "PHASE",
+								"test": {
+									"equals": "INSTALL"
+								}
+							}
+						}
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000300",
+									"name": "Install Operating System",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "win_pe",
+								"action": {
+									"apply_os_image": {
+										"image": "win11-24h2-pro-x64"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000312",
+									"name": "Next Phase",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"set_variable": {
+										"name": "PHASE",
+										"value": "POSTINSTALL"
+									}
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"group": {
+					"meta": {
+						"id": "00000000-0000-4000-8000-000000000316",
+						"name": "Postinstall",
+						"enabled": true,
+						"continue_on_error": false,
+						"condition": {
+							"var": {
+								"name": "PHASE",
+								"test": {
+									"equals": "POSTINSTALL"
+								}
+							}
+						}
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000324",
+									"name": "Copy Scripts",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\LTICopyScripts.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000327",
+									"name": "Configure",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "win_pe",
+								"action": {
+									"apply_unattend": {
+										"template": "standard"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000330",
+									"name": "Inject Drivers",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIdrivers.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000333",
+									"name": "Apply Patches",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIPatches.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000339",
+									"name": "Add Windows Recovery (WinRE)",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIWinRE.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000342",
+									"name": "Next Phase",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"set_variable": {
+										"name": "PHASE",
+										"value": "STATERESTORE"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000345",
+									"name": "Restart computer",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"restart": {
+										"into": "installed_os"
+									}
+								}
+							}
+						}
+					]
+				}
+			},
+			{
+				"group": {
+					"meta": {
+						"id": "00000000-0000-4000-8000-000000000354",
+						"name": "State Restore",
+						"enabled": true,
+						"continue_on_error": false,
+						"condition": {
+							"var": {
+								"name": "PHASE",
+								"test": {
+									"equals": "STATERESTORE"
+								}
+							}
+						}
+					},
+					"children": [
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000362",
+									"name": "Gather local only",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGather.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000369",
+									"name": "Post-Apply Cleanup",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\LTIApply.wsf\" /post"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000372",
+									"name": "Recover From Domain",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIDomainJoin.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000378",
+									"name": "Tattoo",
+									"enabled": true,
+									"continue_on_error": true
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTITatoo.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000381",
+									"name": "Opt In to CEIP and WER",
+									"enabled": false,
+									"continue_on_error": true
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIOptIn.wsf\" /CEIP:YES /WER:YES"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000384",
+									"name": "Windows Update (Pre-Application Installation)",
+									"enabled": false,
+									"continue_on_error": true
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIWindowsUpdate.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000387",
+									"name": "Install Applications",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "full_os",
+								"action": {
+									"install_applications": {
+										"apps": {
+											"from_list": "Applications"
+										}
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000394",
+									"name": "Windows Update (Post-Application Installation)",
+									"enabled": false,
+									"continue_on_error": true
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIWindowsUpdate.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"group": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000397",
+									"name": "Custom Tasks",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"children": []
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000398",
+									"name": "Enable BitLocker",
+									"enabled": true,
+									"continue_on_error": true,
+									"condition": {
+										"var": {
+											"name": "BdeInstallSuppress",
+											"test": {
+												"not_equals": "YES"
+											}
+										}
+									}
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBde.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000415",
+									"name": "Restore User State",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIUserState.wsf\" /restore"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000418",
+									"name": "Restore Groups",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGroups.wsf\" /restore"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000421",
+									"name": "Apply Local GPO Package",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": {
+										"var": {
+											"name": "ApplyGPOPack",
+											"test": {
+												"not_equals": "NO"
+											}
+										}
+									}
+								},
+								"run_in": "either",
+								"action": {
+									"run_command": {
+										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIApplyGPOPack.wsf\""
+									}
+								}
+							}
+						},
+						{
+							"group": {
+								"meta": {
+									"id": "00000000-0000-4000-8000-000000000431",
+									"name": "Imaging",
+									"enabled": true,
+									"continue_on_error": false
+								},
+								"children": [
+									{
+										"group": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000433",
+												"name": "Prepare Only",
+												"enabled": true,
+												"continue_on_error": false,
+												"condition": {
+													"var": {
+														"name": "DoCapture",
+														"test": {
+															"equals": "PREPARE"
+														}
+													}
+												}
+											},
+											"children": [
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000441",
+															"name": "Copy Sysprep files",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%SCRIPTROOT%\\LTISysprep.wsf\""
+															}
+														}
+													}
+												}
+											]
+										}
+									},
+									{
+										"group": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000445",
+												"name": "Sysprep Only",
+												"enabled": true,
+												"continue_on_error": false,
+												"condition": {
+													"var": {
+														"name": "DoCapture",
+														"test": {
+															"equals": "SYSPREP"
+														}
+													}
+												}
+											},
+											"children": [
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000453",
+															"name": "Add mass storage drivers to sysprep.inf for XP and 2003",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%SCRIPTROOT%\\ZTIDrivers.wsf\""
+															}
+														}
+													}
+												},
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000456",
+															"name": "Execute Sysprep",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%SCRIPTROOT%\\LTISysprep.wsf\""
+															}
+														}
+													}
+												}
+											]
+										}
+									},
+									{
+										"group": {
+											"meta": {
+												"id": "00000000-0000-4000-8000-000000000460",
+												"name": "Capture Image",
+												"enabled": true,
+												"continue_on_error": false,
+												"condition": {
+													"var": {
+														"name": "DoCapture",
+														"test": {
+															"equals": "YES"
+														}
+													}
+												}
+											},
+											"children": [
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000468",
+															"name": "Apply Windows PE",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%SCRIPTROOT%\\LTIApply.wsf\" /PE /STAGE"
+															}
+														}
+													}
+												},
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000471",
+															"name": "Add mass storage drivers to sysprep.inf for XP and 2003",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%SCRIPTROOT%\\ZTIDrivers.wsf\""
+															}
+														}
+													}
+												},
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000474",
+															"name": "Execute Sysprep",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%SCRIPTROOT%\\LTISysprep.wsf\""
+															}
+														}
+													}
+												},
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000477",
+															"name": "Apply Windows PE (BCD)",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%_SMSTSMDataPath%\\Scripts\\LTIApply.wsf\" /PE /BCD"
+															}
+														}
+													}
+												},
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000480",
+															"name": "Restart computer",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"restart": {
+																"into": "win_pe"
+															}
+														}
+													}
+												},
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000488",
+															"name": "Gather local only",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGather.wsf\""
+															}
+														}
+													}
+												},
+												{
+													"step": {
+														"meta": {
+															"id": "00000000-0000-4000-8000-000000000495",
+															"name": "Create WIM",
+															"enabled": true,
+															"continue_on_error": false
+														},
+														"run_in": "either",
+														"action": {
+															"run_command": {
+																"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBackup.wsf\""
+															}
+														}
+													}
+												}
+											]
+										}
+									}
+								]
+							}
+						}
+					]
+				}
+			}
+		]
+	}
+}
