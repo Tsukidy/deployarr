@@ -19,8 +19,8 @@ This page records whether WinPE boots over PXE from a BCD store whose RAM disk l
 | Item | Value |
 | --- | --- |
 | Lab host | Ubuntu 26.04.1 LTS, kernel `7.0.0-43-generic`, AMD Ryzen 7 7700X, KVM |
-| Lab scripts | `tools/lab/` from [#127](https://github.com/Tsukidy/deployarr/pull/127), branch `lab-120-ubuntu-2604` at `786c13b` |
-| PXE prototype | `tools/pxe-prototype/`, the same on that branch as on `main` at `ef0bf5e` |
+| Lab scripts | `tools/lab/` from [#127](https://github.com/Tsukidy/deployarr/pull/127), branch `lab-120-ubuntu-2604` at `786c13b`, before `main` merged it. Its `tools/lab/` is the same as on `main` at `cb91bb8`. |
+| PXE prototype | `tools/pxe-prototype/`, the same on that branch as on `main` at `cb91bb8` |
 | Network | `br-lab` at `10.41.0.1/24`. dnsmasq hands out addresses on it, and the prototype answers PXE on ports 67 and 4011. |
 | Chain | `--chain single`. The first ACK names the boot manager and carries option 252. |
 | TFTP root | `~/deployarr-lab/tftp/2011`, built by `tools/lab/media.sh` as [step 6 of the lab guide](../../lab-setup.md#6-get-the-windows-files) says |
@@ -28,7 +28,7 @@ This page records whether WinPE boots over PXE from a BCD store whose RAM disk l
 | `uefi` VM | `q35` with SMM, OVMF `OVMF_CODE_4M.ms.fd`, a fresh copy of `OVMF_VARS_4M.ms.fd` with Microsoft's 2011 and 2023 keys, TPM 2.0 through swtpm, a virtio-net card with no option ROM, MAC `52:54:00:41:00:11`, 2 vCPUs, 4 GB |
 | `bios` VM | `pc` with `smbios-entry-point-type=32`, SeaBIOS, QEMU's `e1000` card with its iPXE ROM, MAC `52:54:00:41:00:21`, 2 vCPUs, 4 GB |
 
-The single stage boots both VMs in #27 ([#134](https://github.com/Tsukidy/deployarr/pull/134)). The two-stage chain also boots both in [#28](https://github.com/Tsukidy/deployarr/issues/28) ([#137](https://github.com/Tsukidy/deployarr/pull/137)). The runs use the single stage for three reasons:
+The single stage boots both VMs in #27, as [Single-stage boot chain in the PXE lab](single-stage-chain.md) records. The two-stage chain also boots both in [#28](https://github.com/Tsukidy/deployarr/issues/28) ([#137](https://github.com/Tsukidy/deployarr/pull/137)). The runs use the single stage for three reasons:
 
 - It has fewer steps, and the BCD is the only thing under test.
 - The #27 runs used the same chain and root with the default stores, so they serve as the control.
@@ -221,7 +221,7 @@ The screen during RRQ 12 shows `Loading files...` and `IP: 10.41.0.1, File: \boo
 
 ## Control
 
-The control is the pair of #27 runs on the same lab host, about 45 minutes earlier. They used the same chain, root, prototype, lab scripts, and VM settings, with the default stores `boot\uefi.bcd` and `boot\bios.bcd`. Their raw logs are in `~/deployarr-lab/runs/27/` on the lab host, and [#134](https://github.com/Tsukidy/deployarr/pull/134) records them. The boot files, `boot.sdi`, the font, and `boot.wim` have the same SHA-256 on disk now as in #27.
+The control is the pair of #27 runs on the same lab host, about 45 minutes earlier. They used the same chain, root, prototype, lab scripts, and VM settings, with the default stores `boot\uefi.bcd` and `boot\bios.bcd`. Their raw logs are in `~/deployarr-lab/runs/27/` on the lab host, and [Single-stage boot chain in the PXE lab](single-stage-chain.md) records them. The boot files, `boot.sdi`, the font, and `boot.wim` have the same SHA-256 on disk now as in #27.
 
 | Measure | `uefi`, default store | `uefi`, no `path` | `bios`, default store | `bios`, no `path` |
 | --- | --- | --- | --- | --- |
@@ -276,7 +276,7 @@ The raw evidence stays on the lab host in `~/deployarr-lab/runs/29/`: the protot
 
 ## Commands
 
-Each run started the prototype, then the capture, then the VM. That is the order that "Run an experiment" gives in the lab guide of [#127](https://github.com/Tsukidy/deployarr/pull/127). The lab scripts ran from a checkout of that branch, `lab-120-ubuntu-2604`, here `$LAB`. `<vm>` is `uefi` or `bios`. The prototype and `dumpcap` run in the background, and `dumpcap` writes its log, with the dropped-packet count, to a file next to the capture.
+Each run started the prototype, then the capture, then the VM. That is the order that [Run an experiment](../../lab-setup.md#run-an-experiment) gives in the lab guide. The lab scripts ran from a checkout of `lab-120-ubuntu-2604`, the branch of [#127](https://github.com/Tsukidy/deployarr/pull/127), here `$LAB`. `main` at `cb91bb8` has the same `tools/lab/` and `tools/pxe-prototype/`. `<vm>` is `uefi` or `bios`. The prototype and `dumpcap` run in the background, and `dumpcap` writes its log, with the dropped-packet count, to a file next to the capture.
 
 ```bash
 rm -rf ~/deployarr-lab/<vm>
