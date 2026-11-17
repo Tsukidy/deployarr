@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::action::{Action, BuiltinAction};
 use crate::addon::AddOnStep;
-use crate::compile::{action_name, run_in_name};
+use crate::compile::{action_name, run_in_name, win_pe_full_os_condition};
 use crate::join::JoinStage;
 use crate::non_empty::NonEmpty;
 use crate::sequence::{
@@ -170,6 +170,11 @@ impl Lowerer<'_> {
 
     fn step(&mut self, step: &Step<Action>, kept: bool) -> Node<BuiltinAction> {
         let Action::Builtin(action) = &step.action else {
+            // The compiler checks this rule on steps, and this step becomes a
+            // group. Disabled steps count, as they do in the compiler.
+            if let Some(condition) = win_pe_full_os_condition(step.run_in, &step.meta) {
+                self.fail(step.meta.id, LowerRule::FullOsCondition { condition });
+            }
             let children = if kept && step.meta.enabled {
                 self.expansion(step)
             } else {
@@ -274,6 +279,12 @@ pub enum LowerRule {
     },
     /// The child is an add-on step or a join slot.
     Nested { child: usize },
+    /// The step has `run_in` `WinPe`, and its condition holds an
+    /// `installed_msi` or `wmi` condition, which only the full OS can answer.
+    /// `condition` names the first one. The compiler checks this rule on
+    /// steps, and the group that replaces this step keeps its condition.
+    /// Disabled steps count.
+    FullOsCondition { condition: &'static str },
 }
 
 impl fmt::Display for LowerRule {
@@ -302,6 +313,10 @@ impl fmt::Display for LowerRule {
             Self::Nested { child } => write!(
                 f,
                 "child {child} is an add-on step or a join slot, and an expansion holds only built-in actions"
+            ),
+            Self::FullOsCondition { condition } => write!(
+                f,
+                "a `{condition}` condition works only in the full OS, so a step with `run_in` `win_pe` cannot have one"
             ),
         }
     }

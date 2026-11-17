@@ -8,8 +8,8 @@ use core::fmt;
 
 use crate::action::Action;
 use crate::addon::AddOnRef;
-use crate::compile::NodePath;
-use crate::sequence::{AuthoredSequence, Group, Node, NodeId};
+use crate::compile::{NodePath, win_pe_full_os_condition};
+use crate::sequence::{AuthoredSequence, Group, Node, NodeId, Step};
 
 /// The step kinds that add-ons declare, as [`validate`] needs them.
 pub trait StepKinds {
@@ -24,8 +24,8 @@ impl StepKinds for BTreeSet<AddOnRef> {
     }
 }
 
-/// Checks a sequence's add-on steps against the step kinds that `kinds`
-/// knows, and returns what it finds in document order. Pure.
+/// Checks a sequence's add-on steps and join slots, and returns what it finds
+/// in document order. Pure. [`Issue`] lists the checks.
 ///
 /// A step kind that no add-on declares is a warning, not an error, so the
 /// sequence still saves. Disabled nodes count, because they are still part
@@ -53,21 +53,33 @@ impl<K: StepKinds + ?Sized> Validator<'_, K> {
             self.path.push(index);
             match child {
                 Node::Group(group) => self.group(group),
-                Node::Step(step) => {
-                    if let Action::AddOn(add_on) = &step.action {
-                        let kind = add_on.step_kind();
-                        if !self.kinds.declares(&kind) {
-                            self.findings.push(Finding {
-                                node: step.meta.id,
-                                path: NodePath::from(self.path.clone()),
-                                issue: Issue::UnknownStepKind { kind },
-                            });
-                        }
-                    }
-                }
+                Node::Step(step) => self.step(step),
             }
             self.path.pop();
         }
+    }
+
+    fn step(&mut self, step: &Step<Action>) {
+        if let Action::Builtin(_) = step.action {
+            return;
+        }
+        if let Some(condition) = win_pe_full_os_condition(step.run_in, &step.meta) {
+            self.find(step, Issue::FullOsCondition { condition });
+        }
+        if let Action::AddOn(add_on) = &step.action {
+            let kind = add_on.step_kind();
+            if !self.kinds.declares(&kind) {
+                self.find(step, Issue::UnknownStepKind { kind });
+            }
+        }
+    }
+
+    fn find(&mut self, step: &Step<Action>, issue: Issue) {
+        self.findings.push(Finding {
+            node: step.meta.id,
+            path: NodePath::from(self.path.clone()),
+            issue,
+        });
     }
 }
 
@@ -112,12 +124,18 @@ pub enum Issue {
     /// removed one, declares the step's kind. The step loads, saves, and
     /// exports. Planning a deployment that runs it fails.
     UnknownStepKind { kind: AddOnRef },
+    /// An add-on step or a join slot has `run_in` `WinPe`, and its condition
+    /// holds an `installed_msi` or `wmi` condition, which only the full OS can
+    /// answer. `condition` names the first one. The compiler rejects a
+    /// built-in step like it.
+    FullOsCondition { condition: &'static str },
 }
 
 impl Issue {
     pub fn severity(&self) -> Severity {
         match self {
             Self::UnknownStepKind { .. } => Severity::Warning,
+            Self::FullOsCondition { .. } => Severity::Error,
         }
     }
 }
@@ -129,6 +147,10 @@ impl fmt::Display for Issue {
                 f,
                 "no add-on that this server knows declares the step kind `{}` of `{}`",
                 kind.kind, kind.addon
+            ),
+            Self::FullOsCondition { condition } => write!(
+                f,
+                "a `{condition}` condition works only in the full OS, so a step with `run_in` `win_pe` cannot have one"
             ),
         }
     }

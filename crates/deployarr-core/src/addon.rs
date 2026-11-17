@@ -13,10 +13,12 @@ use serde_json::value::RawValue;
 
 use crate::validated_string::validated_string;
 
-/// The longest publisher or name part of an [`AddOnId`].
+/// The longest publisher or name part of an [`AddOnId`]. It is a default
+/// until the owner decides the ID grammar, one of the add-on one-way doors.
 pub const ADD_ON_ID_PART_MAX_LEN: usize = 32;
 
-/// The longest [`KindId`].
+/// The longest [`KindId`]. It is a default until the owner decides the ID
+/// grammar.
 pub const KIND_ID_MAX_LEN: usize = 63;
 
 validated_string! {
@@ -177,6 +179,10 @@ pub struct AddOnStep {
     /// The version of the config's shape when the step was saved. A saved
     /// version never changes it.
     pub config_version: u32,
+    /// The config's JSON text. It keeps its bytes only when the step is
+    /// parsed from JSON text, as `TaskSequence::from_json` does. Parsed from
+    /// a `serde_json::Value`, it is that value's text, whose keys are sorted
+    /// and whose long numbers were already lost when the `Value` was made.
     pub config: Box<RawValue>,
 }
 

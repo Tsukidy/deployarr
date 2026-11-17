@@ -394,3 +394,90 @@ fn the_steps_that_lower_expands_are_the_ones_deferred_lists() {
     );
     lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
 }
+
+fn when(mut node: Value, condition: Value) -> Value {
+    node["step"]["meta"]["condition"] = condition;
+    node
+}
+
+fn wmi() -> Value {
+    json!({
+        "wmi": {
+            "namespace": "root\\cimv2",
+            "query": "SELECT * FROM Win32_Battery",
+            "ignore_failure": true,
+        },
+    })
+}
+
+fn nested_installed_msi() -> Value {
+    json!({
+        "any": [
+            { "var": { "name": "AssetTag", "test": "exists" } },
+            { "not": { "installed_msi": { "product_code": "23170f69-40c1-2702-2408-000001000000" } } },
+        ],
+    })
+}
+
+#[test]
+fn the_compiler_rejects_a_win_pe_command_with_a_full_os_condition() {
+    // The rule that the next tests extend to add-on steps and join slots.
+    let sequence = sequence(vec![when(step(2, "win_pe", command()), wmi())]);
+
+    let lowered = lower(&sequence, &Expansions::new()).unwrap_or_else(|errors| panic!("{errors}"));
+
+    assert!(compile(&lowered).is_err());
+}
+
+#[test]
+fn lower_rejects_a_win_pe_add_on_step_with_a_full_os_condition() {
+    let sequence = sequence(vec![when(step(2, "win_pe", add_on()), wmi())]);
+    let expansions = Expansions::from([(id(2), vec![child(0x100, "win_pe", collect_hash())])]);
+
+    assert_rejects(
+        &sequence,
+        &expansions,
+        &[error(2, LowerRule::FullOsCondition { condition: "wmi" })],
+    );
+}
+
+#[test]
+fn lower_rejects_a_win_pe_join_slot_with_a_full_os_condition_and_an_empty_expansion() {
+    let sequence = sequence(vec![when(
+        step(3, "win_pe", join_slot("offline_image")),
+        nested_installed_msi(),
+    )]);
+    let expansions = Expansions::from([(id(3), Vec::new())]);
+
+    assert_rejects(
+        &sequence,
+        &expansions,
+        &[error(
+            3,
+            LowerRule::FullOsCondition {
+                condition: "installed_msi",
+            },
+        )],
+    );
+}
+
+#[test]
+fn lower_checks_the_full_os_condition_rule_on_a_disabled_add_on_step() {
+    let sequence = sequence(vec![disabled(when(step(2, "win_pe", add_on()), wmi()))]);
+
+    assert_rejects(
+        &sequence,
+        &Expansions::new(),
+        &[error(2, LowerRule::FullOsCondition { condition: "wmi" })],
+    );
+}
+
+#[test]
+fn a_full_os_condition_on_a_full_os_add_on_step_is_fine() {
+    let sequence = sequence(vec![when(step(2, "full_os", add_on()), wmi())]);
+    let expansions = Expansions::from([(id(2), vec![child(0x100, "full_os", collect_hash())])]);
+
+    let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
+
+    compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+}

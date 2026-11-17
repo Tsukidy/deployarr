@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use deployarr_core::action::{Action, BuiltinAction, FileName, StepLimits};
+use deployarr_core::action::{Action, BuiltinAction, FileName, StepFile, StepFiles, StepLimits};
 use deployarr_core::addon::{AddOnId, AddOnRef, KindId};
 use deployarr_core::join::{JoinProfile, JoinStage};
 use deployarr_core::sequence::{AuthoredSequence, LoweredSequence, Node, ParseError, Step};
@@ -85,6 +85,24 @@ fn an_add_on_steps_config_keeps_its_spaces() {
 }
 
 #[test]
+fn a_config_parsed_from_a_value_loses_its_key_order() {
+    let action: Action = serde_json::from_value(json!({
+        "add_on": {
+            "addon": "acme.join",
+            "kind": "join",
+            "config_version": 1,
+            "config": { "zeta": 1, "alpha": 2 },
+        },
+    }))
+    .expect("the action parses");
+
+    let Action::AddOn(step) = action else {
+        panic!("expected an add-on step, found {action:?}");
+    };
+    assert_eq!(step.config.get(), r#"{"alpha":2,"zeta":1}"#);
+}
+
+#[test]
 fn validate_warns_about_a_step_kind_that_no_catalog_knows() {
     let sequence =
         AuthoredSequence::from_json(&document_with_unknown_add_on()).expect("the document parses");
@@ -116,6 +134,62 @@ fn validate_finds_nothing_when_the_catalog_knows_the_step_kind() {
     }]);
 
     assert_eq!(validate(&sequence, &known), []);
+}
+
+#[test]
+fn validate_rejects_a_win_pe_add_on_step_or_join_slot_with_a_full_os_condition() {
+    let wmi = json!({
+        "wmi": { "namespace": "root\\cimv2", "query": "SELECT * FROM Win32_Battery", "ignore_failure": true },
+    });
+    let installed_msi = json!({
+        "not": { "installed_msi": { "product_code": "23170f69-40c1-2702-2408-000001000000" } },
+    });
+    let mut document = document();
+    let register = &mut document["root"]["children"][0]["step"];
+    register["run_in"] = json!("win_pe");
+    register["meta"]["condition"] = wmi;
+    let join = &mut document["root"]["children"][2]["step"];
+    join["run_in"] = json!("win_pe");
+    join["action"]["apply_join_profile"]["stage"] = json!("offline_image");
+    join["meta"]["condition"] = installed_msi;
+    let sequence = parse(&document).expect("the document parses");
+
+    let findings = validate(&sequence, &BTreeSet::new());
+
+    let found: Vec<(String, Severity, Issue)> = findings
+        .iter()
+        .map(|finding| {
+            (
+                finding.path.to_string(),
+                finding.severity(),
+                finding.issue.clone(),
+            )
+        })
+        .collect();
+    let unknown = Issue::UnknownStepKind {
+        kind: AddOnRef {
+            addon: "acme.autopilot".parse().expect("a valid add-on ID"),
+            kind: "register".parse().expect("a valid kind ID"),
+        },
+    };
+    assert_eq!(
+        found,
+        [
+            (
+                "root.children[0]".to_owned(),
+                Severity::Error,
+                Issue::FullOsCondition { condition: "wmi" },
+            ),
+            ("root.children[0]".to_owned(), Severity::Warning, unknown),
+            (
+                "root.children[2]".to_owned(),
+                Severity::Error,
+                Issue::FullOsCondition {
+                    condition: "installed_msi",
+                },
+            ),
+        ]
+    );
 }
 
 fn document() -> Value {
@@ -338,9 +412,49 @@ fn a_step_file_holds_a_name_and_content() {
     let Action::Builtin(BuiltinAction::RunCommand { files, .. }) = &steps[0].action else {
         panic!("expected a RunCommand, found {:?}", steps[0].action);
     };
-    assert_eq!(files.len(), 1);
-    assert_eq!(files[0].name.as_str(), "collect-hash.ps1");
-    assert_eq!(files[0].content.as_str(), "assets/collect-hash.ps1");
+    assert_eq!(files.as_slice().len(), 1);
+    assert_eq!(files.as_slice()[0].name.as_str(), "collect-hash.ps1");
+    assert_eq!(
+        files.as_slice()[0].content.as_str(),
+        "assets/collect-hash.ps1"
+    );
+}
+
+#[test]
+fn two_step_files_with_one_name_in_any_case_fail_at_the_second() {
+    let mut document = document();
+    *document.pointer_mut(SET).expect("the step") = json!({
+        "run_command": {
+            "command": "powershell -File %_StepDir%\\a.ps1",
+            "working_dir": null,
+            "files": [
+                { "name": "a.ps1", "content": "assets/a.ps1" },
+                { "name": "b.ps1", "content": "assets/b.ps1" },
+                { "name": "A.PS1", "content": "assets/other.ps1" },
+            ],
+        },
+    });
+
+    assert_fails(
+        &document,
+        "root.children[1].step.action.run_command.files[2].name",
+        "files[0] already has this name, as `a.ps1`",
+    );
+}
+
+#[test]
+fn step_files_built_in_code_cannot_share_a_name() {
+    let file = |name: &str| StepFile {
+        name: name.parse().expect("a valid file name"),
+        content: "assets/a.ps1".parse().expect("a valid content reference"),
+    };
+
+    let error = StepFiles::new(vec![file("a.ps1"), file("A.ps1")])
+        .expect_err("two files with one name must fail");
+
+    assert_eq!((error.first, error.second), (0, 1));
+    assert_eq!(error.name.as_str(), "a.ps1");
+    StepFiles::new(vec![file("a.ps1"), file("b.ps1")]).expect("two names are fine");
 }
 
 #[test]
@@ -353,7 +467,7 @@ fn omitted_files_are_empty() {
     let BuiltinAction::RunPowerShell { files, .. } = action else {
         panic!("expected RunPowerShell, found {action:?}");
     };
-    assert_eq!(files, []);
+    assert_eq!(files.as_slice(), []);
 }
 
 #[test]

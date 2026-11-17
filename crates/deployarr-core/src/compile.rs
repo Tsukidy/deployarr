@@ -1,6 +1,7 @@
 //! Compiles a lowered task sequence into the flat program that the agent
 //! runs. The server also compiles a sequence when it is saved, to reject one
-//! that cannot run.
+//! that cannot run. A sequence with add-on steps or join slots must be
+//! lowered first. Issue #188 tracks the save-time checks for such a sequence.
 //!
 //! [`compile`] takes a [`LoweredSequence`], whose steps hold only built-in
 //! actions, so a program that names an add-on does not type-check.
@@ -227,9 +228,7 @@ impl Compiler {
                 },
             );
         }
-        if step.run_in == RunIn::WinPe
-            && let Some(condition) = step.meta.condition.as_ref().and_then(full_os_only)
-        {
+        if let Some(condition) = win_pe_full_os_condition(step.run_in, &step.meta) {
             self.fail(step.meta.id, Rule::FullOsCondition { condition });
         }
     }
@@ -268,6 +267,20 @@ fn kept_len(group: &Group<BuiltinAction>) -> usize {
         })
         .sum();
     1 + children
+}
+
+/// For a step with `run_in` `WinPe`, the JSON name of the first condition in
+/// its condition, in document order, that only the full OS can answer.
+///
+/// The compiler rejects a built-in step that has one. [`crate::lower::lower`]
+/// and [`crate::validate::validate`] reject an add-on step or a join slot that
+/// has one, because the group that replaces such a step is not checked.
+pub(crate) fn win_pe_full_os_condition(run_in: RunIn, meta: &NodeMeta) -> Option<&'static str> {
+    if run_in == RunIn::WinPe {
+        meta.condition.as_ref().and_then(full_os_only)
+    } else {
+        None
+    }
 }
 
 /// The JSON name of the first condition in `condition`, in document order,

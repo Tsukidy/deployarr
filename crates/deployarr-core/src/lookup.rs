@@ -118,19 +118,23 @@ impl IdentityFact {
 
 /// The identity facts that the server may send to an identity resolver.
 ///
-/// Its only constructor drops blank values and known placeholders, so no fact
-/// in it is one, and it holds at least one fact.
+/// Its only constructor trims each value and drops blank values and known
+/// placeholders, so no fact in it is one, and it holds at least one fact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsableIdentity(NonEmpty<IdentityFact>);
 
 impl UsableIdentity {
-    /// The facts that are not placeholders, or `None` when none are left.
-    /// See [`IdentityFact::is_placeholder`].
+    /// The facts that are not placeholders, each with the spaces at both ends
+    /// of its value trimmed, or `None` when none are left. A resolver then
+    /// sees the same value that [`IdentityFact::is_placeholder`] checked.
     pub fn from_gathered(facts: &[IdentityFact]) -> Option<Self> {
         let usable: Vec<IdentityFact> = facts
             .iter()
             .filter(|fact| !fact.is_placeholder())
-            .cloned()
+            .map(|fact| IdentityFact {
+                kind: fact.kind,
+                value: fact.value.trim().into(),
+            })
             .collect();
         NonEmpty::try_from(usable).ok().map(Self)
     }
@@ -144,21 +148,24 @@ impl UsableIdentity {
     }
 }
 
-/// What a technician typed at an add-on resolver's prompt, by the prompt's
-/// field keys.
+/// What a technician typed at an add-on's prompt, by the prompt's field keys.
 ///
-/// Its only constructor requires an answer that is not blank, so it always
-/// holds a typed answer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// It names the prompt with its add-on, because a prompt ID is unique only
+/// within one add-on. Its only constructor requires an answer that is not
+/// blank, so it always holds a typed answer.
+///
+/// `Debug` prints the field keys and never the answers, because a prompt
+/// field can be secret.
+#[derive(Clone, PartialEq, Eq)]
 pub struct PromptAnswers {
-    prompt: KindId,
+    prompt: AddOnRef,
     answers: BTreeMap<String, String>,
 }
 
 impl PromptAnswers {
     /// `None` when every answer is blank, because the technician then typed
     /// nothing.
-    pub fn new(prompt: KindId, answers: BTreeMap<String, String>) -> Option<Self> {
+    pub fn new(prompt: AddOnRef, answers: BTreeMap<String, String>) -> Option<Self> {
         if answers.values().all(|answer| answer.trim().is_empty()) {
             None
         } else {
@@ -166,8 +173,9 @@ impl PromptAnswers {
         }
     }
 
-    /// The prompt's ID, which its add-on declares.
-    pub fn prompt(&self) -> &KindId {
+    /// The prompt that the technician answered: the add-on that declares it,
+    /// and its ID within that add-on.
+    pub fn prompt(&self) -> &AddOnRef {
         &self.prompt
     }
 
@@ -176,24 +184,42 @@ impl PromptAnswers {
     }
 }
 
+impl fmt::Debug for PromptAnswers {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { prompt, answers } = self;
+        f.debug_struct("PromptAnswers")
+            .field("prompt", prompt)
+            .field("keys", &answers.keys().collect::<Vec<_>>())
+            .finish_non_exhaustive()
+    }
+}
+
 /// What an add-on resolver declares that it reads.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ResolverInput {
     /// The PC's usable identity facts.
     Identity,
-    /// A technician's answers to the add-on's prompt with this ID.
+    /// A technician's answers to the prompt with this ID that the resolver's
+    /// own add-on declares.
     Prompt(KindId),
 }
 
 /// What the server sent to an add-on resolver. A match is checked against
 /// this value, never against text that the add-on returns.
+///
+/// Its derived `Debug` prints no prompt answer, because
+/// [`PromptAnswers`]'s `Debug` prints only the field keys.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LookupInput {
     Identity(UsableIdentity),
     Prompt(PromptAnswers),
 }
 
-/// Why the server may erase a PC's disk.
+/// Why the server may erase a PC's disk after an add-on resolver's match.
+///
+/// It holds only the authorities that an add-on resolver can lead to. Issue
+/// #187 tracks the ones for a pre-staged record and a technician's pick from
+/// the manual list.
 ///
 /// An add-on resolver returns a match and never authority.
 /// [`WipeAuthority::from_addon_match`] builds the authority from the input
@@ -255,7 +281,7 @@ impl WipeAuthority {
     ///   that kind.
     /// - A resolver that declares [`ResolverInput::Prompt`] must leave
     ///   `matched_on` as `None`, and `sent` must hold the answers to that
-    ///   prompt.
+    ///   prompt of the resolver's own add-on.
     ///
     /// Any other combination is an error, and the chain moves on.
     pub fn from_addon_match(
@@ -275,8 +301,10 @@ impl WipeAuthority {
                     facts,
                 }))
             }
+            // A prompt ID is unique only within its add-on, so the answers
+            // must be to the resolver's own add-on's prompt.
             (ResolverInput::Prompt(prompt), LookupInput::Prompt(answers))
-                if answers.prompt() == prompt =>
+                if answers.prompt().addon == by.addon && answers.prompt().kind == *prompt =>
             {
                 if let Some(kind) = matched_on {
                     return Err(AuthorityError::KindNamedForPrompt(kind));
@@ -301,7 +329,8 @@ pub enum AuthorityError {
     /// A prompt resolver's match names a kind of fact.
     KindNamedForPrompt(IdentityKind),
     /// The server sent input of another kind than the resolver declares, or
-    /// the answers to another prompt.
+    /// the answers to another prompt, which may be a prompt with the same ID
+    /// from another add-on.
     InputDoesNotMatchDeclaration,
 }
 

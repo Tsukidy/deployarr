@@ -67,17 +67,20 @@ There are two programs. `deployarr-server` runs on the deployment server. `deplo
 The task sequence model lives in `deployarr-core`, a `no_std` crate with no I/O. See [Crate layout](#crate-layout). The server, the agent, and the web UI all use it. These sketches show the shape, not final code.
 
 ```rust
-pub struct TaskSequence {
+pub struct TaskSequence<A> {   // A is the action type that a step holds
 	pub id: TaskSequenceId,   // upper-case, like "W11-PRO-STD"
 	pub version: u32,         // every save creates a new version
 	pub name: String,
 	pub default_vars: DefaultVars,   // no two entries name the same variable
-	pub root: Group,
+	pub root: Group<A>,
 }
 
-pub enum Node {
-	Group(Group),
-	Step(Step),
+pub type AuthoredSequence = TaskSequence<Action>;         // what an admin edits and the server stores
+pub type LoweredSequence = TaskSequence<BuiltinAction>;   // what the compiler and the agent see
+
+pub enum Node<A> {
+	Group(Group<A>),
+	Step(Step<A>),
 }
 
 pub struct NodeMeta {
@@ -88,20 +91,26 @@ pub struct NodeMeta {
 	pub condition: Option<Condition>,
 }
 
-pub struct Group {
+pub struct Group<A> {
 	pub meta: NodeMeta,
-	pub children: Vec<Node>,
+	pub children: Vec<Node<A>>,
 }
 
-pub struct Step {
+pub struct Step<A> {
 	pub meta: NodeMeta,
 	pub run_in: RunIn,        // WinPe, FullOs, or Either. Checked against the action at save
-	pub action: Action,
+	pub action: A,
 }
 
-pub enum Action {
-	RunCommand { command: Template, working_dir: Option<Template>, exit: ExitCodes, limits: StepLimits },
-	RunPowerShell { script: ContentRef, args: Vec<Template>, exit: ExitCodes, limits: StepLimits },
+pub enum Action {   // what a stored step holds. See Task sequences stay loadable
+	Builtin(BuiltinAction),   // written in JSON exactly as a built-in action
+	AddOn(AddOnStep),
+	ApplyJoinProfile { stage: JoinStage },   // OfflineImage or FullOs
+}
+
+pub enum BuiltinAction {   // everything the agent runs
+	RunCommand { command: Template, working_dir: Option<Template>, exit: ExitCodes, limits: StepLimits, files: StepFiles },
+	RunPowerShell { script: ContentRef, args: Vec<Template>, exit: ExitCodes, limits: StepLimits, files: StepFiles },
 	SetVariable { name: SettableVarName, value: Template },   // the name cannot start with `_`
 	Restart { into: RestartTarget },
 	PartitionDisk { layout: DiskLayoutId, disk: DiskSelector },
@@ -112,6 +121,13 @@ pub enum Action {
 	VerifyDrivers { policy: MissingDriverPolicy },
 	CheckReadiness { checks: ReadinessChecks },   // Windows 11 minimums by default
 	ActivateWindows { online: bool },   // full OS only. Installs the product key typed in WinPE
+	ServerCall { send: Vec<VarName>, limits: StepLimits },   // add-on steps expand to it
+	AddProvisioningPackage { package: SecretRef, limits: StepLimits },   // the one action that takes a secret
+}
+
+pub struct StepFile {   // a file the agent writes to the step's private folder
+	pub name: FileName,
+	pub content: ContentRef,   // content only, never a secret
 }
 
 pub struct ExitCodes {          // read with success() and reboot(). No code is in both lists
@@ -142,7 +158,7 @@ pub enum Test<T> { Exists, NotExists, Equals(T), NotEquals(T), Less(T), LessEqua
 pub enum CompareOp { Equals, NotEquals, Less, LessEqual, Greater, GreaterEqual }   // for file versions and timestamps
 ```
 
-Each MDT step type that does real work becomes a typed `Action` variant with typed parameters. `RunCommand` and `RunPowerShell` cover everything else. MDT passes every step's settings as untyped variables and command lines, so a typo becomes a runtime failure. With typed actions, the editor and the server reject a bad step when you save it.
+Each MDT step type that does real work becomes a typed `BuiltinAction` variant with typed parameters. `RunCommand` and `RunPowerShell` cover everything else. MDT passes every step's settings as untyped variables and command lines, so a typo becomes a runtime failure. With typed actions, the editor and the server reject a bad step when you save it.
 
 The condition types match what MDT's engine evaluates. MDT also has make, model, location, and computer conditions, which compare by substring, so a gateway of `10.0.0.1` also matches `10.0.0.10`. deployarr expresses those as `Var` conditions on gathered facts, which compare exactly.
 
@@ -157,6 +173,9 @@ pub struct NonEmptyTemplate(Template);    // a Template that is not empty
 pub struct SettableVarName(VarName);      // a VarName that does not start with `_`
 pub struct VarAssignment { pub name: SettableVarName, pub value: Template }
 pub struct DefaultVars(Vec<VarAssignment>);   // read with as_slice(). No two names are equal in any case
+pub struct StepFiles(Vec<StepFile>);      // read with as_slice(). No two names are equal in any case
+pub struct FileName(String);              // one Windows file name, never a path
+pub struct SecretRef(String);             // names a secret that the server holds
 pub struct NonEmpty<T>(Vec<T>);           // a list with at least one item
 
 pub enum RunIn { WinPe, FullOs, Either }
@@ -192,9 +211,10 @@ pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rul
 - `TaskSequenceId` holds one or more of `A` to `Z`, digits, `_`, or `-`.
 - `VarName` holds 1 to 256 ASCII letters, digits, `_`, or `-`. Two names that differ only in case are equal. The name keeps the spelling its author wrote. The length, the character classes, and the case rule are MDT's. The ASCII limit is deployarr's choice. See [Variables](#variables).
 - `SettableVarName` is a `VarName` that does not start with `_`. `SetVariable` and the entries of `default_vars` take it, so a sequence cannot set a name that belongs to the agent. Conditions and `FromList` take a `VarName`, so they can still read one.
+- `StepFiles` keeps its list private, and `StepFiles::new` rejects two files whose names are equal in any case, because Windows does not assume that names differ by case alone ([Naming Files, Paths, and Namespaces](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)). The JSON is a plain array of files.
 - `DefaultVars` keeps its list private, and `DefaultVars::new` rejects two entries whose names are equal in any case. Code that builds a sequence, such as an importer or the editor, therefore cannot write a `default_vars` list that the parser would reject. The JSON is a plain array of entries.
 - `NonEmpty<T>` holds at least one item. `All`, `Any`, and the success list of `ExitCodes` use it, so none of them can be empty.
-- `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, `AppId`, and `SecretRef` are strings that reject an empty value. A `SecretRef` names a secret that the server holds, never the secret's value.
+- `DiskLayoutId`, `OsImageRef`, `UnattendTemplateId`, `ContentRef`, `AppId`, and `SecretRef` are strings that reject an empty value. A `SecretRef` names a secret that the server holds, never the secret's value. It is a non-empty opaque string for now. [#189](https://github.com/Tsukidy/deployarr/issues/189) decides its shape before API level 1 freezes.
 - A step file's `FileName` holds 1 to 255 ASCII letters, digits, `.`, `_`, or `-`, and does not end with `.`. The part before its first `.` is not a name that Windows reserves for a device, such as `NUL`, in any case. Windows treats `NUL.txt` as `NUL` and advises against a name that ends with a period ([Naming Files, Paths, and Namespaces](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)). A step file's name is therefore one file in the step folder and never a path.
 - `DiskSelector` has one rule so far, the first internal, non-removable disk.
 - `MemoryCheck`, `DiskCheck`, and `ProcessorCheck` each hold a minimum and a `mode`, so the JSON for one is an object such as `{"min_mib": 4096, "mode": "fail"}`. The `uefi`, `tpm_2_0`, and `secure_boot` checks have no minimum, so each is a bare `CheckMode`, such as `"warn"`.
@@ -218,7 +238,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 - The top-level `schema_version` is 1. The parser rejects any other version.
 - Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`.
 - A variant with data is an object with one key, the variant's name, such as `{"run_command": {"command": "ipconfig"}}`. A variant without data is a string, such as `"win_pe"`. Each node in `children` is `{"group": ...}` or `{"step": ...}`. This is serde's externally tagged form. The other choice puts a `"type"` key inside the object. serde buffers such an object before it reads the variant, so the path of a parse error stops at `action` and does not reach the field that failed.
-- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `files` list of a `RunCommand` or `RunPowerShell` action is empty. An omitted `Option` field is none. Every other field is required.
+- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `files` list of a `RunCommand` or `RunPowerShell` action is empty (design decision), so a sequence written before step files existed still parses, and a command with no file needs no list. An omitted `Option` field is none. Every other field is required.
 - An unknown field is an error, so a misspelled field name never passes as a default.
 - The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
 - A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
@@ -233,6 +253,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
   - A negative registry integer, at the operator that holds it.
   - A `SetVariable` step or a `default_vars` entry that names a variable that starts with `_`, at its `name`.
   - Two `default_vars` entries that name the same variable, in any case, at the second entry's name, such as `default_vars[1].name`.
+  - Two step files with the same name, in any case, at the second file's name, such as `files[1].name`.
 - The compiler rejects a `run_in` that the action cannot honor when the sequence is saved, so that the error names the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
 
 `crates/deployarr-core/tests/data/windows-11-pro.json` is a sample that uses every condition, and every action but the ones that come from add-ons: the add-on step, the join slot, `ServerCall`, and `AddProvisioningPackage`.
@@ -1102,10 +1123,11 @@ Every host function starts with one check, `permit(scope, capability, target)`, 
 The lookup chain's rules stay in the base, as [Lookup chain](#lookup-chain) describes. An add-on resolver returns a match and never wipe authority. `WipeAuthority::from_addon_match` in `deployarr-core` is the only way an add-on's match becomes authority. It takes the resolver's declared input kind, the input the server sent, and the match's `matched_on`.
 
 - `matched_on` is `Option<IdentityKind>`, an enum. In the first design it was a string, and the reference add-on filled it with free text ([Add-on design attacks, item 4](research/addon-design-attacks-wasmtime-50.0.1.md#item-4-wipe-authority-cannot-come-from-free-text)).
-- For an identity resolver, `matched_on` must name a kind, and the server must have sent a fact of that kind. `UsableIdentity` holds the facts that the server may send. Its only constructor drops known placeholders and returns none when nothing is left.
-- For a resolver with a prompt, `matched_on` must be none, and the server must have sent the answers to the prompt that the resolver declares. The authority is the technician's typed answer. `PromptAnswers` holds at least one answer that is not blank.
-- The authority's variants hold types with private fields, so no other code can build one.
+- For an identity resolver, `matched_on` must name a kind, and the server must have sent a fact of that kind. `UsableIdentity` holds the facts that the server may send. Its only constructor trims each value, drops known placeholders, and returns none when nothing is left. Its list is wider than the examples in [Identity facts](#identity-facts) (design decision), so that more shared firmware defaults never match an order. It holds common unset serials, a serial of only zeros, and a UUID or MAC address of only `0` or only `F` digits. SMBIOS defines an all-`00h` UUID as not present and an all-`FFh` UUID as not yet set ([SMBIOS 3.7.0](https://www.dmtf.org/sites/default/files/standards/documents/DSP0134_3.7.0.pdf), section 7.2.1).
+- For a resolver with a prompt, `matched_on` must be none, and the server must have sent the answers to the prompt that the resolver's own add-on declares. A prompt ID is unique only within its add-on, so `PromptAnswers` names the prompt with its add-on. The authority is the technician's typed answer.
+- `PromptAnswers` holds at least one answer that is not blank (design decision), because the server never calls a prompt resolver without a typed answer. Its `Debug` prints the field keys and never the answers, because a prompt field can be secret.
 - Any other combination is an error, and the chain moves on.
+- The authority's variants hold types with private fields, so no other code can build one. `WipeAuthority` holds only the authorities that an add-on resolver leads to. [#187](https://github.com/Tsukidy/deployarr/issues/187) adds the ones for a pre-staged record and a manual pick.
 - The host writes the trace line from the fact it sent, never from add-on text.
 - `IdentityKind` lists the system serial, the baseboard serial, the chassis serial, the UUID, and the MAC address. The WIT enum `identity-kind` repeats the list, and a test compares the two. A new kind needs a new API level (design decision).
 
@@ -1133,8 +1155,8 @@ pub struct AddOnStep {
 }
 
 pub enum BuiltinAction {
-	// Every action of `Action` in Core data shapes. `RunCommand` and `RunPowerShell`
-	// gain `files: Vec<StepFile>`, which holds content, never a secret.
+	// Every action of `BuiltinAction` in Core data shapes. `RunCommand` and `RunPowerShell`
+	// hold `files: StepFiles`, which holds content, never a secret.
 	ServerCall { send: Vec<VarName>, limits: StepLimits },
 	AddProvisioningPackage { package: SecretRef, limits: StepLimits },
 }
@@ -1144,7 +1166,7 @@ pub enum BuiltinAction {
 
 Three more names in `deployarr-core` belong to this model:
 
-- `AddOnRef` is an add-on ID plus a kind ID. `Resolver::AddOn` and `JoinProfile::AddOn` each hold one. An `AddOnId` is `<publisher>.<name>`. Each part holds 1 to 32 characters, a lower-case ASCII letter and then lower-case ASCII letters, digits, or `-`. A `KindId` follows the same rule with up to 63 characters.
+- `AddOnRef` is an add-on ID plus a kind ID. `Resolver::AddOn` and `JoinProfile::AddOn` each hold one. An `AddOnId` is `<publisher>.<name>`. Each part holds a lower-case ASCII letter and then lower-case ASCII letters, digits, or `-`. A `KindId` follows the same rule. The lengths, 1 to 32 characters for each part of an `AddOnId` and 1 to 63 for a `KindId`, are defaults until the owner decides the grammar, which is [one-way door](#one-way-doors) 3.
 - `Catalog` is the set of step kind, join kind, resolver, and importer descriptors, from installed add-ons and from remembered ones. The UI and `validate` read it.
 - `deferred` lists every enabled add-on step and `ApplyJoinProfile` join slot in a sequence. The server must expand each one before it compiles. It skips a step inside a disabled group, because the compiler drops that step too.
 
@@ -1179,11 +1201,12 @@ Planning runs in two parts before the compiler:
 - an action outside the six that an add-on may return
 - a child with another `run_in`
 - a nested add-on step or join slot
-- an expansion for a node that `deferred` does not list
+- an expansion for a node that `deferred` does not list (design decision), because it is a fault in the host that ignoring it would hide
+- an add-on step or join slot with `run_in` `WinPe` whose condition holds an `InstalledMsi` or `Wmi` condition at any depth, disabled or not. The compiler checks this rule on steps, and the group that replaces the step keeps its condition. `validate` reports the same step as an error, so a save catches it.
 
 An add-on step or join slot that `deferred` skips needs no expansion. `lower` turns it into an empty group with the step's `NodeMeta`, and the compiler drops that group.
 
-The IDs of the new nodes derive from the step's ID, so the same input gives the same program (design decision). The ID of child `i` is the version 5 UUID whose namespace is the step's ID and whose name is `i` in decimal ASCII digits. Each child keeps the rest of the `NodeMeta` that its add-on gave it.
+The IDs of the new nodes derive from the step's ID, so the same input gives the same program (design decision). The ID of child `i` is the version 5 UUID whose namespace is the step's ID and whose name is `i` in decimal ASCII digits. Each child keeps the rest of the `NodeMeta` that its add-on gave it, such as its own condition, `continue_on_error`, and `enabled` (design decision), so that an add-on can make one of its steps conditional or optional. The step's own condition, `continue_on_error`, and `enabled` stay on the group.
 
 ### What runs on the PC
 

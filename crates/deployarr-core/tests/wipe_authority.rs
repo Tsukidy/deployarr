@@ -41,14 +41,23 @@ fn identity() -> LookupInput {
     )
 }
 
-fn answers(prompt: &str, answer: &str) -> LookupInput {
+/// The answers to a prompt of `addon`.
+fn answers_from(addon: &str, prompt: &str, answer: &str) -> LookupInput {
     LookupInput::Prompt(
         PromptAnswers::new(
-            prompt_id(prompt),
+            AddOnRef {
+                addon: addon.parse().expect("a valid add-on ID"),
+                kind: prompt_id(prompt),
+            },
             BTreeMap::from([("order_no".to_owned(), answer.to_owned())]),
         )
         .expect("the answer is not blank"),
     )
+}
+
+/// The answers to a prompt of the resolvers' add-on.
+fn answers(prompt: &str, answer: &str) -> LookupInput {
+    answers_from("deployarr.sql-order-lookup", prompt, answer)
 }
 
 #[test]
@@ -203,13 +212,46 @@ fn a_usable_identity_keeps_only_the_real_facts() {
 }
 
 #[test]
+fn answers_to_the_same_prompt_id_of_another_add_on_are_an_error() {
+    assert_eq!(
+        WipeAuthority::from_addon_match(
+            &resolver("by-order-number"),
+            &ResolverInput::Prompt(prompt_id("order-number")),
+            &answers_from("acme.orders", "order-number", "SO-1001"),
+            None,
+        ),
+        Err(AuthorityError::InputDoesNotMatchDeclaration)
+    );
+}
+
+#[test]
 fn blank_answers_are_no_typed_answer() {
     let blank = BTreeMap::from([("order_no".to_owned(), "   ".to_owned())]);
+    let prompt = resolver("order-number");
 
-    assert_eq!(PromptAnswers::new(prompt_id("order-number"), blank), None);
+    assert_eq!(PromptAnswers::new(prompt.clone(), blank), None);
+    assert_eq!(PromptAnswers::new(prompt, BTreeMap::new()), None);
+}
+
+#[test]
+fn debug_output_never_holds_an_answer() {
+    let sent = answers("order-number", "SECRET-ANSWER-7731");
+
+    let printed = format!("{sent:?}");
+
+    assert!(!printed.contains("SECRET-ANSWER-7731"), "{printed}");
+    assert!(printed.contains("order_no"), "{printed}");
+}
+
+#[test]
+fn a_usable_identity_holds_trimmed_values() {
+    let identity =
+        UsableIdentity::from_gathered(&[fact(IdentityKind::BaseboardSerial, "  MB-2231-0042   ")])
+            .expect("the serial is usable");
+
     assert_eq!(
-        PromptAnswers::new(prompt_id("order-number"), BTreeMap::new()),
-        None
+        identity.facts(),
+        [fact(IdentityKind::BaseboardSerial, "MB-2231-0042")]
     );
 }
 
