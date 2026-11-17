@@ -23,13 +23,13 @@ This page records whether boot programs signed with the Windows UEFI CA 2023 boo
 
 ## Where the 2023-signed programs come from
 
-The lab's `boot.wim` is index 1 of `sources\boot.wim` in `Windows11_Client_x64_en-us_26300_9457.iso`, whose SHA-256 is `bd4307df32bc8af33b39ccecb1174aeb345386630f89a2b86c7a4e36b55ea650`. Index 1 is Microsoft Windows PE (amd64), build 26100.9457. It holds two copies of each UEFI boot program:
+The lab's `boot.wim` is index 1 of `sources\boot.wim` in `Windows11_Client_x64_en-us_26300_9457.iso`, whose SHA-256 is `bd4307df32bc8af33b39ccecb1174aeb345386630f89a2b86c7a4e36b55ea650`. Index 1 is Microsoft Windows PE (amd64), build 26100.9457. It holds two copies of `bootmgfw.efi` and `wdsmgfw.efi`, and two sets of boot fonts:
 
 - `Windows\Boot\EFI\bootmgfw.efi` and `Windows\Boot\PXE\wdsmgfw.efi`, signed through the Microsoft Windows Production PCA 2011
 - `Windows\Boot\EFI_EX\bootmgfw_EX.efi` and `Windows\Boot\PXE_EX\wdsmgfw_EX.efi`, signed through the Windows UEFI CA 2023
-- `Windows\Boot\Fonts_EX`, a second set of boot fonts
+- `Windows\Boot\Fonts` and `Windows\Boot\Fonts_EX`, the two sets of boot fonts
 
-`tools/lab/media.sh` copies the `_EX` programs to `~/deployarr-lab/tftp/2023` under the names `bootmgfw.efi` and `wdsmgfw.efi`, with the `Fonts_EX` fonts, as [step 6 of the lab guide](../../lab-setup.md#6-get-the-windows-files) says. The lab guide also records that the `winpe.wim` of the ADK WinPE add-on 10.1.26100.9457 has the same `_EX` copies with the same signers.
+`tools/lab/media.sh` copies the `_EX` programs to `~/deployarr-lab/tftp/2023` under the names `bootmgfw.efi` and `wdsmgfw.efi`, with the `Fonts_EX` fonts, as [step 6 of the lab guide](../../lab-setup.md#6-get-the-windows-files) says. The lab guide also records that the signers of the `_EX` copies were first read in the `winpe.wim` of the ADK WinPE add-on 10.1.26100.9457.
 
 The issuer is the `Issuer :` line under `Signer's certificate:` in the output of `osslsigncode verify`, and the subject is its `Subject:` line. The version is the file version in each file's version resource.
 
@@ -60,7 +60,7 @@ The issuer is the `Issuer :` line under `Signer's certificate:` in the output of
 
 Each VM started with its folder under `~/deployarr-lab` deleted, so its disk, firmware variables, and TPM state were new. The component versions and the firmware files are the same as in [Versions](bootmgr-object-type.md#versions) of the `{bootmgr}` object type page, on the same lab host on the same day.
 
-The lab host restarted at about 20:55 UTC, during the first try of the `uefi2023` two-stage run with the 2023 programs. That try's files are set aside in `~/deployarr-lab/runs/32/interrupted/`, and this page does not use them. The run on this page started at 20:56:59, after the restart. The first run, the `uefi2023` single stage with the 2023 programs, ended at about 20:26, before the host went down.
+The lab host went down at about 20:27 UTC, during the first try of the `uefi2023` two-stage run with the 2023 programs, and booted again at 20:55. That try's files are set aside in `~/deployarr-lab/runs/32/interrupted/`, and this page does not use them. The run on this page started at 20:56:59, after the restart. The first run, the `uefi2023` single stage with the 2023 programs, ended at about 20:26, before the host went down.
 
 ## The runs that boot
 
@@ -92,7 +92,7 @@ BdsDxe: loading Boot0003 "UEFI PXEv4 (MAC:525400410012)" ...
 BdsDxe: failed to load Boot0003 "UEFI PXEv4 (MAC:525400410012)" ...: Access Denied -- rejected probably by Secure Boot
 ```
 
-The `...` marks device paths left out. OVMF then tried PXE over IPv6, then HTTP boot over IPv4 and IPv6. The prototype logged no request after the download.
+The `...` marks device paths left out. OVMF then tried PXE over IPv6, then HTTP boot over IPv4 and IPv6. The prototype logged no TFTP request after the download. It ignored the DHCP DISCOVERs of OVMF's HTTP boot client, which carry architecture `0x0010`.
 
 The two-stage run went the same way with `boot\x64\wdsmgfw.efi`, downloaded at 21:01:08.748, 1171400 bytes. OVMF refused it with the same `Access Denied` line, and nothing ran after the firmware.
 
