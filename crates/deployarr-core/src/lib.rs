@@ -15,6 +15,7 @@ pub mod addon;
 pub mod catalog;
 pub mod compile;
 pub mod condition;
+pub mod end_state;
 pub mod evaluate;
 pub mod form;
 pub mod join;

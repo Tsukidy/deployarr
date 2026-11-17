@@ -1,8 +1,11 @@
 //! The catalog of what add-ons contribute, as the server sends it to the web
 //! UI and as `validate` reads it.
 
+use std::collections::BTreeSet;
+
 use deployarr_core::addon::AddOnRef;
-use deployarr_core::catalog::{Availability, Catalog};
+use deployarr_core::catalog::{Availability, Catalog, requirements};
+use deployarr_core::end_state::EndState;
 use deployarr_core::lookup::ResolverInput;
 use deployarr_core::sequence::{AuthoredSequence, RunIn};
 use deployarr_core::validate::{Issue, validate};
@@ -21,6 +24,14 @@ const CATALOG: &str = r#"{
             "2": {"field": [{"key": "group_tag", "label": "Group tag", "kind": "template", "required": true}]}
           }
         }
+      }
+    },
+    "join_kinds": {
+      "autopilot": {
+        "label": "Autopilot",
+        "availability": "enabled",
+        "requires_end_state": ["CustomerOobe"],
+        "config": {"current": 1, "versions": {"1": {}}}
       }
     }
   },
@@ -139,4 +150,82 @@ fn validate_reads_the_step_kinds_of_the_catalog() {
         findings.as_slice(),
         [finding] if finding.issue == Issue::UnknownStepKind { kind: kind("acme.gone", "register") }
     ));
+}
+
+/// Autopilot only customizes OOBE, so its join kind needs `CustomerOobe`. A
+/// join kind that names no end state allows both.
+#[test]
+fn a_join_kind_names_the_end_states_it_needs() {
+    let catalog: Catalog = serde_json::from_str(CATALOG).unwrap();
+    let autopilot = catalog
+        .join_kind(&kind("acme.autopilot", "autopilot"))
+        .expect("the join kind");
+    assert_eq!(autopilot.requires_end_state, [EndState::CustomerOobe]);
+    assert!(autopilot.allows_end_state(EndState::CustomerOobe));
+    assert!(!autopilot.allows_end_state(EndState::ReadyToUse));
+
+    let any: Catalog =
+        serde_json::from_str(&CATALOG.replace(r#""requires_end_state": ["CustomerOobe"],"#, ""))
+            .expect("the key is optional");
+    let any = any
+        .join_kind(&kind("acme.autopilot", "autopilot"))
+        .expect("the join kind");
+    assert!(any.requires_end_state.is_empty());
+    assert!(any.allows_end_state(EndState::ReadyToUse));
+    assert!(any.allows_end_state(EndState::CustomerOobe));
+
+    let error =
+        serde_json::from_str::<Catalog>(&CATALOG.replace("[\"CustomerOobe\"]", "[\"Oobe\"]"))
+            .expect_err("an unknown end state");
+    assert!(
+        error.to_string().contains("unknown variant `Oobe`"),
+        "{error}"
+    );
+}
+
+/// Every add-on step counts once, a disabled one and an unknown kind too.
+/// A built-in step and a join slot name no add-on.
+#[test]
+fn requirements_lists_every_add_on_step_kind_once() {
+    let meta = |n: u32, enabled: bool| {
+        format!(
+            r#"{{"id":"00000000-0000-4000-8000-{n:012}","name":"N{n}","enabled":{enabled},"continue_on_error":false,"condition":null}}"#
+        )
+    };
+    let add_on = |n: u32, addon: &str, kind: &str| {
+        format!(
+            r#"{{"step":{{"meta":{},"run_in":"full_os","action":{{"add_on":{{"addon":"{addon}","kind":"{kind}","config_version":1,"config":{{}}}}}}}}}}"#,
+            meta(n, true)
+        )
+    };
+    let children = [
+        add_on(2, "acme.autopilot", "register"),
+        format!(
+            r#"{{"group":{{"meta":{},"children":[{}]}}}}"#,
+            meta(3, false),
+            add_on(4, "acme.gone", "export")
+        ),
+        add_on(5, "acme.autopilot", "register"),
+        format!(
+            r#"{{"step":{{"meta":{},"run_in":"either","action":{{"set_variable":{{"name":"GroupTag","value":"lab"}}}}}}}}"#,
+            meta(6, true)
+        ),
+        format!(
+            r#"{{"step":{{"meta":{},"run_in":"full_os","action":{{"apply_join_profile":{{"stage":"full_os"}}}}}}}}"#,
+            meta(7, true)
+        ),
+    ]
+    .join(",");
+    let sequence = AuthoredSequence::from_json(&format!(
+        r#"{{"schema_version":1,"id":"W11","version":1,"name":"W11","default_vars":[],"root":{{"meta":{},"children":[{children}]}}}}"#,
+        meta(1, true)
+    ))
+    .expect("it parses");
+    assert_eq!(
+        requirements(&sequence),
+        BTreeSet::from([
+            kind("acme.autopilot", "register"),
+            kind("acme.gone", "export"),
+        ])
+    );
 }

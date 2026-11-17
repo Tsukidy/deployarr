@@ -258,6 +258,28 @@ fn every_kind_refuses_a_key_of_another_kind() {
     }
 }
 
+/// TOML has no `null`, but JSON does. A key of another kind fails the parse
+/// with any value, `null` too.
+#[test]
+fn every_kind_refuses_a_key_of_another_kind_in_json() {
+    for kind in kinds() {
+        let mut field: Value = toml::from_str(&table(&kind)).expect("the table parses");
+        let (foreign, value) = kind.foreign.split_once(" = ").unwrap();
+        let value: Value = toml::from_str::<toml::Table>(&format!("v = {value}"))
+            .map(|table| serde_json::to_value(&table["v"]).unwrap())
+            .unwrap();
+        for (value, message) in [
+            (value, format!("`{foreign}` belongs to another kind")),
+            (Value::Null, "invalid type: null".into()),
+        ] {
+            field[foreign] = value;
+            let error = field_json(&field.to_string())
+                .expect_err(&format!("{}: {field} fails the parse", kind.name));
+            assert!(error.contains(&message), "{}: {error}", kind.name);
+        }
+    }
+}
+
 #[test]
 fn an_unknown_kind_fails_the_parse() {
     let error = field_toml("key = \"c\"\nlabel = \"C\"\nkind = \"color\"\n")
@@ -477,6 +499,67 @@ fn a_document_holds_only_the_schemas_keys() {
             json!({"l": [{"a": true}, "x"]})
         ),
         [("/l/1".into(), ValueProblem::NotAnObject)]
+    );
+}
+
+/// RFC 6901 writes `~` as `~0` and `/` as `~1` in a JSON pointer, so each
+/// path finds the key that it names.
+#[test]
+fn an_unknown_keys_pointer_escapes_tilde_and_slash() {
+    let schema = schema(field("key = \"a\"\nlabel = \"A\"\nkind = \"bool\""));
+    let document = json!({"a": true, "a/b": 1, "x~y": 2, "~1": 3});
+    let found = problems(&schema, document.clone());
+    assert_eq!(
+        found,
+        [
+            ("/a~1b".into(), ValueProblem::UnknownKey),
+            ("/x~0y".into(), ValueProblem::UnknownKey),
+            ("/~01".into(), ValueProblem::UnknownKey),
+        ]
+    );
+    let values: Vec<&Value> = found
+        .iter()
+        .map(|(path, _)| document.pointer(path).expect("the pointer finds a value"))
+        .collect();
+    assert_eq!(values, [&json!(1), &json!(2), &json!(3)]);
+}
+
+/// The `pattern` attribute of an HTML form field does not apply to an empty
+/// value, and neither does a field's pattern or task sequence ID check.
+#[test]
+fn an_optional_field_accepts_empty_text() {
+    let optional = FormSchema::new(vec![
+        field("key = \"t\"\nlabel = \"T\"\nkind = \"text\"\npattern = \"[A-Z]+\""),
+        field("key = \"s\"\nlabel = \"S\"\nkind = \"task_sequence_ref\""),
+    ])
+    .unwrap();
+    assert_eq!(problems(&optional, json!({"t": "", "s": ""})), []);
+    assert_eq!(
+        problems(&optional, json!({"t": "a", "s": "w11 pro"})),
+        [
+            (
+                "/t".into(),
+                ValueProblem::NoMatch {
+                    pattern: "[A-Z]+".into()
+                }
+            ),
+            (
+                "/s".into(),
+                ValueProblem::TaskSequenceId(TaskSequenceIdError::InvalidChar { found: 'w' })
+            ),
+        ]
+    );
+    let required = FormSchema::new(vec![
+        field("key = \"t\"\nlabel = \"T\"\nkind = \"text\"\npattern = \"[A-Z]+\"\nrequired = true"),
+        field("key = \"s\"\nlabel = \"S\"\nkind = \"task_sequence_ref\"\nrequired = true"),
+    ])
+    .unwrap();
+    assert_eq!(
+        problems(&required, json!({"t": "", "s": ""})),
+        [
+            ("/t".into(), ValueProblem::Empty),
+            ("/s".into(), ValueProblem::Empty),
+        ]
     );
 }
 

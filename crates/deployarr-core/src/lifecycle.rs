@@ -526,7 +526,8 @@ pub enum Step {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Commit {
     /// The active and previous packages, the publisher, and the enabled flag,
-    /// with the grants and the migrated settings that the check produced.
+    /// with the grants and the migrated settings that the check produced. It
+    /// also clears the uninstalled flag, so an uninstalled add-on comes back.
     Packages {
         active: PackageHash,
         previous: Option<PackageHash>,
@@ -563,6 +564,9 @@ pub enum Effect {
         from: Version,
         to: Version,
     },
+    /// The add-on was uninstalled. It comes back enabled, with the settings,
+    /// secrets, and store that it kept.
+    Restores,
     Enables,
     Disables,
     /// The settings, secrets, and store stay until a purge.
@@ -671,8 +675,8 @@ pub enum Refusal {
     Unsigned {
         setting_allows: bool,
     },
-    /// The add-on was installed signed, and this package is unsigned or from
-    /// another publisher.
+    /// A publisher signed the add-on, and this package is unsigned or from
+    /// another publisher. An upgrade and a roll back both refuse it.
     PublisherChanged {
         was: String,
         now: Option<String>,
@@ -886,10 +890,7 @@ impl Planner<'_> {
     ) -> Option<OpKind> {
         self.check_level(package);
         let verdict = self.check_new_package(package, approval);
-        let publisher = match &verdict {
-            Verdict::Publisher(name) => Some(name.clone()),
-            Verdict::Untrusted | Verdict::Refused => None,
-        };
+        let publisher = self.check_publisher(installed, &verdict);
         // An uninstalled add-on comes back enabled, on the store it kept.
         let (store_data_version, enabled, previous) = match installed {
             None => {
@@ -899,15 +900,6 @@ impl Planner<'_> {
                 (0, true, None)
             }
             Some(installed) => {
-                if let Some(was) = &installed.publisher
-                    && verdict != Verdict::Refused
-                    && publisher.as_ref() != Some(was)
-                {
-                    self.refuse(Refusal::PublisherChanged {
-                        was: was.clone(),
-                        now: publisher.clone(),
-                    });
-                }
                 self.direction(installed, package, approval);
                 let previous = if package.hash == installed.active.hash {
                     installed.previous.as_ref().map(|previous| previous.hash)
@@ -915,6 +907,7 @@ impl Planner<'_> {
                     Some(installed.active.hash)
                 };
                 if installed.uninstalled {
+                    self.effects.push(Effect::Restores);
                     (installed.store_data_version, true, previous)
                 } else {
                     self.when_busy(approval.when_busy);
@@ -932,7 +925,6 @@ impl Planner<'_> {
             Ordering::Greater => self.migrate(store_data_version, package.data_version),
         }
         self.steps.push(Step::Check(package.hash));
-        let publisher = publisher.or_else(|| installed.and_then(|i| i.publisher.clone()));
         self.steps.push(Step::Commit(Commit::Packages {
             active: package.hash,
             previous,
@@ -996,7 +988,14 @@ impl Planner<'_> {
             return None;
         };
         self.check_level(previous);
-        self.check_trust(previous);
+        // The admin accepted the previous package when it was installed. The
+        // trust bundle may have changed since, and a later package may have
+        // given the add-on a publisher.
+        let verdict = self.check_trust(previous);
+        let publisher = self.check_publisher(Some(installed), &verdict);
+        if verdict == Verdict::Untrusted {
+            self.effects.push(Effect::Unsigned);
+        }
         self.effects.push(Effect::RollsBack {
             from: installed.active.version.clone(),
             to: previous.version.clone(),
@@ -1021,7 +1020,7 @@ impl Planner<'_> {
         self.steps.push(Step::Commit(Commit::Packages {
             active: previous.hash,
             previous: Some(installed.active.hash),
-            publisher: installed.publisher.clone(),
+            publisher,
             enabled: installed.enabled,
         }));
         Some(OpKind::RollBack { to: previous.hash })
@@ -1101,6 +1100,31 @@ impl Planner<'_> {
             }
         }
         verdict
+    }
+
+    /// Refuses a package that is unsigned, or from another publisher, for an
+    /// add-on that a publisher signed. Returns the publisher that the commit
+    /// records: the add-on's, or the package's when the add-on has none.
+    fn check_publisher(
+        &mut self,
+        installed: Option<&Installed>,
+        verdict: &Verdict,
+    ) -> Option<String> {
+        let now = match verdict {
+            Verdict::Publisher(name) => Some(name),
+            Verdict::Untrusted | Verdict::Refused => None,
+        };
+        let Some(was) = installed.and_then(|installed| installed.publisher.as_ref()) else {
+            return now.cloned();
+        };
+        // A trust refusal already says why a refused package does not install.
+        if *verdict != Verdict::Refused && now != Some(was) {
+            self.refuse(Refusal::PublisherChanged {
+                was: was.clone(),
+                now: now.cloned(),
+            });
+        }
+        Some(was.clone())
     }
 
     /// Refuses a revoked hash, a revoked key, and a key whose scopes do not

@@ -225,6 +225,10 @@ impl FormSchema {
     /// `/rules/0/statement`. In each table, the unknown keys come first, in
     /// key order, and then the fields' problems, in the schema's order.
     ///
+    /// A pattern, and the check of a task sequence ID, apply only to text
+    /// that is not empty, as the `pattern` attribute of an HTML form field
+    /// does. A required field still refuses empty text.
+    ///
     /// A secret or secret file field holds `{"set": true}` or
     /// `{"set": false}` in a document, never the secret. The server keeps the
     /// secret with its key, and the web UI and the add-on see only whether it
@@ -395,6 +399,9 @@ impl KindName {
 
 /// A field as it is written: the common keys, and every key of every kind.
 /// [`Field`]'s `TryFrom` gives each kind only its own keys.
+///
+/// A kind's key is `None` only when the table leaves it out. JSON `null` is
+/// refused, so a key of another kind cannot pass as `null`.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FieldWire {
@@ -405,26 +412,43 @@ struct FieldWire {
     #[serde(default, skip_serializing_if = "is_false")]
     required: bool,
     kind: KindName,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pattern: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_len: Option<NonZeroU32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     min: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     max: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     options: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     max_bytes: Option<NonZeroU64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     connection: Option<KindId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, deserialize_with = "present")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     item: Option<Vec<Field>>,
 }
 
 fn is_false(value: &bool) -> bool {
     !value
+}
+
+/// Reads a key that the table holds. No kind's key takes `null`, so `null`
+/// fails. A key that the table leaves out is `None` through
+/// `#[serde(default)]`.
+fn present<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
 }
 
 impl TryFrom<FieldWire> for Field {
@@ -701,6 +725,7 @@ fn check_field(
                 });
             }
             if let Some(pattern) = pattern
+                && !text.is_empty()
                 && !pattern.is_match(text)
             {
                 problem(ValueProblem::NoMatch {
@@ -760,14 +785,18 @@ fn check_field(
             None => problem(ValueProblem::NotASecretMark),
         },
         FieldKind::TaskSequenceRef => {
-            if let Some(text) = value.as_str() {
-                if let Err(error) = text.parse::<TaskSequenceId>() {
-                    problem(ValueProblem::TaskSequenceId(error));
-                }
-            } else {
+            let Some(text) = value.as_str() else {
                 problem(ValueProblem::WrongType {
                     expected: "a task sequence ID",
                 });
+                return;
+            };
+            if field.required && text.is_empty() {
+                problem(ValueProblem::Empty);
+            } else if !text.is_empty()
+                && let Err(error) = text.parse::<TaskSequenceId>()
+            {
+                problem(ValueProblem::TaskSequenceId(error));
             }
         }
         FieldKind::List { item } => {
@@ -830,9 +859,18 @@ fn unterminated(text: &str) -> Option<usize> {
     open
 }
 
+/// Adds one reference token to a JSON pointer. RFC 6901 section 3 writes `~`
+/// as `~0` and `/` as `~1` in a token. Only an unknown key can hold either,
+/// because a field key cannot.
 fn push_segment(path: &mut String, segment: &str) {
     path.push('/');
-    path.push_str(segment);
+    for c in segment.chars() {
+        match c {
+            '~' => path.push_str("~0"),
+            '/' => path.push_str("~1"),
+            c => path.push(c),
+        }
+    }
 }
 
 /// The problems that [`FormSchema::check`] found in a document.

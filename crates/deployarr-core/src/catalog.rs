@@ -6,18 +6,20 @@
 //! that was ever installed. A removed add-on's steps therefore still show as
 //! forms.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::action::Action;
 use crate::addon::{AddOnId, AddOnRef, KindId};
+use crate::end_state::EndState;
 use crate::form::FormSchema;
 use crate::lookup::ResolverInput;
 use crate::prompt::PromptSpec;
-use crate::sequence::RunIn;
+use crate::sequence::{AuthoredSequence, Group, Node, RunIn};
 use crate::validate::StepKinds;
 
 /// Every add-on's contributions, by add-on ID.
@@ -66,6 +68,32 @@ impl StepKinds for Catalog {
     fn declares(&self, kind: &AddOnRef) -> bool {
         self.step_kind(kind).is_some()
     }
+}
+
+/// The add-on step kinds that a sequence holds, for an export file and an
+/// add-on's Used by list. Pure. It is derived, and never stored.
+///
+/// Every step counts, a disabled one too, because it is part of the saved
+/// sequence. A kind that no catalog knows counts too, so another server can
+/// say what to install. It needs no catalog, because each step names its
+/// kind. A join slot counts for nothing, because the sequence does not name
+/// the join kind of the profile that fills it.
+pub fn requirements(sequence: &AuthoredSequence) -> BTreeSet<AddOnRef> {
+    fn collect(group: &Group<Action>, kinds: &mut BTreeSet<AddOnRef>) {
+        for child in &group.children {
+            match child {
+                Node::Group(group) => collect(group, kinds),
+                Node::Step(step) => {
+                    if let Action::AddOn(add_on) = &step.action {
+                        kinds.insert(add_on.step_kind());
+                    }
+                }
+            }
+        }
+    }
+    let mut kinds = BTreeSet::new();
+    collect(&sequence.root, &mut kinds);
+    kinds
 }
 
 /// What one add-on contributes, each kind by its ID within the add-on.
@@ -291,7 +319,19 @@ pub struct StepKindInfo {
 pub struct JoinKindInfo {
     pub label: String,
     pub availability: Availability,
+    /// The end states that a deployment with a profile of this kind can
+    /// have, such as `CustomerOobe` for Autopilot. Empty allows both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub requires_end_state: Vec<EndState>,
     pub config: ConfigSchemas,
+}
+
+impl JoinKindInfo {
+    /// Whether a deployment can pair a profile of this kind with the end
+    /// state. The server rejects any other pair before the disk changes.
+    pub fn allows_end_state(&self, end_state: EndState) -> bool {
+        self.requires_end_state.is_empty() || self.requires_end_state.contains(&end_state)
+    }
 }
 
 /// A lookup resolver that an add-on declares.

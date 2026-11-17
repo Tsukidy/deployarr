@@ -596,6 +596,7 @@ fn a_reinstall_after_an_uninstall_comes_back_enabled_on_the_kept_store() {
             ..package(2, "1.1.0")
         }))
         .expect("a reinstall");
+    // `Commit::Packages` also clears the uninstalled flag.
     assert_eq!(
         plan.steps.last(),
         Some(&Step::Commit(Commit::Packages {
@@ -604,6 +605,16 @@ fn a_reinstall_after_an_uninstall_comes_back_enabled_on_the_kept_store() {
             publisher: Some("Acme".into()),
             enabled: true,
         }))
+    );
+    assert_eq!(
+        plan.effects,
+        [
+            Effect::Upgrades {
+                from: version("1.0.0"),
+                to: version("1.1.0"),
+            },
+            Effect::Restores,
+        ]
     );
 }
 
@@ -648,6 +659,27 @@ fn more_refusals() {
     let unsigned = Package {
         signer: Signer::Unsigned,
         ..package(1, "1.0.0")
+    };
+    // Package 1 went in while the add-on had no publisher. Package 2 then
+    // gave it Acme.
+    let signed_after = |signer| {
+        let mut world = World::with(Installed {
+            active: package(2, "1.1.0"),
+            previous: Some(Package {
+                signer,
+                ..package(1, "1.0.0")
+            }),
+            ..installed()
+        });
+        world
+            .trust
+            .publishers
+            .push(publisher("Mallory", STRANGER, "acme.orders"));
+        world
+    };
+    let roll_back = || Change::RollBack {
+        addon: id(),
+        when_busy: WhenBusy::Wait,
     };
     let rows: Vec<(&str, World, Change, Vec<Refusal>)> = vec![
         (
@@ -775,6 +807,24 @@ fn more_refusals() {
             vec![Refusal::RevokedPackage],
         ),
         (
+            "a roll back of a signed add-on to an unsigned package",
+            signed_after(Signer::Unsigned),
+            roll_back(),
+            vec![Refusal::PublisherChanged {
+                was: "Acme".into(),
+                now: None,
+            }],
+        ),
+        (
+            "a roll back of a signed add-on to another publisher's package",
+            signed_after(Signer::Key(STRANGER)),
+            roll_back(),
+            vec![Refusal::PublisherChanged {
+                was: "Acme".into(),
+                now: Some("Mallory".into()),
+            }],
+        ),
+        (
             "an enable of an enabled add-on",
             World::with(installed()),
             Change::Enable { addon: id() },
@@ -876,6 +926,49 @@ fn a_confirmed_unsigned_package_installs_with_a_badge() {
         Some(&Step::Commit(Commit::Packages {
             active: hash(1),
             previous: None,
+            publisher: None,
+            enabled: true,
+        }))
+    );
+}
+
+/// The admin confirmed both packages' hashes when they were uploaded. The
+/// server setting gates an upload, so a roll back does not read it, as an
+/// enable does not.
+#[test]
+fn a_roll_back_to_an_unsigned_package_shows_the_badge() {
+    let unsigned = |n, text| Package {
+        signer: Signer::Unsigned,
+        ..package(n, text)
+    };
+    let world = World::with(Installed {
+        active: unsigned(2, "1.1.0"),
+        previous: Some(unsigned(1, "1.0.0")),
+        publisher: None,
+        ..installed()
+    });
+    assert!(!world.allow_unsigned);
+    let plan = world
+        .plan(&Change::RollBack {
+            addon: id(),
+            when_busy: WhenBusy::Wait,
+        })
+        .expect("a roll back");
+    assert_eq!(
+        plan.effects,
+        [
+            Effect::Unsigned,
+            Effect::RollsBack {
+                from: version("1.1.0"),
+                to: version("1.0.0"),
+            },
+        ]
+    );
+    assert_eq!(
+        plan.steps.last(),
+        Some(&Step::Commit(Commit::Packages {
+            active: hash(1),
+            previous: Some(hash(2)),
             publisher: None,
             enabled: true,
         }))
