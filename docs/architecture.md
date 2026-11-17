@@ -110,6 +110,8 @@ pub enum Action {
 	ApplyUnattend { template: UnattendTemplateId },
 	InstallApplications { apps: AppSelection },   // One(AppId) or FromList(VarName)
 	VerifyDrivers { policy: MissingDriverPolicy },
+	EnableBitLocker { method: EncryptionMethod, full_disk: bool, wait_secs: Option<NonZeroU32>, tpm_failure: TpmFailure },   // full OS only
+	SuspendBitLocker { restarts: SuspendRestarts },   // full OS only. Never decrypts
 	CheckReadiness { checks: ReadinessChecks },   // Windows 11 minimums by default
 	ActivateWindows { online: bool },   // full OS only. Installs the product key typed in WinPE
 }
@@ -181,6 +183,10 @@ pub struct ProcessorCheck { pub min_cores: u32, pub mode: CheckMode }   // proce
 
 pub enum CheckMode { Fail, Warn, Off }
 
+pub enum EncryptionMethod { OsDefault, Aes128, Aes256, XtsAes128, XtsAes256 }   // default OsDefault
+pub enum TpmFailure { Fail, Skip }   // default Fail
+pub struct SuspendRestarts(u8);      // 1 to 15. Default 1
+
 pub struct Comparison<T> { pub op: CompareOp, pub value: T }
 pub struct FileVersion { pub major: u16, pub minor: u16, pub build: u16, pub revision: u16 }
 pub struct Timestamp(pub OffsetDateTime);
@@ -199,6 +205,7 @@ pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rul
 - `MemoryCheck`, `DiskCheck`, and `ProcessorCheck` each hold a minimum and a `mode`, so the JSON for one is an object such as `{"min_mib": 4096, "mode": "fail"}`. The `uefi`, `tpm_2_0`, and `secure_boot` checks have no minimum, so each is a bare `CheckMode`, such as `"warn"`.
 - `min_mib` is in mebibytes of 2^20 bytes, so the default 4096 is 4 GiB. `min_gb` is in decimal gigabytes of 10^9 bytes, the unit that disks are sold in, because a disk sold as 64 GB holds less than 64 GiB. `min_cores` counts processor cores.
 - `max_runtime_secs` is a whole number of seconds and is never zero, because a zero limit fails every run. An earlier sketch had `max_runtime: Option<Duration>`. serde writes a `Duration` as an object with `secs` and `nanos`. deployarr limits a step in whole seconds, so the limit is one JSON integer and the field name carries the unit.
+- `wait_secs` in `EnableBitLocker` follows the same rule. `SuspendRestarts` keeps its count private, and `SuspendRestarts::new` rejects a count outside 1 to 15. Its JSON is a bare integer. [BitLocker](#bitlocker) gives the meaning of each setting.
 - `ExitCodes` holds `i32` values. Windows returns a process's exit code as a 32-bit `DWORD` ([GetExitCodeProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess)), and an `i32` holds those 32 bits. An exit code at or above `0x80000000` is written as its signed value, so `0x80070005` is `-2147024891`. The unsigned spelling fails to parse. An HRESULT is a `LONG`, a 32-bit signed integer ([Windows Data Types](https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types)), so the signed value is also the HRESULT's own value.
 - `ExitCodes` keeps its fields private, and `ExitCodes::new` rejects a code that is in both `success` and `reboot`. A code means success, or success and then a reboot, never both.
 - `Test<T>` carries an operator together with its operand. `Exists` and `NotExists` take no operand, and every other operator takes one, so a `Var` or `Registry` condition can neither lack the operand it needs nor carry one that it ignores. A `Var` condition compares against a `NonEmptyTemplate`, because `NotExists` is the test for an empty variable.
@@ -215,9 +222,9 @@ pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rul
 A task sequence is stored and sent as one JSON document. `TaskSequence::from_json` parses it into the types above.
 
 - The top-level `schema_version` is 1. The parser rejects any other version.
-- Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`.
+- Field names and variant names are in snake case, such as `continue_on_error` and `win_pe`. `RunPowerShell` is written as `run_powershell`, `EnableBitLocker` as `enable_bitlocker`, and `SuspendBitLocker` as `suspend_bitlocker`.
 - A variant with data is an object with one key, the variant's name, such as `{"run_command": {"command": "ipconfig"}}`. A variant without data is a string, such as `"win_pe"`. Each node in `children` is `{"group": ...}` or `{"step": ...}`. This is serde's externally tagged form. The other choice puts a `"type"` key inside the object. serde buffers such an object before it reads the variant, so the path of a parse error stops at `action` and does not reach the field that failed.
-- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, and each field inside them. An omitted `Option` field is none. Every other field is required.
+- A field that the document omits takes its default when it has one above: `exit`, `limits`, `disk`, `checks`, `method`, `full_disk`, `tpm_failure`, `restarts`, and each field inside them. An omitted `Option` field is none. Every other field is required.
 - An unknown field is an error, so a misspelled field name never passes as a default.
 - The serializer writes every field, defaults included. A stored sequence then keeps its meaning if a default changes later.
 - A parse error gives the path of the field that failed, such as `root.children[0].step.action.run_command.exit.success[1]`, and the reason.
@@ -230,6 +237,7 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
   - An operand on `exists` or `not_exists`, a missing operand on any other operator, or an empty `Var` operand, at the operator, such as `test.exists`.
   - `Like`, `Exists`, or `NotExists` in a file version or timestamp comparison, at `op`.
   - A negative registry integer, at the operator that holds it.
+  - A `SuspendBitLocker` count outside 1 to 15, at `restarts`.
   - A `SetVariable` step or a `default_vars` entry that names a variable that starts with `_`, at its `name`.
   - Two `default_vars` entries that name the same variable, in any case, at the second entry's name, such as `default_vars[1].name`.
 - The compiler rejects a `run_in` that the action cannot honor when the sequence is saved, so that the error names the node. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
@@ -277,6 +285,7 @@ The compiler also rejects these mistakes when you save, which MDT finds only at 
 - A step whose `run_in` its action does not allow, by the table below, such as `ApplyOsImage` in the full OS. MDT fails such a step with error 50 when the engine reaches it.
 - A step with `run_in` `WinPe` whose condition holds an `InstalledMsi` or `Wmi` condition at any depth. Both are full OS only. See [Core data shapes](#core-data-shapes).
 - A `Restart` step with `run_in` `WinPe` that comes before the first `PartitionDisk` step in program order. Until that step, the state lives on `X:`, and a reboot loses it, so the deployment starts over from the first step. See [State on disk and resume](#state-on-disk-and-resume). A sequence with no `PartitionDisk` step therefore fails for every such `Restart`. A `Restart` with `run_in` `Either` passes. The agent fails it at run time if the state is still on `X:`.
+- A `Restart` step with `into` `WinPe` that comes after an `EnableBitLocker` step in program order. After the partition step, the state lives on the Windows volume. Once BitLocker protects that volume, the agent in WinPE cannot read the state there (inferred). See [BitLocker](#bitlocker).
 - Two nodes in one tree that share a `NodeId`. `Instr` and the errors identify a node by its ID, so an ID must be unique.
 
 | Action | Allowed `run_in` |
@@ -284,11 +293,12 @@ The compiler also rejects these mistakes when you save, which MDT finds only at 
 | `PartitionDisk`, `ApplyOsImage`, `ApplyDrivers`, `ApplyUnattend`, `CheckReadiness` | `WinPe` |
 | `InstallApplications`, `VerifyDrivers`, `ActivateWindows` | `FullOs` |
 | `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart` | `WinPe`, `FullOs`, or `Either` |
+| `EnableBitLocker`, `SuspendBitLocker` | `FullOs` |
 
 - `Action::allowed_run_in` holds the table as one exhaustive match, so a new action does not compile until someone decides where it runs.
 - `compile` returns every error in document order, not only the first.
 - Each error names the node's ID, its path in the tree, such as `root.children[1].group.children[0]`, and the rule. An ID that two nodes share cannot locate either node, so the duplicate error also names the path of the first node with that ID.
-- A disabled node is still part of the sequence that you save, so the `run_in` rule, the WinPE condition rule, and the duplicate ID rule check it. The `Restart` rule reads program order, so it skips disabled nodes (design decision).
+- A disabled node is still part of the sequence that you save, so the `run_in` rule, the WinPE condition rule, and the duplicate ID rule check it. The two `Restart` rules read program order, so they skip disabled nodes (design decision).
 
 The parser rejects other mistakes before the compiler runs, such as an empty success list or an empty `All` or `Any`. See [JSON format](#json-format).
 
@@ -770,6 +780,83 @@ A per-model profile replaces the library-wide match for PCs it covers. In MDT, t
 - The target disk is chosen by rule. The default is the first internal, non-removable disk. The agent refuses USB disks and the disk it booted from.
 - Boot files are written with `bcdboot W:\Windows /s S: /f UEFI` or `/f BIOS`, explicitly. MDT omits `/s` and `/f` on UEFI.
 - WinRE is copied to `R:\Recovery\WindowsRE` and registered with `reagentc /setreimage /path R:\Recovery\WindowsRE /target W:\Windows`.
+
+## BitLocker
+
+deployarr turns BitLocker on with the `EnableBitLocker` action and suspends it with the `SuspendBitLocker` action. These are ConfigMgr's Enable BitLocker and Disable BitLocker steps. ConfigMgr's third step, Pre-provision BitLocker, has no counterpart ([ConfigMgr 2509 reference](research/configmgr-2509.md#bitlocker)). Both actions run only in the full OS, on the volume of the running Windows. deployarr's disk layouts have one Windows volume and no data volume, so neither action has a drive setting. The built-in Windows client template has no BitLocker step. An admin adds one to a sequence that needs it.
+
+### No pre-provisioning in WinPE
+
+MDT and ConfigMgr can start encryption in WinPE, before the new Windows first starts. By default both run `manage-bde.exe -on <drive> -used` there, with no key protector ([MDT 8456 reference](research/mdt-8456.md#pre-provisioning-in-winpe), [ConfigMgr 2509 reference](research/configmgr-2509.md#pre-provision-bitlocker)). That needs `manage-bde.exe` from the `WinPE-SecureStartup` component, and the WMI service and the `Win32_EncryptableVolume` provider from `WinPE-WMI`. Base WinPE has none of them ([ConfigMgr 2509 reference](research/configmgr-2509.md#what-pre-provisioning-needs-in-winpe)).
+
+The owner chose a boot image of base WinPE, without `WinPE-WMI` or `WinPE-SecureStartup` ([#51](https://github.com/Tsukidy/deployarr/issues/51#issuecomment-6816910755)). The owner also chose no pre-provisioning ([#156](https://github.com/Tsukidy/deployarr/issues/156#issuecomment-6956569307)). So:
+
+- deployarr enables BitLocker only in the full OS. No action pre-provisions it in WinPE.
+- No BitLocker action allows `run_in` `WinPe`. A BitLocker step therefore never needs an optional component, and the rule in [Boot image](#boot-image) never rejects a sequence because of one.
+- Base WinPE has `fveapi.dll` and `fvevol.sys`. Nobody has tested them for pre-provisioning, and deployarr does not use them.
+
+### How the agent reaches BitLocker
+
+The agent calls the `Win32_EncryptableVolume` WMI class in `root\CIMV2\Security\MicrosoftVolumeEncryption`. MDT's `ZTIBde.wsf` and ConfigMgr's `tscore.dll` use the same class ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os), [ConfigMgr 2509 reference](research/configmgr-2509.md#bitlocker)).
+
+- Each method returns a status code, and the volume's state comes back as numbers. The agent checks every code and reads the state back without parsing text.
+- The agent gets the WMI locator from `CoCreateInstance` at run time ([Example: Getting WMI Data from the Local Computer](https://learn.microsoft.com/en-us/windows/win32/wmisdk/example--getting-wmi-data-from-the-local-computer)). Its import table therefore gains only COM modules, such as `ole32.dll` and `oleaut32.dll`, which base WinPE's [list file](research/winpe-10.1.26100.9457.md#the-list-file) holds. The import check in [Agent](#agent) still passes.
+- These calls work only in the full OS. Base WinPE has no WMI service ([ConfigMgr 2509 reference](research/configmgr-2509.md#what-pre-provisioning-needs-in-winpe)). `ProtectKeyWithTPM` "is only applicable for the volume that contains the currently running operating system" ([ProtectKeyWithTPM](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithtpm-win32-encryptablevolume)).
+
+### Enable BitLocker
+
+`EnableBitLocker` has four settings:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `method` | `OsDefault` | `OsDefault` leaves the method to Windows, which picks XTS-AES 128 on Windows 10 1511 and later ([Encrypt](https://learn.microsoft.com/en-us/windows/win32/secprov/encrypt-win32-encryptablevolume)). `Aes128`, `Aes256`, `XtsAes128`, and `XtsAes256` pass the `EncryptionMethod` values 3, 4, 6, and 7. ConfigMgr's steps take the same five choices ([ConfigMgr 2509 reference](research/configmgr-2509.md#encryption-methods)) |
+| `full_disk` | `false` | `false` encrypts used space only. `true` encrypts the whole volume |
+| `wait_secs` | none | None ends the step while encryption goes on. A number of seconds waits until the volume is fully encrypted, and fails the step if that time passes first |
+| `tpm_failure` | `Fail` | `Fail` fails the step when the agent cannot add the TPM protector. `Skip` ends the step with a warning instead. The step has changed nothing by then |
+
+The step adds two key protectors, and no others:
+
+- A TPM protector, with `ProtectKeyWithTPM`. The agent passes no platform validation profile, so Windows uses its default ([ProtectKeyWithTPM](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithtpm-win32-encryptablevolume)).
+- A recovery password, with `ProtectKeyWithNumericalPassword` and no password. "If no numerical password is specified, one is randomly generated" ([ProtectKeyWithNumericalPassword](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithnumericalpassword-win32-encryptablevolume)). The call returns only the new protector's ID.
+
+deployarr leaves the recovery password only on the PC. The owner decided that deployarr keeps no copy of it, on its server or anywhere else, and that the client backs it up ([#156](https://github.com/Tsukidy/deployarr/issues/156#issuecomment-6956569307)). So:
+
+- The agent never asks Windows for the password. The password never reaches the agent, a log line, an event, a file, or the server.
+- No setting or variable supplies a password. MDT and ConfigMgr each take one from `OSDBitLockerRecoveryPassword` ([MDT 8456 reference](research/mdt-8456.md#recovery-key), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+- deployarr sends the password to no store, AD DS included. MDT writes it in plain text to a file on the key drive. ConfigMgr escrows it to AD DS, to its own database, or to both (same pages).
+- The agent writes no BitLocker policy values. MDT writes them only for the modes that need a PIN or a startup key ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os)). ConfigMgr writes them for every mode and for its AD DS backup ([ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+- The step result names each protector's ID and says that deployarr kept no copy of the recovery password. The client backs it up from the PC. For example, `manage-bde -protectors -adbackup` backs it up to AD DS, and `-aadbackup` to Microsoft Entra ID ([manage-bde protectors](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-protectors)).
+
+The first release adds no protector that needs a PIN or a startup key. With either one, "BitLocker can lock the normal startup process until the user supplies a personal identification number (PIN) or inserts a removable device that contains a startup key" ([BitLocker overview](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)). Every restart after the step would then wait for a person, which zero-touch deployment rules out. MDT and ConfigMgr offer both ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)). [Not in the first release](#not-in-the-first-release) lists them.
+
+The step makes these calls in order. Each call checks the volume first or is safe to repeat, so a run after a crash ends in the same state:
+
+1. `GetConversionStatus`. A volume that is decrypting, status 3 or 5, fails the step, as in ConfigMgr ([GetConversionStatus](https://learn.microsoft.com/en-us/windows/win32/secprov/getconversionstatus-win32-encryptablevolume), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+2. `ProtectKeyWithTPM`, unless `GetKeyProtectors` lists a TPM protector. On a volume with no protector at all, `GetKeyProtectors` returns `FVE_E_NOT_ACTIVATED` ([GetKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/getkeyprotectors-win32-encryptablevolume)), and the agent reads that as an empty list. When `ProtectKeyWithTPM` fails, `tpm_failure` decides. One such failure is `TBS_E_SERVICE_NOT_RUNNING`, which means "No compatible TPM is found on this computer" ([ProtectKeyWithTPM](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithtpm-win32-encryptablevolume)).
+3. `ProtectKeyWithNumericalPassword`, unless `GetKeyProtectors` lists a numerical password.
+4. `Encrypt`, with the method, and with flag 1, data-only encryption, unless `full_disk` is `true`. `Encrypt` starts encryption on a decrypted volume, resumes it on a paused or running one, and returns 0 on a fully encrypted one. When `method` is not `OsDefault` and the volume is already partly or fully encrypted with another method, it returns `FVE_E_CANNOT_SET_FVEK_ENCRYPTED` ([Encrypt](https://learn.microsoft.com/en-us/windows/win32/secprov/encrypt-win32-encryptablevolume)), and the step fails.
+5. `EnableKeyProtectors`. It turns suspended protectors back on, and it returns 0 when they are already on ([EnableKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/enablekeyprotectors-win32-encryptablevolume)).
+6. The read-back. The volume must list a TPM protector and a numerical password. `GetConversionStatus` must report 1 or 2, fully encrypted or encryption in progress. `GetSuspendCount` must return `ERROR_NOT_SUPPORTED`, which on the OS volume means that the volume is not suspended ([GetSuspendCount](https://learn.microsoft.com/en-us/windows/win32/secprov/getsuspendcount-win32-encryptablevolume)). Otherwise the step fails.
+7. The wait, when `wait_secs` is set. The agent reads the conversion status every 10 seconds, as ConfigMgr does, until it reports 1. `GetProtectionStatus` must then report 1, protection on ([GetProtectionStatus](https://learn.microsoft.com/en-us/windows/win32/secprov/getprotectionstatus-win32-encryptablevolume)). A status other than 1 or 2, or the end of the wait, fails the step. MDT's wait and ConfigMgr's `/wait` have no time limit ([MDT 8456 reference](research/mdt-8456.md#waiting-for-encryption), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)).
+
+A step that cannot do its work fails, unless `tpm_failure` says to skip, and the step result says why. MDT's script exits with success when its tools are missing or the OS is too old, and both BitLocker steps in its template continue on error ([MDT 8456 reference](research/mdt-8456.md#mdt-faults-that-deployarr-fixes)).
+
+- Used space only is the default, as in ConfigMgr. Microsoft's page for ConfigMgr's Enable BitLocker step says "This default behavior is recommended, as it's faster and more efficient" ([Task sequence steps](https://learn.microsoft.com/en-us/intune/configmgr/osd/understand/task-sequence-steps)). MDT's full-OS step encrypts the whole of a volume that WinPE did not pre-provision ([MDT 8456 reference](research/mdt-8456.md#enabling-in-the-full-os)). With used space only, "The sections of the volume containing used space will be encrypted but the free space will not" ([manage-bde on](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-on)). Data that a reused disk held before the deployment can stay readable in that free space (inferred). `full_disk` covers that case.
+- The agent never takes ownership of the TPM. MDT and ConfigMgr take ownership when the TPM has none ([MDT 8456 reference](research/mdt-8456.md#tpm-checks), [ConfigMgr 2509 reference](research/configmgr-2509.md#enable-bitlocker)). Windows provisions the TPM itself. "Windows takes ownership of the TPM as part of the provisioning process on each boot", and from Windows 10 1607 on it does not keep the owner password ([Change the TPM owner password](https://learn.microsoft.com/en-us/windows/security/hardware-security/tpm/change-the-tpm-owner-password)). Nobody has checked that Windows has provisioned the TPM by the time the step runs. The M7 check records whether `ProtectKeyWithTPM` succeeds on the UEFI VM and on the real PC.
+- Windows can start encryption by itself. When OOBE finishes, "device encryption is initialized on the OS drive and fixed data drives on the computer with a clear key that is the equivalent of standard BitLocker suspended state". Starting in Windows 11 24H2, "more devices are eligible for automatic and manual device encryption" ([BitLocker overview](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)). The step can therefore find the volume encrypting or encrypted. Steps 4 and 5 handle that state. `EnableKeyProtectors` "ensures that the volume's encryption key is not exposed in the clear on the hard disk" ([EnableKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/enablekeyprotectors-win32-encryptablevolume)). That it also ends device encryption's clear key is inferred. When device encryption used a method other than `method`, step 4 fails. The M7 check records the volume's state when the step starts.
+- Microsoft lists Pro, Enterprise, Pro Education/SE, and Education as the editions that support BitLocker enablement ([BitLocker overview](https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/)). Home is not among them. When a sequence is saved, the server rejects an enabled `EnableBitLocker` step if the sequence counts as Home by the rule in [Directory join](#directory-join). The error names the image's edition ID. Neither a variable nor an add-on can add the step, so the server needs no second check after lookup (design decision).
+- Nobody has checked whether `sysprep /oobe` runs while BitLocker protects the OS volume. The `CustomerOobe` end state runs it last ([End state](#end-state)). The M7 check records it. If Sysprep refuses, the server must reject `EnableBitLocker` for `CustomerOobe`, and this section changes.
+- The compiler rejects a `Restart` into WinPE after an `EnableBitLocker` step. See [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program).
+
+### Suspend BitLocker
+
+`SuspendBitLocker` turns the volume's key protectors off for a number of restarts. It never decrypts. ConfigMgr calls the same step Disable BitLocker, and that step never decrypts either ([ConfigMgr 2509 reference](research/configmgr-2509.md#disable-bitlocker)). deployarr names the action for what it does.
+
+- When a startup component that the TPM protector's profile measures changes while protection is on, "the TPM will not release the encryption key to unlock the disk volume and the computer will enter into recovery mode" ([ProtectKeyWithTPM](https://learn.microsoft.com/en-us/windows/win32/secprov/protectkeywithtpm-win32-encryptablevolume)). A firmware update can be such a change (inferred). A `SuspendBitLocker` step before it keeps the PC out of recovery.
+- The one setting, `restarts`, is the number of restarts after which protection resumes. It holds 1 to 15, and the default is 1. ConfigMgr's step takes "a value between 1 (default) and 15" ([Task sequence steps](https://learn.microsoft.com/en-us/intune/configmgr/osd/understand/task-sequence-steps)).
+- `manage-bde` also takes 0, which suspends protection indefinitely ([manage-bde protectors](https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/manage-bde-protectors)). `DisableKeyProtectors` "exposes the volume's encryption key in the clear on the hard disk" ([DisableKeyProtectors](https://learn.microsoft.com/en-us/windows/win32/secprov/disablekeyprotectors-win32-encryptablevolume)). In a first-release deployment, only a later `EnableBitLocker` step would end such a suspension, so deployarr leaves 0 out (design decision).
+- When the volume has no key protector, the step changes nothing, and its result says why. Otherwise the agent calls `DisableKeyProtectors` with the count. It reads the count back with `GetSuspendCount`, which gives 0 to 15 for a suspended OS volume ([GetSuspendCount](https://learn.microsoft.com/en-us/windows/win32/secprov/getsuspendcount-win32-encryptablevolume)). The step fails unless it reads back `restarts`.
+- A run after a crash calls `DisableKeyProtectors` again. That this sets the count again on a volume that is already suspended is inferred. If it does not, the read-back fails the step.
 
 ## Applications
 
@@ -1306,7 +1393,7 @@ An add-on author sees one trait with default bodies and the `deployarr-core` typ
 These are planned for later and kept out of the first release on purpose:
 
 - Windows Update during deployment
-- BitLocker
+- BitLocker protectors that need a PIN or a startup key (see [Enable BitLocker](#enable-bitlocker))
 - user state migration and in-place upgrades
 - multicast
 - PXE across routed subnets through a DHCP relay
