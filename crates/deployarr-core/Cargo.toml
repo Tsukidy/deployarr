@@ -10,12 +10,14 @@ publish.workspace = true
 # off a dependency's default features when they pull in `std`.
 [dependencies]
 serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
-serde_json = { version = "1", default-features = false, features = ["alloc"] }
+# `raw_value` keeps an add-on step's config as the JSON text that was saved.
+serde_json = { version = "1", default-features = false, features = ["alloc", "raw_value"] }
 serde_path_to_error = "0.1"
 # `time`'s `formatting` feature needs `std`, so `condition::Timestamp` writes its
 # own RFC 3339 text and uses `time` only to parse it.
 time = { version = "0.3", default-features = false, features = ["parsing"] }
-uuid = { version = "1", default-features = false, features = ["serde"] }
+# `v5` derives the IDs of the nodes that `lower` adds. It needs no randomness.
+uuid = { version = "1", default-features = false, features = ["serde", "v5"] }
 
 [dev-dependencies]
 # `tests/timestamp_json.rs` checks that `Timestamp` reads and writes the same
@@ -23,3 +25,5 @@ uuid = { version = "1", default-features = false, features = ["serde"] }
 # for the library too. Only the `wasm32` and `x86_64-unknown-none` builds catch
 # library code that needs them.
 time = { version = "0.3", features = ["serde-well-known"] }
+# `tests/compile_types.rs` shows that `compile` rejects an authored sequence.
+trybuild = "1"
