@@ -8,6 +8,8 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 
 - Ask the owner every question with the `AskUserQuestion` tool, including design choices, scope checks, and approval of a ticket breakdown. A question left in reply text is easy to miss.
 - A subagent returns its open question to the main conversation, which asks it with the tool.
+- Put your recommended option first, marked `(Recommended)`.
+- Record an answer about an issue on it as an `Owner input:` comment before you act.
 
 ## Environment
 
@@ -22,6 +24,8 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 - The MCP tools cannot delete comments, create labels or milestones, or change repository settings.
 - Open a pull request with `create_pull_request` and `draft: true`. Mark it ready for review with `update_pull_request` and `draft: false`, and convert it back to a draft with `draft: true`.
 - A push that deletes a branch is refused with HTTP 403, and auto mode blocks force-pushes.
+- Watch a pull request only when the owner asks. Do not offer to.
+- The owner allows [one branch per ticket](docs/agents/issue-tracker.md#branches-in-a-cloud-session). Do not ask.
 
 ## Research tools
 
