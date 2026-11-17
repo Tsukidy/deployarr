@@ -326,7 +326,7 @@ The commands that read these bytes printed parts of the value with `set` substri
 
 ## Key prompt
 
-No key went to either VM from the start of `vm.sh` until WinPE showed its command prompt. After the prompt appeared, every key typed a command at it. Those were the commands under [Commands](#commands), plus `cls` and Esc to clear the screen between them. The download and request times below come from the prototype logs, where `transfer-finished` marks the end of a download. The screenshot times are the write times of the PNG files in `shot-times.txt`.
+No key went to either VM from the start of `vm.sh` until WinPE showed its command prompt. After the prompt appeared, the only keys were the commands under [Commands](#commands), `cls`, and Esc, as that section says. The download and request times below come from the prototype logs, where `transfer-finished` marks the end of a download. The screenshot times are the write times of the PNG files in `shot-times.txt`.
 
 | VM | Sub-option 11 in the first ACK | Key prompt | Boot manager loads with no key pressed |
 | --- | --- | --- | --- |
@@ -419,7 +419,7 @@ echo %v:~0,48%
 echo %v:~464,72%
 ```
 
-The last command ran for the offsets 464, 536, 608, and 680. On both VMs, `cls` cleared the screen between groups of commands, three times after Esc. Two commands stopped partway, when the typing script met a character it had no key for, and went in again in full after Esc. They are the fourth command on `uefi` and the fifth on `bios`. After the last packet, `sudo pkill -INT -x dumpcap` stopped the capture, and the HMP command `quit` stopped the VM.
+The last command ran for the offsets 464, 536, 608, and 680. On both VMs, `cls` cleared the screen before each group of commands. Esc went in three times, each just before `cls`, twice on `uefi` and once on `bios`. Two commands stopped partway, when the typing script met a character it had no key for. They are the fifth command on `uefi`, at `%`, and the sixth on `bios`, at `~`. After Esc and `cls`, each went in again in full, with the command before it. So the fourth `uefi` command and the fifth `bios` command ran twice. After the last packet, `sudo pkill -INT -x dumpcap` stopped the capture, and the HMP command `quit` stopped the VM.
 
 The committed files came from these commands:
 
@@ -438,7 +438,7 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/two-stage-chain-<vm>.pca
   - RRQs 3 and 4 on `uefi` come from `wdsmgfw.efi`, and RRQ 2 on `bios` comes from `wdsnbp.com`. Each follows the second ACK within 77 milliseconds and requests its boot file.
   - RRQs 5 to 33 on `uefi` come from `bootmgfw.efi`. RRQ 3 on `bios` comes from `pxeboot.n12`, and RRQs 4 to 13 come from `bootmgr.exe`. Each program's first request follows the end of its own download, and a program cannot run before it is downloaded.
   - RRQ 34 on `uefi` and RRQ 14 on `bios`, for `\EFI\Microsoft\Boot\Policies\UnlockToken.pol`, come from the OS loader. Each follows the end of the `boot.wim` download. `strings -el` finds that path in `winload.efi` and `winload.exe` from this `boot.wim`, and finds only `SecureBootUnlockToken.pol` in `bootmgfw.efi` and `bootmgr.exe`.
-- `DHCPServerACK` on `uefi` holds dnsmasq's ACK in frame 5, not its OFFER in frame 2 (inferred from its name). The screens show only the start of the value. On `bios`, no command printed the value.
+- `DHCPServerACK` on `uefi` holds dnsmasq's ACK in frame 5, not its OFFER in frame 2 (inferred from its name). The screens show the start of the value and its zero-filled end, not its options. On `bios`, no command printed the value.
 - The boot managers read option 252 from the second ACK (inferred). That ACK is the only packet that carries option 252 on the wire, and each boot manager requests its path.
 - The bytes after byte 300 of the `bios` `BootServerReply` are left over from an older packet in the same buffer (inferred). Bytes 300 to 311 equal the end of the first ACK, which is 312 bytes long. The second ACK is 300 bytes long. The page does not show which program keeps that buffer, or where the next 38 bytes come from.
 - WinPE on the `uefi` VM has no adapter because it has no driver for the virtio-net card (inferred). The [Test lab](../../roadmap.md#test-lab) section of the roadmap says Windows 11 has no inbox virtio drivers, and the `bios` VM's `e1000` card works in the same WinPE.
@@ -464,4 +464,4 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/two-stage-chain-<vm>.pca
 - The xid of a second request can be the firmware's xid, as on `bios`, or a new one, as on `uefi`. The server must not tie a second request to the first by xid.
 - After the boot manager starts, its TFTP requests match the single stage, so the TFTP findings of #27 apply to both chains. `wdsmgfw.efi` adds a size probe and a download of `\boot\x64\bootmgfw.efi` with a leading `\`. `wdsnbp.com` and `pxeboot.n12` download with `blksize` 512.
 - In WinPE, `BootServerReply` holds the second ACK in the two-stage chain. On `bios`, 50 more bytes follow the ACK's end option and padding, as the `bios` [End state](#end-state-1) records. In the single stage, the `bios` value has no end option, as the [single-stage page](single-stage-chain.md#end-state-1) records. So for either chain, the agent must find each option by its code, and stop at the first end option, or at the end of the value when it has none.
-- `DHCPServerACK` in the same key holds the DHCP server's ACK (inferred from its name). Only the start of the `uefi` value was read. The agent can log it next to `BootServerReply`.
+- `DHCPServerACK` in the same key holds the DHCP server's ACK (inferred from its name). The screens show only the start and the zero-filled end of the `uefi` value, not its options. The agent can log it next to `BootServerReply`.
