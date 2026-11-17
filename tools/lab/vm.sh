@@ -5,6 +5,8 @@
 # Usage: tools/lab/vm.sh uefi|uefi2023|bios [extra QEMU arguments]
 # The VM keeps its disk, firmware variables, TPM state, and serial log in
 # $LAB_DIR/<name>. LAB_DIR defaults to ~/deployarr-lab.
+# LAB_NO_TPM=1 starts a UEFI VM with no TPM: no swtpm and no TPM device. Its
+# TPM state stays as it is for the next start. The bios VM has no TPM anyway.
 set -euo pipefail
 # shellcheck source=lab.conf
 source "$(dirname "$0")/lab.conf"
@@ -59,27 +61,35 @@ if [[ $firmware == uefi ]]; then
         fi
         cp "$vars" "$dir/vars.fd"
     fi
-    mkdir -p "$dir/tpm"
-    # A Unix socket path must be short, so the socket goes in /tmp. Ubuntu's
-    # AppArmor profile for swtpm lets it create a socket there, and not in
-    # $XDG_RUNTIME_DIR.
-    sock=/tmp/deployarr-lab-$(id -u)-$name-swtpm.sock
-    rm -f "$sock"
-    swtpm socket --tpm2 --tpmstate "dir=$dir/tpm" \
-        --ctrl "type=unixio,path=$sock" \
-        --terminate --daemon --log "file=$dir/tpm/swtpm.log"
-    for _ in $(seq 50); do
-        [[ -S $sock ]] && break
-        sleep 0.1
-    done
+    if [[ ${LAB_NO_TPM:-} == 1 ]]; then
+        echo "LAB_NO_TPM=1, so $name runs without a TPM." >&2
+        tpm=()
+    else
+        mkdir -p "$dir/tpm"
+        # A Unix socket path must be short, so the socket goes in /tmp. Ubuntu's
+        # AppArmor profile for swtpm lets it create a socket there, and not in
+        # $XDG_RUNTIME_DIR.
+        sock=/tmp/deployarr-lab-$(id -u)-$name-swtpm.sock
+        rm -f "$sock"
+        swtpm socket --tpm2 --tpmstate "dir=$dir/tpm" \
+            --ctrl "type=unixio,path=$sock" \
+            --terminate --daemon --log "file=$dir/tpm/swtpm.log"
+        for _ in $(seq 50); do
+            [[ -S $sock ]] && break
+            sleep 0.1
+        done
+        tpm=(
+            -chardev "socket,id=chrtpm,path=$sock"
+            -tpmdev emulator,id=tpm0,chardev=chrtpm
+            -device tpm-crb,tpmdev=tpm0
+        )
+    fi
     args+=(
         -machine q35,smm=on
         -global driver=cfi.pflash01,property=secure,value=on
         -drive "if=pflash,format=raw,unit=0,readonly=on,file=$OVMF_CODE"
         -drive "if=pflash,format=raw,unit=1,file=$dir/vars.fd"
-        -chardev "socket,id=chrtpm,path=$sock"
-        -tpmdev emulator,id=tpm0,chardev=chrtpm
-        -device tpm-crb,tpmdev=tpm0
+        "${tpm[@]}"
         # romfile= leaves out QEMU's unsigned iPXE ROM, so OVMF's own
         # virtio-net driver and PXE client run with Secure Boot on.
         -device "virtio-net-pci,netdev=net0,mac=${VM_MAC[$name]},romfile=,bootindex=1"
