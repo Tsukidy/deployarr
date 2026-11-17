@@ -99,7 +99,7 @@ Check:
 Scope:
 - OS import from an ISO (7-Zip) or a WIM or ESD, with single-edition export through `wimlib-imagex`.
 - The boot image builder and the boot ISO.
-- Agent WinPE mode: `wpeinit`, `drvload`, network, the console screen, and fact gathering (SMBIOS, adapters, firmware, Secure Boot, TPM, memory, processor cores, disks, device IDs).
+- Agent WinPE mode: `wpeinit`, `drvload`, network, the console screen, and fact gathering (SMBIOS, chassis type, form factor flags, VM flag, hypervisor vendor, adapters, firmware, Secure Boot, TPM, memory, processor cores, disks, device IDs).
 - The readiness check, with Microsoft's Windows 11 minimums as defaults.
 - Disk layouts for UEFI and BIOS, image download and apply, `bcdboot`, WinRE, and the unattend file.
 - The offline service install, the handoff to the new OS, the finish action for both end states, turning off the built-in Administrator account, and answer file cleanup.
@@ -115,6 +115,8 @@ Check:
 - Each `CustomerOobe` run records the image state that audit mode shows, and whether the System Preparation Tool window was open when the agent ran `sysprep`. It also records whether the customer's OOBE shows the license terms page.
 - No run leaves an answer file in any place that [Answer files](architecture.md#answer-files) lists.
 - The BIOS VM's task sequence turns off the UEFI and TPM readiness checks. A VM below a readiness minimum stops before its disk changes, and its log names the failed check and the value found.
+- The UEFI VM and the BIOS VM report the VM flag as true and the hypervisor vendor as `KVMKVMKVM`. The lab records which VM signals each VM set. See [Chassis and VM facts](architecture.md#chassis-and-vm-facts).
+- The real PC reports the VM flag as false and an empty hypervisor vendor. The lab records its chassis type and form factor flags.
 - On the UEFI VM and the real PC, the agent reads the TPM version and the Secure Boot state in WinPE. It reports the TPM version that the PC has. Its log names the device ID that matched, whether it is a hardware ID or a compatible ID, and the device's status and problem code. The device must have started with no problem code. If base WinPE lacks the Secure Boot registry value, the gap is recorded in [Agent](architecture.md#agent).
 - Those TPM reads use a boot image built from the ADK's `winpe.wim`, which has no `tbs.dll`. They test the [TPM version](architecture.md#tpm-version) mapping, and whether `tpm.sys` starts in base WinPE.
 - A VM shows a prompt from a `PromptSpec` that the server sends, such as one that a test add-on declares. It accepts typed input and scanner-style input, and it applies the declared pattern.
