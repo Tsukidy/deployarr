@@ -292,13 +292,13 @@ winpe     yes
 | MDT keeps patching a serviced boot image and records failed items as present | Rebuild the boot image from the untouched base every time, keyed by a hash of the recipe, and fail the build when any step fails |
 | `efisys.bin` waits for a key press | The deployarr boot ISO uses the no-prompt EFI boot image |
 | Saved MDT steps have no ID | deployarr's stable `NodeId` is new, and an MDT importer must create IDs |
-| MDT conditions include file version, file and folder dates, installed MSI products, and a WMI failure flag | deployarr's `Condition` gets these types and the full operator set. Make, model, location, and computer checks become variable conditions on gathered facts, with exact matching instead of MDT's substring tests |
+| MDT conditions include file version, file and folder dates, installed MSI products, and a WMI failure flag | deployarr's `Condition` gets these types. `Var` and `Registry` tests take all nine `Test` operators, and file version and date comparisons take only the six equality and order operators of `CompareOp` (#62). See [Core data shapes](../architecture.md#core-data-shapes). Make, model, location, and computer checks become variable conditions on gathered facts, with exact matching instead of MDT's substring tests |
 | A condition that fails to evaluate fails the step in MDT | deployarr's evaluator returns an error, and the error goes through the step's `on_error` |
 | MDT writes its state file in place and ignores a failed save | The agent writes a temporary file, flushes it, and renames it. A failed save stops the run before the next step or reboot |
 | MDT saves nothing before a step, so an interrupted step runs again | The agent marks a step in flight before it starts. A typed action converges when run again, and a command fails unless its step allows a re-run |
 | A retry with a reboot loses the step's variable changes | The agent saves state before every reboot |
 | MDT marks a pending reboot with a volatile registry key | The agent does the same and refuses to resume while the marker exists |
-| An empty `successCodeList` fails every exit code | The compiler rejects an empty success list |
+| An empty `successCodeList` fails every exit code | The parser rejects an empty success list (#62). See [JSON format](../architecture.md#json-format) |
 | Exit code 3010 never reboots in MDT | deployarr reboots on 3010 and 1641 on purpose and documents the difference |
 | A `runIn` mismatch fails at run time | A step placed where its action cannot run is a compile error |
 | The engine ignores `startIn` | deployarr honors each command's working directory |
