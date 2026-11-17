@@ -265,6 +265,14 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/<name>.pcapng > docs/res
 
 Never commit a capture that holds file data, or any of the Windows files.
 
+To start a UEFI VM without its TPM, set `LAB_NO_TPM=1`:
+
+```bash
+LAB_NO_TPM=1 tools/lab/vm.sh uefi
+```
+
+The script then starts no `swtpm` and gives QEMU no TPM device, and it prints a line that says so. It leaves the TPM state in `~/deployarr-lab/uefi/tpm` as it is, so the next start without the variable gets the same TPM back. The variable works for `uefi` and `uefi2023`, and changes nothing for `bios`, which has no TPM. The BitLocker check of [M7](roadmap.md#m7-applications) uses it to run the sequence on a PC with no TPM.
+
 To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. That removes its disk, its firmware variables, and its TPM state. The next start creates them again.
 
 ## Troubleshooting
