@@ -54,10 +54,25 @@ seconds=${LAB_CHECK_SECONDS:-60}
 out=$LAB_DIR/checks/lab-check-$(date -u +%Y%m%dT%H%M%SZ)
 root=$(mktemp -d)
 pids=()
+vm_pids=()
 cleanup() {
     for pid in "${pids[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
+    # Each VM runs under sudo and timeout. On the lab host both pass SIGTERM,
+    # which kill sends, on to QEMU, and swtpm ends when QEMU does. SIGINT does
+    # not reach QEMU, because bash starts background jobs with SIGINT ignored.
+    for pid in "${vm_pids[@]}"; do
+        kill "$pid" 2>/dev/null || true
+    done
+    if ((${#vm_pids[@]})); then
+        for _ in $(seq 50); do
+            pgrep -f 'qemu-system.*deployarr-lab-' >/dev/null || break
+            sleep 0.1
+        done
+        # The check started only when no lab VM ran, so any left now are its own.
+        pkill -KILL -f 'qemu-system.*deployarr-lab-' 2>/dev/null || true
+    fi
     rm -rf "$root"
     # The evidence belongs to the user who ran sudo, also after a failed run.
     # The chown in Ubuntu 26.04, from uutils, leaves the group unchanged for
@@ -89,7 +104,6 @@ for pid in "${pids[@]}"; do
 done
 
 echo "Booting ${VMS[*]} for $seconds seconds"
-vm_pids=()
 for vm in "${VMS[@]}"; do
     rm -f "$LAB_DIR/$vm/serial.log"
     # The VM runs as the user, and root writes its log to the evidence folder.
@@ -99,6 +113,7 @@ for vm in "${VMS[@]}"; do
     vm_pids+=($!)
 done
 wait "${vm_pids[@]}" || true
+vm_pids=()
 sleep 1
 for pid in "${pids[@]}"; do
     kill -INT "$pid" 2>/dev/null || true
