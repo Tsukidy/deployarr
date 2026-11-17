@@ -243,15 +243,20 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
 The server compiles a task sequence into a flat list of instructions before it sends it to the agent:
 
 ```rust
-pub struct Program {
-	pub source: (TaskSequenceId, u32),
-	pub instrs: Vec<Instr>,
+pub fn compile(sequence: &TaskSequence) -> Result<Program, CompileErrors>;
+
+pub struct Program {           // only compile builds one
+	source: (TaskSequenceId, u32),
+	instrs: Vec<Instr>,
 }
+
+pub struct Pc(pub usize);      // an index into instrs. instrs.len() is the end of the program
 
 pub enum Instr {
 	// If the condition is false, jump to `skip_to`, past the group's last child.
 	Enter { node: NodeId, condition: Option<Condition>, skip_to: Pc },
-	Exec { node: NodeId, on_error: OnError },
+	// If the condition is false, skip the step.
+	Exec { node: NodeId, condition: Option<Condition>, run_in: RunIn, action: Action, on_error: OnError },
 }
 
 pub enum OnError {
@@ -263,12 +268,27 @@ pub enum OnError {
 
 The compiler drops disabled nodes and works out `on_error` for each step, so a failure needs no group stack at run time. MDT's engine keeps disabled entries in its table and tracks failures with a stack of open groups, which it must save and rebuild on every resume (`_SMSTSInstructionStackString`). Working out `on_error` ahead of time removes that state.
 
+A group, the root included, compiles to an `Enter` followed by its children. Each `Exec` carries the step's condition, `run_in`, and action, so the agent runs the program without the tree. An earlier sketch gave `Exec` only the node ID and `on_error`. Every jump lands after the instruction that holds it and no later than the end of the program, so a run moves only forward.
+
 Like MDT, deployarr checks a group's condition only when it reaches the group, and resumes from a saved instruction pointer. A variable that a step sets in WinPE can therefore enable a group that runs after a reboot. That is how MDT's phase groups work.
 
 The compiler also rejects these mistakes when you save, which MDT finds only at run time or never:
 
-- A step whose `run_in` its action cannot honor, such as `ApplyOsImage` in the full OS. MDT fails such a step with error 50 when the engine reaches it.
-- A `Restart` in WinPE before the state has moved to disk. See [State on disk and resume](#state-on-disk-and-resume).
+- A step whose `run_in` its action does not allow, by the table below, such as `ApplyOsImage` in the full OS. MDT fails such a step with error 50 when the engine reaches it.
+- A step with `run_in` `WinPe` whose condition holds an `InstalledMsi` or `Wmi` condition at any depth. Both are full OS only. See [Core data shapes](#core-data-shapes).
+- A `Restart` step with `run_in` `WinPe` that comes before the first `PartitionDisk` step in program order. Until that step, the state lives on `X:`, and a reboot loses it, so the deployment starts over from the first step. See [State on disk and resume](#state-on-disk-and-resume). A sequence with no `PartitionDisk` step therefore fails for every such `Restart`. A `Restart` with `run_in` `Either` passes. The agent fails it at run time if the state is still on `X:`.
+- Two nodes in one tree that share a `NodeId`. `Instr` and the errors identify a node by its ID, so an ID must be unique.
+
+| Action | Allowed `run_in` |
+| --- | --- |
+| `PartitionDisk`, `ApplyOsImage`, `ApplyDrivers`, `ApplyUnattend`, `CheckReadiness` | `WinPe` |
+| `InstallApplications`, `VerifyDrivers`, `ActivateWindows` | `FullOs` |
+| `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart` | `WinPe`, `FullOs`, or `Either` |
+
+- `Action::allowed_run_in` holds the table as one exhaustive match, so a new action does not compile until someone decides where it runs.
+- `compile` returns every error in document order, not only the first.
+- Each error names the node's ID, its path in the tree, such as `root.children[1].group.children[0]`, and the rule. An ID that two nodes share cannot locate either node, so the duplicate error also names the path of the first node with that ID.
+- A disabled node is still part of the sequence that you save, so the `run_in` rule, the WinPE condition rule, and the duplicate ID rule check it. The `Restart` rule reads program order, so it skips disabled nodes (design decision).
 
 The parser rejects other mistakes before the compiler runs, such as an empty success list or an empty `All` or `Any`. See [JSON format](#json-format).
 
