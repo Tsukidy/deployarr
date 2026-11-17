@@ -1,6 +1,5 @@
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
 
@@ -8,6 +7,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::non_empty::NonEmpty;
 use crate::rfc3339;
 use crate::template::Template;
 use crate::variable::VarName;
@@ -15,19 +15,18 @@ use crate::variable::VarName;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Condition {
-    All(Vec<Condition>),
-    Any(Vec<Condition>),
+    All(NonEmpty<Condition>),
+    Any(NonEmpty<Condition>),
     Not(Box<Condition>),
     Var {
         name: VarName,
-        op: CompareOp,
-        value: Template,
+        test: Test<NonEmptyTemplate>,
     },
+    /// Reads a `REG_DWORD`, `REG_QWORD`, `REG_SZ`, or `REG_EXPAND_SZ` value.
     Registry {
         key: Template,
         value: Option<String>,
-        op: CompareOp,
-        data: Option<RegData>,
+        test: Test<RegData>,
     },
     File {
         path: Template,
@@ -46,18 +45,36 @@ pub enum Condition {
     },
 }
 
+/// An operator together with the operand it compares against.
+///
+/// `Exists` and `NotExists` take no operand, and every other operator takes
+/// one, so a test can neither lack the operand it needs nor carry one that it
+/// ignores. The JSON is `"exists"`, or an object with one key such as
+/// `{"equals": "true"}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Test<T> {
+    Exists,
+    NotExists,
+    Equals(T),
+    NotEquals(T),
+    Less(T),
+    LessEqual(T),
+    Greater(T),
+    GreaterEqual(T),
+    Like(T),
+}
+
+/// The operators that compare a file version or a timestamp.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CompareOp {
-    Exists,
-    NotExists,
     Equals,
     NotEquals,
     Less,
     LessEqual,
     Greater,
     GreaterEqual,
-    Like,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,11 +84,69 @@ pub struct Comparison<T> {
     pub value: T,
 }
 
+/// The text that a `Var` condition compares against. It is a `Template` that
+/// is not empty, because `not_exists` is the test for an empty variable.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "Template")]
+pub struct NonEmptyTemplate(Template);
+
+impl NonEmptyTemplate {
+    pub fn as_template(&self) -> &Template {
+        &self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl TryFrom<Template> for NonEmptyTemplate {
+    type Error = EmptyTemplateError;
+
+    fn try_from(text: Template) -> Result<Self, Self::Error> {
+        if text.as_str().is_empty() {
+            Err(EmptyTemplateError)
+        } else {
+            Ok(Self(text))
+        }
+    }
+}
+
+impl From<NonEmptyTemplate> for Template {
+    fn from(text: NonEmptyTemplate) -> Self {
+        text.0
+    }
+}
+
+impl Serialize for NonEmptyTemplate {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmptyTemplateError;
+
+impl fmt::Display for EmptyTemplateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(
+            "the text to compare against must not be empty. `not_exists` tests for an empty variable",
+        )
+    }
+}
+
+impl core::error::Error for EmptyTemplateError {}
+
+/// The data that a `Registry` condition compares against. `Integer` holds
+/// every `REG_DWORD` and `REG_QWORD` value, so a negative number fails to parse.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged, expecting = "registry data is a string or an integer")]
+#[serde(
+    untagged,
+    expecting = "registry data is a string or an integer from 0 to 18446744073709551615"
+)]
 pub enum RegData {
     String(String),
-    Integer(i64),
+    Integer(u64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]

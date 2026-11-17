@@ -75,8 +75,7 @@
 									"condition": {
 										"var": {
 											"name": "AssetTag",
-											"op": "exists",
-											"value": ""
+											"test": "exists"
 										}
 									}
 								},
@@ -99,8 +98,9 @@
 									"condition": {
 										"var": {
 											"name": "IsUEFI",
-											"op": "equals",
-											"value": "true"
+											"test": {
+												"equals": "true"
+											}
 										}
 									}
 								},
@@ -240,24 +240,25 @@
 											"registry": {
 												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
 												"value": "CurrentBuildNumber",
-												"op": "greater_equal",
-												"data": 26100
+												"test": {
+													"greater_equal": 26100
+												}
 											}
 										},
 										{
 											"registry": {
 												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
 												"value": "EditionID",
-												"op": "like",
-												"data": "Pro*"
+												"test": {
+													"like": "Pro*"
+												}
 											}
 										},
 										{
 											"registry": {
 												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Deployarr",
 												"value": null,
-												"op": "exists",
-												"data": null
+												"test": "exists"
 											}
 										}
 									]
