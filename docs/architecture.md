@@ -302,19 +302,22 @@ pub struct Pc(pub usize);      // an index into instrs. instrs.len() is the end 
 
 pub enum Instr {
 	// If the condition is false, jump to `skip_to`, past the group's last child.
-	Enter { node: NodeId, condition: Option<Condition>, skip_to: Pc },
+	// If it fails to evaluate, the group fails, and the run follows `on_error`.
+	Enter { node: NodeId, condition: Option<Condition>, skip_to: Pc, on_error: OnError },
 	// If the condition is false, skip the step.
 	Exec { node: NodeId, condition: Option<Condition>, run_in: RunIn, action: BuiltinAction, on_error: OnError },
 }
 
 pub enum OnError {
-	Continue,        // the step has continue_on_error
-	JumpTo(Pc),      // the end of the nearest enclosing group with continue_on_error
+	Continue,        // the step has continue_on_error. Never on an Enter
+	JumpTo(Pc),      // the end of the nearest enclosing group with continue_on_error. For an Enter, it can be the group itself
 	FailDeployment,
 }
 ```
 
-The compiler drops disabled nodes and works out `on_error` for each step, so a failure needs no group stack at run time. MDT's engine keeps disabled entries in its table and tracks failures with a stack of open groups, which it must save and rebuild on every resume (`_SMSTSInstructionStackString`). Working out `on_error` ahead of time removes that state.
+The compiler drops disabled nodes and works out `on_error` for each step and each group, so a failure needs no group stack at run time. MDT's engine keeps disabled entries in its table and tracks failures with a stack of open groups, which it must save and rebuild on every resume (`_SMSTSInstructionStackString`). Working out `on_error` ahead of time removes that state.
+
+The `on_error` of a group's `Enter` is the one that a step without `continue_on_error` directly inside the group gets. It is `JumpTo` the group's own `skip_to` when the group has `continue_on_error`. Otherwise it is the target that the group's parent passes down to its steps, or `FailDeployment` for the root. The run follows it when the group's condition fails to evaluate (see [Conditions](#conditions)). It is never `Continue`, which would run the group's children as if the condition were true.
 
 A group, the root included, compiles to an `Enter` followed by its children. Each `Exec` carries the step's condition, `run_in`, and action, so the agent runs the program without the tree. An earlier sketch gave `Exec` only the node ID and `on_error`. Every jump lands after the instruction that holds it and no later than the end of the program, so a run moves only forward.
 
@@ -347,6 +350,7 @@ The parser rejects other mistakes before the compiler runs, such as an empty suc
 - The agent evaluates a condition when it reaches the group or step. A false group condition skips the group. A false step condition skips the step and leaves `last` unchanged, as MDT does.
 - The agent expands `Template` fields in a condition when it evaluates it, not when the server compiles the sequence.
 - Evaluation returns `Result<bool, ConditionError>`. An error is not false. It fails the step and goes through the step's `on_error`, which is MDT's rule.
+- A group whose condition fails to evaluate fails as a group. The run follows the `on_error` of the group's `Enter`, and goes where a failed step without `continue_on_error` directly inside the group would go (see [Compile the tree into a flat program](#compile-the-tree-into-a-flat-program)). A group with `continue_on_error` jumps past its last child. A group without it passes the failure up, to the end of the nearest enclosing group with `continue_on_error`. With no such group, the deployment fails. The root follows the same rule. The error leaves `last` unchanged. MDT's engine does the same, and for a group it sets neither `_SMSTSLastActionRetCode` nor `_SMSTSLastActionSucceeded` ([MDT 8450 binaries reference](research/mdt-8450-binaries.md#conditions)). The owner chose this rule on [#150](https://github.com/Tsukidy/deployarr/issues/150).
 - `Var` compares as integers when both sides are integers, and otherwise compares strings without regard to case, like MDT. `Like` matches `*` and `?` wildcards. `Exists` means the variable is set and not empty. A `Registry` comparison applies the `Var` rules to the text of both sides, with a number as its decimal text.
 - A comparison or `Like` test on a list value is an error, the same way a list in a `Template` fails the step (see [Variables](#variables)). `Exists` and `NotExists` work on a list, and a list with at least one item exists. A test on list items needs its own operator, which a later ticket can add (owner decision on [#177](https://github.com/Tsukidy/deployarr/issues/177)).
 - A missing file, folder, registry key, or registry value makes the condition false.

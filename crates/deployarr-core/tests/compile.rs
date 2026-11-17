@@ -138,18 +138,25 @@ fn run_in(name: &str) -> RunIn {
     serde_json::from_value(json!(name)).expect("a valid run_in")
 }
 
-/// Every jump lands after its own instruction and no later than the end.
+/// Every jump lands after its own instruction and no later than the end. That
+/// covers the `skip_to` and the `on_error` of each `Enter`, and no `Enter`
+/// holds `Continue`.
 fn assert_jumps_forward(program: &Program) {
     for (pc, instr) in program.instrs().iter().enumerate() {
-        let target = match instr {
-            Instr::Enter { skip_to, .. } => Some(*skip_to),
-            Instr::Exec {
-                on_error: OnError::JumpTo(target),
-                ..
-            } => Some(*target),
-            Instr::Exec { .. } => None,
+        let (skip_to, on_error) = match instr {
+            Instr::Enter {
+                skip_to, on_error, ..
+            } => {
+                assert_ne!(*on_error, Continue, "the Enter at {pc} holds Continue");
+                (Some(*skip_to), *on_error)
+            }
+            Instr::Exec { on_error, .. } => (None, *on_error),
         };
-        if let Some(target) = target {
+        let on_error = match on_error {
+            OnError::JumpTo(target) => Some(target),
+            Continue | FailDeployment => None,
+        };
+        for target in [skip_to, on_error].into_iter().flatten() {
             assert!(
                 Pc(pc) < target && target <= program.end(),
                 "the jump at {pc} goes to {target:?}"
@@ -183,6 +190,34 @@ fn shapes(program: &Program) -> Vec<Shape> {
 
 fn jump_to(pc: usize) -> OnError {
     OnError::JumpTo(Pc(pc))
+}
+
+/// Each `Enter` as its node, shortened like [`short`], and its `on_error`.
+fn enters(program: &Program) -> Vec<(u32, OnError)> {
+    program
+        .instrs()
+        .iter()
+        .filter_map(|instr| match instr {
+            Instr::Enter { node, on_error, .. } => Some((short(*node), *on_error)),
+            Instr::Exec { .. } => None,
+        })
+        .collect()
+}
+
+/// The `on_error` of the instruction for node `n`.
+fn on_error_of(program: &Program, n: u32) -> OnError {
+    program
+        .instrs()
+        .iter()
+        .find_map(|instr| match instr {
+            Instr::Enter { node, on_error, .. } | Instr::Exec { node, on_error, .. }
+                if short(*node) == n =>
+            {
+                Some(*on_error)
+            }
+            Instr::Enter { .. } | Instr::Exec { .. } => None,
+        })
+        .unwrap_or_else(|| panic!("no instruction for node {n:#x}"))
 }
 
 /// The steps of the tree in document order, with the disabled ones and the
@@ -346,6 +381,103 @@ fn a_root_with_continue_on_error_catches_failures_at_the_end_of_the_program() {
         ]
     );
     assert_eq!(program.end(), Pc(4));
+}
+
+#[test]
+fn a_group_whose_condition_fails_to_evaluate_fails_like_a_step_directly_inside_it() {
+    let document = root(vec![
+        continue_on_error(group(
+            0x10,
+            vec![
+                step(0x11, "either", command()),
+                group(
+                    0x20,
+                    vec![
+                        step(0x21, "either", command()),
+                        continue_on_error(group(0x30, vec![step(0x31, "either", command())])),
+                        group(0x40, vec![step(0x41, "either", command())]),
+                    ],
+                ),
+                step(0x12, "either", command()),
+            ],
+        )),
+        group(0x50, vec![step(0x51, "either", command())]),
+        step(0x02, "either", command()),
+    ]);
+
+    let program = compile_ok(&document);
+
+    assert_eq!(
+        shapes(&program),
+        [
+            Enter(0x01, 13),
+            Enter(0x10, 10),
+            Exec(0x11, jump_to(10)),
+            Enter(0x20, 9),
+            Exec(0x21, jump_to(10)),
+            Enter(0x30, 7),
+            Exec(0x31, jump_to(7)),
+            Enter(0x40, 9),
+            Exec(0x41, jump_to(10)),
+            Exec(0x12, jump_to(10)),
+            Enter(0x50, 12),
+            Exec(0x51, FailDeployment),
+            Exec(0x02, FailDeployment),
+        ]
+    );
+    assert_eq!(
+        enters(&program),
+        [
+            // No enclosing group has continue_on_error.
+            (0x01, FailDeployment),
+            // A group with continue_on_error jumps to its own skip_to.
+            (0x10, jump_to(10)),
+            // 0x20 has no continue_on_error, so it passes the failure to 0x10.
+            (0x20, jump_to(10)),
+            (0x30, jump_to(7)),
+            // Two levels up, past 0x20 to 0x10. 0x40 and 0x20 both end at 9.
+            (0x40, jump_to(10)),
+            (0x50, FailDeployment),
+        ]
+    );
+    // Each group's `Enter` goes where a failed step without continue_on_error
+    // directly inside the group goes.
+    for (group, step) in [
+        (0x01, 0x02),
+        (0x10, 0x11),
+        (0x20, 0x21),
+        (0x30, 0x31),
+        (0x40, 0x41),
+        (0x50, 0x51),
+    ] {
+        assert_eq!(
+            on_error_of(&program, group),
+            on_error_of(&program, step),
+            "group {group:#x}"
+        );
+    }
+}
+
+#[test]
+fn a_root_whose_condition_fails_to_evaluate_ends_the_program_or_the_deployment() {
+    let children = || {
+        vec![
+            step(0x02, "either", command()),
+            group(0x03, vec![step(0x04, "either", command())]),
+        ]
+    };
+
+    let caught = compile_ok(&continue_on_error(root(children())));
+    let failed = compile_ok(&root(children()));
+
+    // With continue_on_error, the root jumps to the end of the program.
+    assert_eq!(caught.end(), Pc(4));
+    assert_eq!(enters(&caught), [(0x01, jump_to(4)), (0x03, jump_to(4))]);
+    // Without it, the deployment fails.
+    assert_eq!(
+        enters(&failed),
+        [(0x01, FailDeployment), (0x03, FailDeployment)]
+    );
 }
 
 #[test]

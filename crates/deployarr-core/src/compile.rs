@@ -54,11 +54,15 @@ pub struct Pc(pub usize);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Instr {
     /// The start of a group. If the condition is false, the run jumps to
-    /// `skip_to`, past the group's last child.
+    /// `skip_to`, past the group's last child. If the condition fails to
+    /// evaluate, the group fails, and the run follows `on_error`. It is the
+    /// `on_error` of a step without `continue_on_error` directly inside the
+    /// group, and never [`OnError::Continue`].
     Enter {
         node: NodeId,
         condition: Option<Condition>,
         skip_to: Pc,
+        on_error: OnError,
     },
     /// A step. If the condition is false, the run skips the step.
     Exec {
@@ -70,12 +74,15 @@ pub enum Instr {
     },
 }
 
-/// Where the run goes when a step fails.
+/// Where the run goes when a step fails, or when a group's condition fails to
+/// evaluate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OnError {
-    /// The next instruction. The step has `continue_on_error`.
+    /// The next instruction. The step has `continue_on_error`. Only a step
+    /// takes it, never an [`Instr::Enter`].
     Continue,
-    /// The end of the nearest enclosing group with `continue_on_error`.
+    /// The end of the nearest enclosing group with `continue_on_error`. For an
+    /// [`Instr::Enter`], that group can be the group itself.
     JumpTo(Pc),
     /// Nowhere. The deployment fails, because no enclosing group has
     /// `continue_on_error`.
@@ -84,9 +91,9 @@ pub enum OnError {
 
 /// Compiles a lowered task sequence into the program that the agent runs.
 ///
-/// The compiler drops disabled nodes and works out each step's `on_error`, so
-/// a failure needs no group stack at run time. A group, the root included,
-/// compiles to an [`Instr::Enter`] followed by its children.
+/// The compiler drops disabled nodes and works out the `on_error` of each step
+/// and each group, so a failure needs no group stack at run time. A group, the
+/// root included, compiles to an [`Instr::Enter`] followed by its children.
 ///
 /// It fails with every rule that the sequence breaks, in document order.
 /// [`Rule`] lists the rules. A disabled node is still checked against every
@@ -128,7 +135,8 @@ enum Place {
     /// The node is disabled, or inside a disabled group.
     Dropped,
     /// The program keeps the node. A step here that fails, and has no
-    /// `continue_on_error`, takes `on_failure`.
+    /// `continue_on_error`, takes `on_failure`. So does a group here without
+    /// `continue_on_error` whose condition fails to evaluate.
     Kept { on_failure: OnError },
 }
 
@@ -146,16 +154,20 @@ impl Compiler {
         let (children, end) = match place {
             Place::Kept { on_failure } if meta.enabled => {
                 let end = Pc(self.instrs.len() + kept_len(group));
-                self.instrs.push(Instr::Enter {
-                    node: meta.id,
-                    condition: meta.condition.clone(),
-                    skip_to: end,
-                });
                 let on_failure = if meta.continue_on_error {
                     OnError::JumpTo(end)
                 } else {
                     on_failure
                 };
+                // A condition error fails the group the way a step without
+                // `continue_on_error` directly inside it fails, so `Enter`
+                // takes that step's target.
+                self.instrs.push(Instr::Enter {
+                    node: meta.id,
+                    condition: meta.condition.clone(),
+                    skip_to: end,
+                    on_error: on_failure,
+                });
                 (Place::Kept { on_failure }, Some(end))
             }
             _ => (Place::Dropped, None),
