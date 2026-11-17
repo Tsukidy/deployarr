@@ -48,8 +48,11 @@
 //!   the `apply_drivers` and the first `apply_unattend` come before
 //!   `apply_os_image`. A sequence written for deployarr puts them after it.
 //! - A step whose feature has no deployarr action is a `run_command`
-//!   placeholder that keeps MDT's command line. A comment in [`OUTLINE`] names
-//!   each one's feature. User state migration, BitLocker, and Windows Update
+//!   placeholder. Its command names the feature and the MDT script, such as
+//!   `placeholder: tattoo (MDT runs ZTITatoo.wsf)`, and no two are the same.
+//!   It never holds MDT's command line, because this repository holds no
+//!   Microsoft files. A comment in [`OUTLINE`] also names each placeholder's
+//!   feature. User state migration, BitLocker, and Windows Update
 //!   are in the architecture's "Not in the first release". The comment
 //!   `refresh` marks a step that only a refresh runs. A refresh starts in the
 //!   old Windows (`scripts/LiteTouch.wsf:380-389`), and its State Capture phase
@@ -326,6 +329,48 @@ fn the_port_keeps_every_group_step_and_condition_of_client_xml() {
     outline("group", &fixture()["root"], 0, &mut lines);
 
     assert_eq!(lines.join("\n"), OUTLINE.join("\n"));
+}
+
+/// The commands of the `run_command` steps in `group`, at any depth.
+fn commands<'a>(group: &'a Value, out: &mut Vec<&'a str>) {
+    for child in group["children"].as_array().expect("a list") {
+        match only_entry(child) {
+            ("group", group) => commands(group, out),
+            ("step", step) => {
+                if let Some(run) = step["action"].get("run_command") {
+                    out.push(text(&run["command"]));
+                }
+            }
+            (other, _) => panic!("a node is a group or a step, not `{other}`"),
+        }
+    }
+}
+
+#[test]
+fn each_placeholder_names_its_feature_and_the_mdt_script() {
+    let fixture = fixture();
+    let mut all = Vec::new();
+
+    commands(&fixture["root"], &mut all);
+
+    assert_eq!(all.len(), 39);
+    for command in &all {
+        let (feature, script) = command
+            .strip_prefix("placeholder: ")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .and_then(|rest| rest.split_once(" (MDT runs "))
+            .unwrap_or_else(|| panic!("not a placeholder: {command}"));
+        assert!(!feature.is_empty(), "{command}");
+        // A file name only, never MDT's command line with its paths and arguments.
+        assert!(
+            !script.contains([' ', '%', '\\', '"', '/']),
+            "{command} names more than a file"
+        );
+    }
+    let mut distinct = all.clone();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(distinct.len(), all.len(), "two placeholders are the same");
 }
 
 #[test]

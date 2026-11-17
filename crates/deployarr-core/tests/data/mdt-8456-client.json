@@ -41,7 +41,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGather.wsf\""
+										"command": "placeholder: gathering in Initialization, which the agent does itself (MDT runs ZTIGather.wsf)"
 									}
 								}
 							}
@@ -95,7 +95,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBIOSCheck.wsf\""
+										"command": "placeholder: BIOS block list (MDT runs ZTIBIOSCheck.wsf)"
 									}
 								}
 							}
@@ -148,7 +148,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIAppXmlGen.wsf\" /capture"
+										"command": "placeholder: user state migration, application list (MDT runs ZTIAppXmlGen.wsf)"
 									}
 								}
 							}
@@ -172,7 +172,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIUserState.wsf\" /capture"
+										"command": "placeholder: user state migration, capture in the old Windows (MDT runs ZTIUserState.wsf)"
 									}
 								}
 							}
@@ -188,7 +188,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGroups.wsf\" /capture"
+										"command": "placeholder: user state migration, local group capture (MDT runs ZTIGroups.wsf)"
 									}
 								}
 							}
@@ -204,7 +204,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%ScriptRoot%\\ZTINicConfig.wsf\""
+										"command": "placeholder: refresh, network settings capture (MDT runs ZTINicConfig.wsf)"
 									}
 								}
 							}
@@ -237,7 +237,7 @@
 											"run_in": "either",
 											"action": {
 												"run_command": {
-													"command": "cscript.exe \"%SCRIPTROOT%\\ZTIDisableBDEProtectors.wsf\""
+													"command": "placeholder: BitLocker, suspend before a refresh (MDT runs ZTIDisableBDEProtectors.wsf)"
 												}
 											}
 										}
@@ -253,7 +253,7 @@
 											"run_in": "either",
 											"action": {
 												"run_command": {
-													"command": "cscript.exe \"%SCRIPTROOT%\\LTIApply.wsf\" /PE"
+													"command": "placeholder: refresh, put WinPE on the old disk (MDT runs LTIApply.wsf)"
 												}
 											}
 										}
@@ -345,7 +345,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGather.wsf\""
+										"command": "placeholder: gathering in Preinstall, which the agent does itself (MDT runs ZTIGather.wsf)"
 									}
 								}
 							}
@@ -440,7 +440,7 @@
 											"run_in": "either",
 											"action": {
 												"run_command": {
-													"command": "cscript.exe \"%SCRIPTROOT%\\LTICopyScripts.wsf\""
+													"command": "placeholder: state on disk in Preinstall, which the agent keeps itself (MDT runs LTICopyScripts.wsf)"
 												}
 											}
 										}
@@ -476,7 +476,7 @@
 											"run_in": "either",
 											"action": {
 												"run_command": {
-													"command": "cscript.exe \"%SCRIPTROOT%\\ZTIUserState.wsf\" /capture"
+													"command": "placeholder: user state migration, capture in WinPE (MDT runs ZTIUserState.wsf)"
 												}
 											}
 										}
@@ -492,7 +492,7 @@
 											"run_in": "either",
 											"action": {
 												"run_command": {
-													"command": "cmd /c REG UNLOAD HKLM\\$DEST$SOFTWARE"
+													"command": "placeholder: user state migration, unload the old registry hive (MDT runs reg.exe)"
 												}
 											}
 										}
@@ -528,7 +528,7 @@
 											"run_in": "either",
 											"action": {
 												"run_command": {
-													"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBackup.wsf\""
+													"command": "placeholder: refresh, back up the old disk (MDT runs ZTIBackup.wsf)"
 												}
 											}
 										}
@@ -563,7 +563,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBDE.wsf\""
+										"command": "placeholder: BitLocker, pre-provision in WinPE (MDT runs ZTIBDE.wsf)"
 									}
 								}
 							}
@@ -595,7 +595,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIPatches.wsf\""
+										"command": "placeholder: offline update packages in Preinstall (MDT runs ZTIPatches.wsf)"
 									}
 								}
 							}
@@ -701,7 +701,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\LTICopyScripts.wsf\""
+										"command": "placeholder: state on disk in Postinstall, which the agent keeps itself (MDT runs LTICopyScripts.wsf)"
 									}
 								}
 							}
@@ -733,7 +733,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIdrivers.wsf\""
+										"command": "placeholder: drivers, which Lite Touch does not copy in Postinstall (MDT runs ZTIdrivers.wsf)"
 									}
 								}
 							}
@@ -749,7 +749,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIPatches.wsf\""
+										"command": "placeholder: offline update packages in Postinstall (MDT runs ZTIPatches.wsf)"
 									}
 								}
 							}
@@ -765,7 +765,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIWinRE.wsf\""
+										"command": "placeholder: WinRE, which deployarr sets up with the disk layout (MDT runs ZTIWinRE.wsf)"
 									}
 								}
 							}
@@ -834,7 +834,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGather.wsf\""
+										"command": "placeholder: gathering in State Restore, which the agent does itself (MDT runs ZTIGather.wsf)"
 									}
 								}
 							}
@@ -850,7 +850,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\LTIApply.wsf\" /post"
+										"command": "placeholder: cleanup after the install, which the agent does at the end (MDT runs LTIApply.wsf)"
 									}
 								}
 							}
@@ -866,7 +866,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIDomainJoin.wsf\""
+										"command": "placeholder: domain join check and recovery (MDT runs ZTIDomainJoin.wsf)"
 									}
 								}
 							}
@@ -882,7 +882,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTITatoo.wsf\""
+										"command": "placeholder: tattoo (MDT runs ZTITatoo.wsf)"
 									}
 								}
 							}
@@ -898,7 +898,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIOptIn.wsf\" /CEIP:YES /WER:YES"
+										"command": "placeholder: CEIP and WER opt-in (MDT runs ZTIOptIn.wsf)"
 									}
 								}
 							}
@@ -914,7 +914,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIWindowsUpdate.wsf\""
+										"command": "placeholder: Windows Update before the applications (MDT runs ZTIWindowsUpdate.wsf)"
 									}
 								}
 							}
@@ -948,7 +948,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIWindowsUpdate.wsf\""
+										"command": "placeholder: Windows Update after the applications (MDT runs ZTIWindowsUpdate.wsf)"
 									}
 								}
 							}
@@ -983,7 +983,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBde.wsf\""
+										"command": "placeholder: BitLocker, turn on in the full OS (MDT runs ZTIBde.wsf)"
 									}
 								}
 							}
@@ -999,7 +999,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIUserState.wsf\" /restore"
+										"command": "placeholder: user state migration, restore (MDT runs ZTIUserState.wsf)"
 									}
 								}
 							}
@@ -1015,7 +1015,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGroups.wsf\" /restore"
+										"command": "placeholder: user state migration, local group restore (MDT runs ZTIGroups.wsf)"
 									}
 								}
 							}
@@ -1039,7 +1039,7 @@
 								"run_in": "either",
 								"action": {
 									"run_command": {
-										"command": "cscript.exe \"%SCRIPTROOT%\\ZTIApplyGPOPack.wsf\""
+										"command": "placeholder: local GPO pack (MDT runs ZTIApplyGPOPack.wsf)"
 									}
 								}
 							}
@@ -1081,7 +1081,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%SCRIPTROOT%\\LTISysprep.wsf\""
+																"command": "placeholder: image capture, copy the Sysprep files (MDT runs LTISysprep.wsf)"
 															}
 														}
 													}
@@ -1117,7 +1117,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%SCRIPTROOT%\\ZTIDrivers.wsf\""
+																"command": "placeholder: image capture, XP storage drivers for Sysprep Only (MDT runs ZTIDrivers.wsf)"
 															}
 														}
 													}
@@ -1133,7 +1133,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%SCRIPTROOT%\\LTISysprep.wsf\""
+																"command": "placeholder: image capture, Sysprep for Sysprep Only (MDT runs LTISysprep.wsf)"
 															}
 														}
 													}
@@ -1169,7 +1169,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%SCRIPTROOT%\\LTIApply.wsf\" /PE /STAGE"
+																"command": "placeholder: image capture, put WinPE on the disk (MDT runs LTIApply.wsf)"
 															}
 														}
 													}
@@ -1185,7 +1185,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%SCRIPTROOT%\\ZTIDrivers.wsf\""
+																"command": "placeholder: image capture, XP storage drivers for Capture Image (MDT runs ZTIDrivers.wsf)"
 															}
 														}
 													}
@@ -1201,7 +1201,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%SCRIPTROOT%\\LTISysprep.wsf\""
+																"command": "placeholder: image capture, Sysprep for Capture Image (MDT runs LTISysprep.wsf)"
 															}
 														}
 													}
@@ -1217,7 +1217,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%_SMSTSMDataPath%\\Scripts\\LTIApply.wsf\" /PE /BCD"
+																"command": "placeholder: image capture, boot WinPE from the disk (MDT runs LTIApply.wsf)"
 															}
 														}
 													}
@@ -1249,7 +1249,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%SCRIPTROOT%\\ZTIGather.wsf\""
+																"command": "placeholder: image capture, gathering before the capture (MDT runs ZTIGather.wsf)"
 															}
 														}
 													}
@@ -1265,7 +1265,7 @@
 														"run_in": "either",
 														"action": {
 															"run_command": {
-																"command": "cscript.exe \"%SCRIPTROOT%\\ZTIBackup.wsf\""
+																"command": "placeholder: image capture, capture the image (MDT runs ZTIBackup.wsf)"
 															}
 														}
 													}
