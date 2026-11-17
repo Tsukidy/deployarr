@@ -219,6 +219,17 @@ fn vars_of(pairs: &[(&str, &str)]) -> Vars {
     vars
 }
 
+/// `Vars` with each name set by a rule to a list.
+fn lists_of(pairs: &[(&str, &[&str])]) -> Vars {
+    let mut vars = Vars::new();
+    for &(text, items) in pairs {
+        let items: Vec<String> = items.iter().map(|&item| item.to_owned()).collect();
+        vars.set(name(text), items, Sensitivity::Plain, SetSource::Rule)
+            .expect("a name that does not start with `_`");
+    }
+    vars
+}
+
 fn run(json: Value, vars: &Vars, machine: &Machine) -> Result<bool, ConditionError> {
     evaluate(&condition(json), vars, machine)
 }
@@ -471,21 +482,7 @@ fn mdt_var_like_matches_star_and_question_mark() {
 /// same" (`TsCore!0x1801a96c0`).
 #[test]
 fn mdt_var_exists_means_set_and_not_empty() {
-    let mut vars = vars_of(&[("Empty", ""), ("Full", "x"), ("Space", " ")]);
-    vars.set(
-        name("NoApps"),
-        Vec::<String>::new(),
-        Sensitivity::Plain,
-        SetSource::Rule,
-    )
-    .unwrap();
-    vars.set(
-        name("Apps"),
-        vec!["7-Zip".to_owned()],
-        Sensitivity::Plain,
-        SetSource::Rule,
-    )
-    .unwrap();
+    let vars = vars_of(&[("Empty", ""), ("Full", "x"), ("Space", " ")]);
 
     let cases = [
         ("Unset", false),
@@ -493,8 +490,6 @@ fn mdt_var_exists_means_set_and_not_empty() {
         ("Full", true),
         ("FULL", true),
         ("Space", true),
-        ("NoApps", false),
-        ("Apps", true),
     ];
     for (variable, set) in cases {
         let exists = check(var(variable, json!("exists")), &vars, &Machine::new());
@@ -586,22 +581,73 @@ fn difference_empty_text_is_not_an_integer() {
     ));
 }
 
-/// A list has no one text form, so a comparison cannot read it. MDT has no
-/// lists.
+/// MDT keeps a list's items in numbered variables, `Name001`, `Name002`, and
+/// so on, and blanks the bare `Name` (`ZTIUtility.vbs:1206-1234` in MDT 8456).
+/// Its engine therefore never compares a whole list. deployarr keeps a list as
+/// one value, so a comparison or `Like` test on it is an error, not false, as
+/// a list in a `Template` is (owner decision on #177). A test on list items
+/// needs its own operator.
 #[test]
-fn var_a_list_cannot_be_compared() {
-    let mut vars = Vars::new();
-    vars.set(
-        name("Apps"),
-        vec!["7-Zip".to_owned()],
-        Sensitivity::Plain,
-        SetSource::Rule,
-    )
-    .unwrap();
+fn difference_a_comparison_on_a_list_is_an_error() {
+    let vars = lists_of(&[
+        ("NoApps", &[]),
+        ("Apps", &["7-Zip"]),
+        ("Nics", &["10.0.0.5", "10.0.0.6"]),
+    ]);
+    let tests = [
+        json!({ "equals": "7-Zip" }),
+        json!({ "not_equals": "7-Zip" }),
+        json!({ "less": "z" }),
+        json!({ "less_equal": "z" }),
+        json!({ "greater": "a" }),
+        json!({ "greater_equal": "a" }),
+        json!({ "like": "*" }),
+    ];
+    for variable in ["NoApps", "Apps", "Nics"] {
+        for test in &tests {
+            let json = var(variable, test.clone());
+            let text = json.to_string();
+            let error = run(json, &vars, &Machine::new()).expect_err(&text);
+            assert_eq!(
+                error,
+                ConditionError::List {
+                    name: name(variable)
+                },
+                "{text}"
+            );
+        }
+    }
 
-    for test in [json!({ "equals": "7-Zip" }), json!({ "like": "*" })] {
-        let error = run(var("Apps", test), &vars, &Machine::new()).unwrap_err();
-        assert_eq!(error, ConditionError::List { name: name("Apps") });
+    // The error is not false, so `not` cannot turn it into true.
+    let negated = json!({ "not": var("Apps", json!({ "equals": "Office" })) });
+    assert_eq!(
+        run(negated, &vars, &Machine::new()),
+        Err(ConditionError::List { name: name("Apps") })
+    );
+}
+
+/// `Exists` and `NotExists` work on a list. A list with at least one item
+/// exists, even when that item is empty text, as `Value::is_empty` says
+/// (owner decision on #177).
+#[test]
+fn exists_on_a_list_means_it_has_an_item() {
+    let vars = lists_of(&[
+        ("NoApps", &[]),
+        ("Apps", &["7-Zip"]),
+        ("Nics", &["10.0.0.5", "10.0.0.6"]),
+        ("Blank", &[""]),
+    ]);
+    let cases = [
+        ("NoApps", false),
+        ("Apps", true),
+        ("APPS", true),
+        ("Nics", true),
+        ("Blank", true),
+    ];
+    for (variable, set) in cases {
+        let exists = check(var(variable, json!("exists")), &vars, &Machine::new());
+        let not_exists = check(var(variable, json!("not_exists")), &vars, &Machine::new());
+        assert_eq!((exists, not_exists), (set, !set), "{variable}");
     }
 }
 

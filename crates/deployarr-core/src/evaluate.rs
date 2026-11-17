@@ -212,8 +212,9 @@ pub enum ConditionError {
     /// A `var` comparison's operand substitutes to empty text. MDT makes this
     /// an error too (`TsCore!0x1801a96c0`).
     EmptyOperand { template: Template },
-    /// A `var` condition compared a variable that holds a list, which has no
-    /// one text form.
+    /// A `var` comparison or `Like` test named a variable that holds a list.
+    /// `Exists` and `NotExists` work on a list. A list in a `Template` fails
+    /// to substitute, so both fail the step (owner decision on #177).
     List { name: VarName },
     /// A `registry` key does not start with a full hive name and a `\`.
     RegistryHive { key: Template },
@@ -250,7 +251,7 @@ impl fmt::Display for ConditionError {
             ),
             Self::List { name } => write!(
                 f,
-                "`{name}` holds a list, and a `var` condition compares only text"
+                "`{name}` holds a list, and only `exists` and `not_exists` can test a list"
             ),
             Self::RegistryHive { key } => write!(
                 f,
@@ -393,10 +394,12 @@ impl Evaluator<'_> {
     fn var(&self, name: &VarName, test: &Test<NonEmptyTemplate>) -> Result<bool, ConditionError> {
         let value = self.vars.get(name).map(|var| var.value());
         let Some((op, operand)) = Op::split(test) else {
+            // A list with at least one item exists.
             let set = value.is_some_and(|value| !value.is_empty());
             return Ok(set == matches!(test, Test::Exists));
         };
-        // An unset variable reads as empty text, as in MDT.
+        // An unset variable reads as empty text, as in MDT. A list has no one
+        // text form to compare, so a comparison or `Like` on it is an error.
         let text = match value {
             None => "",
             Some(Value::Scalar(text)) => text,
