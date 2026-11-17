@@ -375,7 +375,7 @@ The chain's rules belong to the base program. An add-on resolver only answers wh
 - A timeout, a trap, a refused host call, or a match without wipe authority counts as an error. The trace shows it, and the chain moves to the next resolver.
 - The server checks that a matched task sequence exists. A variable that a match sets has a lookup match as its origin. A lookup match names its resolver, and for an add-on resolver also the add-on.
 
-The SQL order lookup add-on maps an order row's OS identifier to a task sequence through an editable table in its settings, for example `W11-PRO -> W11-PRO-STD`. Other columns can map to variables, such as the computer name or an application list. The design text lists the OS-code map with the base. The design's WIT `matched` record returns a task sequence, and its sketches keep the map in the add-on. This section follows the interface until the owner answers [#130](https://github.com/Tsukidy/deployarr/issues/130).
+The SQL order lookup add-on maps an order row's OS identifier to a task sequence through an editable table in its settings, for example `W11-PRO -> W11-PRO-STD`. Other columns can map to variables, such as the computer name or an application list. The map lives in the add-on, not in the base, so the base never sees an OS identifier. The add-on's resolver returns a task sequence, which the server then checks (owner decision on [#130](https://github.com/Tsukidy/deployarr/issues/130)).
 
 A barcode scanner acts as a keyboard, so a prompt in the WinPE screen, such as the order number, accepts scanner input with no extra code.
 
