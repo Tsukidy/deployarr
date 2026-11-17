@@ -197,7 +197,7 @@ The table lists every RRQ in order, from the prototype log. The capture holds th
 
 - RRQs 1 and 2 come from OVMF, from client ports 1952 and 1953.
 - RRQs 3 and 4 come from `wdsmgfw.efi` (inferred), 2 milliseconds after the second ACK. It requests the boot file of the second ACK with a leading `\`, probes its size, and downloads it with `blksize` 1456 and no `windowsize`.
-- RRQs 5 to 34 come from `bootmgfw.efi` (inferred). They match RRQs 3 to 32 of the `uefi` run in #27, as its [TFTP requests](single-stage-chain.md#tftp-requests) table records them, file for file and option for option. The first file it loads is `\boot\uefi.bcd`, the option 252 path of the second ACK, after `\boot\x64\BCD` gets File not found.
+- RRQs 5 to 33 come from `bootmgfw.efi`, and RRQ 34 from the `winload.efi` that it starts (inferred). RRQs 5 to 34 match RRQs 3 to 32 of the `uefi` run in #27, as its [TFTP requests](single-stage-chain.md#tftp-requests) table records them, file for file and option for option. The first file `bootmgfw.efi` loads is `\boot\uefi.bcd`, the option 252 path of the second ACK, after `\boot\x64\BCD` gets File not found.
 - Every transfer finished with no retransmits. The transfer of `boot.wim` sent 393,333 blocks with a window of 1.
 
 ### End state
@@ -207,7 +207,7 @@ The screen during RRQ 33 shows `Loading files...`, a progress bar, and `IP: 10.4
 - `ver` printed `Microsoft Windows [Version 10.0.26100.9457]`.
 - `reg query hklm\system\currentcontrolset\control\secureboot\state` printed `UEFISecureBootEnabled REG_DWORD 0x1`.
 - `hklm\system\controlset001\control\pxe` holds two values, `DHCPServerACK` and `BootServerReply`.
-- `DHCPServerACK` starts with xid `E8CD1566`, flags `8000`, `yiaddr` `10.41.0.176`, and `siaddr` `10.41.0.1`. That is dnsmasq's ACK in frame 5.
+- `DHCPServerACK` starts with xid `E8CD1566`, flags `8000`, `yiaddr` `10.41.0.176`, and `siaddr` `10.41.0.1`. Those bytes match both dnsmasq's OFFER in frame 2 and its ACK in frame 5, which first differ in the value of option 53. No screenshot shows that part of the value. The value holds the ACK in frame 5 (inferred from its name).
 - `BootServerReply` holds the second ACK in frame 14. Its bytes start with xid `40E20100`, `secs` `FFFF`, `ciaddr` `10.41.0.176`, and `siaddr` `10.41.0.1`. They hold the boot file `boot\x64\bootmgfw.efi` and options 53, 54, 97, 60, and 252 = `boot\uefi.bcd`, then the end option. Every byte after the end option is zero.
 - `ipconfig` printed `Windows IP Configuration` and no adapter. The last packets in the capture are RRQ 34 and its File not found reply, at 10:59:50. WinPE sent no DHCP request.
 
@@ -248,7 +248,7 @@ Both requests from `wdsnbp.com` reuse the ROM's xid, `b00e0532`. Both have `ciad
 0d 02 08 00  0e 01 01  01 02 00 06  05 04 00 00 00 00  ff
 ```
 
-The prototype logs the three requests and its answers:
+The prototype logs the two requests from `wdsnbp.com` and its answers:
 
 ```text
 2026-11-13T11:03:29.464+00:00 dhcp-received port=4011 source=10.41.0.192:68 type=REQUEST xid=b00e0532 mac=52:54:00:41:00:21 arch=0000 guid=000042414c000000408000000000000021 options=60,55
@@ -257,7 +257,7 @@ The prototype logs the three requests and its answers:
 2026-11-13T11:03:30.168+00:00 dhcp-sent port=4011 destination=10.41.0.192:68 type=ACK xid=b00e0532 firmware=bios step=second file=boot\x64\pxeboot.n12 option_252=boot\bios.bcd
 ```
 
-The screenshot written at 11:03:30.21 shows this text from iPXE and `wdsnbp.com`. It came after the second ACK in frame 13 and before RRQ 2 at 11:03:30.239. The screenshot before it, written at 11:03:29.18 before RRQ 1, shows only iPXE's start-up lines. So the text appeared between those two times. The screenshots cannot show when within that second. The times are the write times of the PNG files. The repeated words in the middle are on the screen as shown.
+The screenshot written at 11:03:30.21 shows this text from iPXE and `wdsnbp.com`. It came after the second ACK in frame 13 and before RRQ 2 at 11:03:30.239. The screenshot before it, written at 11:03:29.18 before RRQ 1, shows only the start-up lines of SeaBIOS and iPXE. So the text appeared between those two times. The screenshots cannot show when within that second. The times are the write times of the PNG files. The repeated words in the middle are on the screen as shown.
 
 ```text
 Filename: boot\x64\wdsnbp.com
@@ -283,7 +283,7 @@ Message from Administrator:
 Contacting Server: 10.41.0.1._
 ```
 
-The VM's serial log is empty, because SeaBIOS and iPXE write to the screen only.
+The VM's serial log is empty, so no program in the chain wrote to the serial port. The run does not show why.
 
 ### TFTP requests
 
@@ -309,7 +309,7 @@ The capture holds the same 14 RRQs in the same order.
 - RRQ 1 comes from the iPXE ROM.
 - RRQ 2 comes from `wdsnbp.com` (inferred), 77 milliseconds after the second ACK. It requests the second ACK's boot file as written, with no leading `\`, and with `blksize` 512.
 - RRQ 3 comes from `pxeboot.n12` (inferred). It requests `boot\x64\bootmgr.exe`, in the folder of its own boot file.
-- RRQs 3 to 14 match RRQs 2 to 13 of the `bios` run in #27, as its [TFTP requests](single-stage-chain.md#tftp-requests-1) table records them, file for file. RRQs 4 to 14 come from `bootmgr.exe` (inferred), and its first file is the option 252 path of the second ACK.
+- RRQs 3 to 14 match RRQs 2 to 13 of the `bios` run in #27, as its [TFTP requests](single-stage-chain.md#tftp-requests-1) table records them, file for file. RRQs 4 to 13 come from `bootmgr.exe`, and RRQ 14 from the `winload.exe` that it starts (inferred). The first file of `bootmgr.exe` is the option 252 path of the second ACK.
 - Every transfer finished with no retransmits. The transfer of `boot.wim` sent 393,333 blocks with a window of 1.
 
 ### End state
@@ -326,7 +326,7 @@ The commands that read these bytes printed parts of the value with `set` substri
 
 ## Key prompt
 
-No key went to either VM from the start of `vm.sh` until WinPE showed its command prompt. The only keys sent were the WinPE commands under [Commands](#commands). The times below come from the prototype logs, where `transfer-finished` marks the end of a download.
+No key went to either VM from the start of `vm.sh` until WinPE showed its command prompt. After the prompt appeared, every key typed a command at it. Those were the commands under [Commands](#commands), plus `cls` and Esc to clear the screen between them. The download and request times below come from the prototype logs, where `transfer-finished` marks the end of a download. The screenshot times are the write times of the PNG files in `shot-times.txt`.
 
 | VM | Sub-option 11 in the first ACK | Key prompt | Boot manager loads with no key pressed |
 | --- | --- | --- | --- |
@@ -342,7 +342,7 @@ On `uefi`:
 
 On `bios`:
 
-- `wdsnbp.com`'s download ends at 11:03:29.212. It sends its first request at 11:03:29.464, and its request with option 250 at 11:03:30.161, 0.69 seconds after the first ACK came again.
+- `wdsnbp.com`'s download ends at 11:03:29.212. It sends its first request at 11:03:29.464, and its request with option 250 at 11:03:30.161. In the capture, that request in frame 12 comes 0.70 seconds after the repeated first ACK in frame 11.
 - The screenshot written at 11:03:30.21 shows the approval screen quoted under [DHCP](#dhcp-1). The screenshot written at 11:03:29.18 does not show it. The screen asks the reader to give the details to an administrator, and asks for no key.
 - `pxeboot.n12`'s download ends at 11:03:30.245, and its request for `boot\x64\bootmgr.exe` arrives in the same millisecond.
 - `bootmgr.exe`'s download ends at 11:03:30.414. It requests its first file, `\boot\bios.bcd`, at 11:03:30.526, 112 milliseconds later.
@@ -419,7 +419,7 @@ echo %v:~0,48%
 echo %v:~464,72%
 ```
 
-The last command ran for the offsets 464, 536, 608, and 680. After the last packet, `sudo pkill -INT -x dumpcap` stopped the capture, and the HMP command `quit` stopped the VM.
+The last command ran for the offsets 464, 536, 608, and 680. On both VMs, `cls` cleared the screen between groups of commands, three times after Esc. Two commands stopped partway, when the typing script met a character it had no key for, and went in again in full after Esc. They are the fourth command on `uefi` and the fifth on `bios`. After the last packet, `sudo pkill -INT -x dumpcap` stopped the capture, and the HMP command `quit` stopped the VM.
 
 The committed files came from these commands:
 
@@ -433,10 +433,12 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/two-stage-chain-<vm>.pca
 
 - The meanings of the sub-options come from the names in `WdsBp.h` (inferred). The header gives names, types, and some values, not behavior.
 - Sub-option 1 = 6 means x64 BIOS to `wdsnbp.com` (inferred). `wdsnbp.com` prints `Architecture: x64` on the screen in the same run. The [ConfigMgr 2509 reference](../configmgr-2509.md#two-stage-boot-chain) says `sccmpxe.exe` gives BIOS x64 for 2, 3, or 6, and UEFI x64 for 7 or 9. The lab has no x86 VM, so no run shows what `wdsnbp.com` sends on an x86 CPU.
-- `wdsnbp.com` shows the approval screen because the first ACK's sub-option 2 is 1, `WDSBP_OPTVAL_ACTION_APPROVAL` (inferred). The screen shows the first ACK's sub-option 5 as `Pending Request ID: 0` and sub-option 6 as the message. Frames 7 and 11 carry the same option 250, so the screen does not show which of the two `wdsnbp.com` read. Sub-option 14 = 1 in the next request suggests that the approval step is done (inferred from the name). `wdsnbp.com` sent that request 0.70 seconds after frame 11, not after the 20 seconds of sub-option 3.
+- `wdsnbp.com` shows the approval screen because the first ACK's sub-option 2 is 1, `WDSBP_OPTVAL_ACTION_APPROVAL` (inferred). The screen shows the first ACK's sub-option 5 as `Pending Request ID: 0` and sub-option 6 as the message. Frames 7 and 11 carry the same option 250, so the screen does not show which of the two `wdsnbp.com` read. Sub-option 14 = 1 in the next request suggests that the approval step is done (inferred from the name). `wdsnbp.com` sent that request 0.70 seconds after frame 11. Sub-option 3 in frame 11 is 20 (`0x0014`). `WdsBp.h` names it `WDSBP_OPT_POLL_INTERVAL`, a `USHORT`, with no unit, so the run does not show whether `wdsnbp.com` waits for it.
 - The program that sent each RRQ after the firmware's download is inferred. The capture and the prototype log record only client ports and times. On `uefi`, RRQ 5 reuses the client port of RRQ 3, so the ports do not separate the programs.
   - RRQs 3 and 4 on `uefi` come from `wdsmgfw.efi`, and RRQ 2 on `bios` comes from `wdsnbp.com`. Each follows the second ACK within 77 milliseconds and requests its boot file.
-  - RRQs 5 to 34 on `uefi` come from `bootmgfw.efi`. RRQ 3 on `bios` comes from `pxeboot.n12`, and RRQs 4 to 14 come from `bootmgr.exe`. Each program's first request follows the end of its own download, and a program cannot run before it is downloaded.
+  - RRQs 5 to 33 on `uefi` come from `bootmgfw.efi`. RRQ 3 on `bios` comes from `pxeboot.n12`, and RRQs 4 to 13 come from `bootmgr.exe`. Each program's first request follows the end of its own download, and a program cannot run before it is downloaded.
+  - RRQ 34 on `uefi` and RRQ 14 on `bios`, for `\EFI\Microsoft\Boot\Policies\UnlockToken.pol`, come from the OS loader. Each follows the end of the `boot.wim` download. `strings -el` finds that path in `winload.efi` and `winload.exe` from this `boot.wim`, and finds only `SecureBootUnlockToken.pol` in `bootmgfw.efi` and `bootmgr.exe`.
+- `DHCPServerACK` on `uefi` holds dnsmasq's ACK in frame 5, not its OFFER in frame 2 (inferred from its name). The screens show only the start of the value. On `bios`, no command printed the value.
 - The boot managers read option 252 from the second ACK (inferred). That ACK is the only packet that carries option 252 on the wire, and each boot manager requests its path.
 - The bytes after byte 300 of the `bios` `BootServerReply` are left over from an older packet in the same buffer (inferred). Bytes 300 to 311 equal the end of the first ACK, which is 312 bytes long. The second ACK is 300 bytes long. The page does not show which program keeps that buffer, or where the next 38 bytes come from.
 - WinPE on the `uefi` VM has no adapter because it has no driver for the virtio-net card (inferred). The [Test lab](../../roadmap.md#test-lab) section of the roadmap says Windows 11 has no inbox virtio drivers, and the `bios` VM's `e1000` card works in the same WinPE.
@@ -461,5 +463,5 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/two-stage-chain-<vm>.pca
 - `wdsnbp.com` shows sub-option 6 on screen as `Message from Administrator`, under an approval text. deployarr should send its own text there, not `SCCM PXE`. With sub-option 2 = 1, `wdsnbp.com` sent its next request 0.70 seconds after the repeated first ACK, with no key press.
 - The xid of a second request can be the firmware's xid, as on `bios`, or a new one, as on `uefi`. The server must not tie a second request to the first by xid.
 - After the boot manager starts, its TFTP requests match the single stage, so the TFTP findings of #27 apply to both chains. `wdsmgfw.efi` adds a size probe and a download of `\boot\x64\bootmgfw.efi` with a leading `\`. `wdsnbp.com` and `pxeboot.n12` download with `blksize` 512.
-- In WinPE, `BootServerReply` holds the second ACK in the two-stage chain. On `bios`, the value has more bytes after the ACK's end option. The agent must parse the value up to the end option and ignore the rest.
-- `DHCPServerACK` in the same key holds the DHCP server's ACK. The agent can log it next to `BootServerReply`.
+- In WinPE, `BootServerReply` holds the second ACK in the two-stage chain. On `bios`, 50 more bytes follow the ACK's end option and padding, as the `bios` [End state](#end-state-1) records. In the single stage, the `bios` value has no end option, as the [single-stage page](single-stage-chain.md#end-state-1) records. So for either chain, the agent must find each option by its code, and stop at the first end option, or at the end of the value when it has none.
+- `DHCPServerACK` in the same key holds the DHCP server's ACK (inferred from its name). Only the start of the `uefi` value was read. The agent can log it next to `BootServerReply`.
