@@ -8,7 +8,7 @@ use serde::de::{self, DeserializeOwned, DeserializeSeed, MapAccess, SeqAccess, V
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use uuid::Uuid;
 
-use crate::action::{Action, BuiltinAction};
+use crate::action::Action;
 use crate::condition::Condition;
 use crate::validated_string::validated_string;
 use crate::variable::{SettableVarName, VarAssignment};
@@ -31,12 +31,6 @@ pub struct TaskSequence<A> {
 /// What an admin edits and the server stores. A step can hold a step from an
 /// add-on or a join slot.
 pub type AuthoredSequence = TaskSequence<Action>;
-
-/// A task sequence in which every step holds a built-in action, as an
-/// authored sequence is once each add-on step and join slot holds its
-/// expansion. [`crate::plan::plan`] makes such a sequence as a private tree,
-/// not as this type, and builds the program from it.
-pub type LoweredSequence = TaskSequence<BuiltinAction>;
 
 impl<A: DeserializeOwned> TaskSequence<A> {
     pub fn from_json(json: &str) -> Result<Self, ParseError> {

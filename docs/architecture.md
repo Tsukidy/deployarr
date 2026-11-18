@@ -75,8 +75,7 @@ pub struct TaskSequence<A> {   // A is the action type that a step holds
 	pub root: Group<A>,
 }
 
-pub type AuthoredSequence = TaskSequence<Action>;         // what an admin edits and the server stores
-pub type LoweredSequence = TaskSequence<BuiltinAction>;   // every step holds a built-in action
+pub type AuthoredSequence = TaskSequence<Action>;   // what an admin edits and the server stores
 
 pub enum Node<A> {
 	Group(Group<A>),
@@ -1512,8 +1511,7 @@ A step from an add-on must load, save, show, diff, and export when its add-on is
 The model is generic over what a step holds:
 
 ```rust
-pub type AuthoredSequence = TaskSequence<Action>;         // what an admin edits and the server stores
-pub type LoweredSequence = TaskSequence<BuiltinAction>;   // every step holds a built-in action
+pub type AuthoredSequence = TaskSequence<Action>;   // what an admin edits and the server stores
 
 pub enum Action {
 	Builtin(BuiltinAction),   // written in JSON exactly as a built-in action

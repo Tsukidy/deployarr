@@ -8,7 +8,7 @@ use deployarr_core::addon::{AddOnId, AddOnRef, KindId};
 use deployarr_core::catalog::Catalog;
 use deployarr_core::join::{JoinProfile, JoinStage};
 use deployarr_core::plan::{SaveCheck, Severity, validate};
-use deployarr_core::sequence::{AuthoredSequence, LoweredSequence, Node, ParseError, Step};
+use deployarr_core::sequence::{AuthoredSequence, Group, Node, ParseError, Step};
 use serde_json::{Value, json};
 
 /// A config with its keys out of order, an integer that no `u64` or `f64`
@@ -321,28 +321,56 @@ fn a_bad_secret_reference_fails_with_its_full_path() {
 }
 
 #[test]
-fn a_lowered_sequence_holds_no_add_on_step() {
-    let error = LoweredSequence::from_json(&document_with_unknown_add_on())
-        .expect_err("a lowered sequence must not hold an add-on step");
+fn a_built_in_action_is_never_an_add_on_step() {
+    let document: Value =
+        serde_json::from_str(&document_with_unknown_add_on()).expect("the document is JSON");
+    let action = &document["root"]["children"][0]["step"]["action"];
+    assert!(action.get("add_on").is_some(), "{action}");
 
-    assert_eq!(error.path(), "root.children[0].step.action", "{error}");
+    let error = serde_json::from_str::<BuiltinAction>(&action.to_string())
+        .expect_err("a built-in action must not be an add-on step");
+
     assert!(
         error.to_string().contains("unknown variant `add_on`"),
         "{error}"
     );
 }
 
+/// Checks that each step under `group` holds a built-in action, and that the
+/// action reads and writes the same as the action object at the same place in
+/// `json`, read as a bare `BuiltinAction`.
+fn assert_bare_built_in_actions(group: &Group<Action>, json: &Value) {
+    let children = json["children"].as_array().expect("a group has children");
+    assert_eq!(group.children.len(), children.len());
+    for (child, json) in group.children.iter().zip(children) {
+        match child {
+            Node::Group(group) => assert_bare_built_in_actions(group, &json["group"]),
+            Node::Step(step) => {
+                let Action::Builtin(action) = &step.action else {
+                    panic!("{} holds no built-in action", step.meta.name);
+                };
+                let bare: BuiltinAction = serde_json::from_str(&json["step"]["action"].to_string())
+                    .expect("the action reads as a bare built-in action");
+                assert_eq!(action, &bare, "{}", step.meta.name);
+                assert_eq!(
+                    serde_json::to_string(&step.action).expect("an action serializes"),
+                    serde_json::to_string(&bare).expect("an action serializes"),
+                    "{}",
+                    step.meta.name
+                );
+            }
+        }
+    }
+}
+
 #[test]
-fn a_sequence_without_add_ons_reads_the_same_as_either_type() {
+fn a_built_in_action_reads_and_writes_the_same_as_a_bare_built_in_action() {
     let sample = include_str!("data/windows-11-pro.json");
 
     let authored = AuthoredSequence::from_json(sample).expect("the sample parses");
-    let lowered = LoweredSequence::from_json(sample).expect("the sample parses");
+    let json: Value = serde_json::from_str(sample).expect("the sample is JSON");
 
-    assert_eq!(
-        serde_json::to_string(&authored).expect("a task sequence serializes"),
-        serde_json::to_string(&lowered).expect("a task sequence serializes")
-    );
+    assert_bare_built_in_actions(&authored.root, &json["root"]);
 }
 
 fn expansion(text: &str) -> Result<Vec<Step<Action>>, serde_json::Error> {
