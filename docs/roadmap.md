@@ -298,6 +298,7 @@ Check:
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
 - The UEFI VM, which runs Pro, joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
 - The UEFI VM deploys again with a `Domain` profile whose join password is wrong. Windows Setup finishes, and the agent fails the deployment in the full OS with no retry. The error names the lab domain and what the PC reports instead.
+- The UEFI VM deploys again with a `Domain` profile that names the lab domain by its NetBIOS name. The domain join check passes. See [Directory join](architecture.md#directory-join).
 - The BIOS VM, which runs Home, has no pre-staged record, so lookup reaches its order row by baseboard serial. The row sets a `Domain` profile. The deployment stops before the disk changes, and its error names the edition ID and the profile.
 - A human checks Entra ID join and Autopilot registration on Pro against a test tenant, because the lab has no tenant. Home supports neither (see [Directory join](architecture.md#directory-join)).
 - The lowered program for `deployarr.entra-join` holds one `AddProvisioningPackage` step and no command. Planning refuses a test add-on that expands to a `RunCommand` naming the enrollment package (item 9).
