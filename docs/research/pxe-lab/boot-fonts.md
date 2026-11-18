@@ -12,7 +12,7 @@ This page records whether each boot manager boots with the other set of boot fon
 | `uefi2023`, control | The 2023-signed `bootmgfw.efi` | `Fonts_EX` | `\boot\fonts\wgl4_boot.ttf` only, 50120 bytes | Control | Starts |
 
 - Both runs started WinPE with the other font set. The last screendump of each run shows WinPE's `cmd.exe` window after `wpeinit`, as in its control.
-- In both runs, the text of the `Loading files...` screen matches the control's pixel for pixel. The whole first frame of each run in the `boot.wim` transfer is the same file as its control's.
+- In both runs, the text of the `Loading files...` screen matches the control's pixel for pixel. The whole first frame of each run's `boot.wim` window, as [Screens](#screens) defines it, is the same file as its control's.
 - Each boot manager requested one font, `\boot\fonts\wgl4_boot.ttf`, and no other file from `boot/fonts`.
 - Each run made the same TFTP requests as its control, file for file and option for option.
 - So one font folder can serve both firmware types. The folder would hold the `Fonts` set, as the owner chose for this result ([Owner input on #222](https://github.com/Tsukidy/deployarr/issues/222#issuecomment-6990303505)).
@@ -53,7 +53,7 @@ Each `DSIG` table has version 1 and one signature, in format 1. Its PKCS#7 block
 
 Each block also holds the certificate of the Microsoft Windows Production PCA 2011, issued by the Microsoft Root Certificate Authority 2010, with serial 458207203049816025202696. The signer's serial is the one that the `issuer_and_serial` field of the signer info names.
 
-These commands read the tables and the signer. The first prints each table's tag, length, and SHA-256 for both files, and the bytes of `head` that differ. The second writes the PKCS#7 block of signature record 0 for one file to `openssl`. It also prints the `DSIG` version, signature count, and flags, then record 0's format, length, offset, and PKCS#7 size, on standard error.
+These commands read the tables and the signer. The first Python script prints each table's tag, length, and SHA-256 for both files, and the bytes of `head` that differ. The second writes the PKCS#7 block of signature record 0 for one file to a temporary file from `mktemp`, outside the checkout. `openssl` reads that file, and the last line deletes it. The second script also prints the `DSIG` version, signature count, and flags, then record 0's format, length, offset, and PKCS#7 size, on standard error.
 
 ```bash
 python3 -I - ~/deployarr-lab/tftp/2011/boot/fonts/wgl4_boot.ttf ~/deployarr-lab/tftp/2023/boot/fonts/wgl4_boot.ttf <<'EOF'
@@ -69,7 +69,8 @@ for path in sys.argv[1:]:
             heads.append(data[off:off + length])
 print("head bytes that differ", [i for i in range(54) if heads[0][i] != heads[1][i]])
 EOF
-python3 -I - ~/deployarr-lab/tftp/2011/boot/fonts/wgl4_boot.ttf > dsig.p7b <<'EOF'
+P=$(mktemp)
+python3 -I - ~/deployarr-lab/tftp/2011/boot/fonts/wgl4_boot.ttf > "$P" <<'EOF'
 import struct, sys
 data = open(sys.argv[1], "rb").read()
 count = struct.unpack(">H", data[4:6])[0]
@@ -83,11 +84,12 @@ for i in range(count):
         print(version, sigs, flags, fmt, rec_len, rec_off, size, file=sys.stderr)
         sys.stdout.buffer.write(block[8:8 + size])
 EOF
-openssl pkcs7 -inform DER -print_certs -noout < dsig.p7b
-openssl pkcs7 -inform DER -print -noout < dsig.p7b | grep -E 'serialNumber|^ *serial:'
+openssl pkcs7 -inform DER -print_certs -noout < "$P"
+openssl pkcs7 -inform DER -print -noout < "$P" | grep -E 'serialNumber|^ *serial:'
+rm -f "$P"
 ```
 
-The second command runs once more with the `2023` file. `openssl` is 3.5.5. The `grep` prints three lines: the serial of each certificate, and then the signer info's serial.
+The second script and the lines after it run once more with the `2023` file. `openssl` is 3.5.5. The `grep` prints three lines: the serial of each certificate, and then the signer info's serial.
 
 ## Setup
 
@@ -95,7 +97,7 @@ The second command runs once more with the `2023` file. `openssl` is 3.5.5. The 
 | --- | --- |
 | Lab host | Ubuntu 26.04.1 LTS, kernel `7.0.0-43-generic`, AMD Ryzen 7 7700X, KVM. The host restarted between the `uefi2023` control and run 2. |
 | Lab scripts and PXE prototype | `tools/lab/` and `tools/pxe-prototype/` from `main` at `3fc0d3f`. Both changed after the #27 and #32 runs. Among the changes, dnsmasq moved into its own network namespace. So the controls ran again on this page. |
-| Network | `br-lab` at `10.41.0.1/24`. dnsmasq hands out addresses from `10.41.0.2`, in the namespace `deployarr-lab-dhcp`, as [step 4 of the lab guide](../../lab-setup.md#4-start-the-lab-network) says. The prototype answers PXE on ports 67 and 4011. |
+| Network | `br-lab` at `10.41.0.1/24`. dnsmasq, at `10.41.0.2` in the namespace `deployarr-lab-dhcp`, hands out `10.41.0.100` to `10.41.0.199`, as [step 4 of the lab guide](../../lab-setup.md#4-start-the-lab-network) says. The prototype answers PXE on ports 67 and 4011. |
 | Chain | `--chain single`, with the default stores `boot\uefi.bcd` and `boot\bios.bcd` |
 | TFTP roots | `~/deployarr-lab/tftp/2011` for the `bios` control, and `~/deployarr-lab/tftp/2023` for run 1 and the `uefi2023` control. Run 2 used `~/deployarr-lab/runs/222/tftp-2023-fonts-2011`, which [Run 2's TFTP root](#run-2s-tftp-root) describes. |
 | `uefi2023` VM | `q35` with SMM, OVMF `OVMF_CODE_4M.ms.fd`, a fresh copy of `~/deployarr-lab/OVMF_VARS_4M.win23.fd`, Secure Boot on, TPM 2.0 through swtpm, a virtio-net card with no option ROM, MAC `52:54:00:41:00:12`, 2 vCPUs, 4 GB. Its `db` holds only the Windows UEFI CA 2023. |
@@ -110,11 +112,11 @@ The prototype's `started` line is the same in all four runs except for its root.
 | `uefi2023` control | 20:33:13.588 | 20:34:43.514 |
 | Run 2 | 20:58:56.413 | 21:00:28.393 |
 
-The run script deleted the VM's folder under `~/deployarr-lab` before each run, so each run's disk, firmware variables, and TPM state were new. After each run it recorded the birth time of every file in that folder, and every file was born after that run's VM start.
+The run script deleted the VM's folder under `~/deployarr-lab` before each run. So each run's disk was new, and on `uefi2023` its firmware variables and TPM state were new too. The `bios` VM has no variable store or TPM. After each run, and before the next one, the lab stage recorded `stat -c '%w %y %s %n'` of every file in that folder in `~/deployarr-lab/runs/222/boot-fonts-<run>-vmstate.txt`. Every file was born after that run's VM start.
 
 The lab host shut down at about 20:36 UTC, about a minute into the first try of run 2. It booted again at 20:40:58 UTC. The owner says the shutdown should not be related to the runs. The first try's files are set aside in `~/deployarr-lab/runs/222/interrupted-20261118T2035Z/`, and this page does not use them. Run 2 then ran again, from a fresh VM folder, at 20:58:56. So run 2 ran after the restart, and its control ran before it. The `bios` control, run 1, and the `uefi2023` control all finished before the shutdown.
 
-The run script wrote the wall clock and `/proc/uptime` at each step. Within each run, wall clock minus uptime stays within 0.008 seconds. That difference puts the host's start at 2026-11-17 20:55:20 UTC for the first three runs, and at 2026-11-18 20:40:58 UTC for run 2. After the restart, `tools/lab/network.sh status` differed from its earlier output only in dnsmasq's process ID.
+The run script wrote the wall clock and `/proc/uptime` at each step. Within each run, wall clock minus uptime stays within 0.01 seconds, the resolution of `/proc/uptime`. That difference puts the host's start at 2026-11-17 20:55:20 UTC for the first three runs, and at 2026-11-18 20:40:58 UTC for run 2. After the restart, `tools/lab/network.sh status` differed from its earlier output only in dnsmasq's process ID.
 
 ### Run 2's TFTP root
 
@@ -217,7 +219,7 @@ The times come from the prototype's log, and the VM start from the run script. E
 
 ## Screens
 
-The run script took a screendump about every 2 seconds. A screendump's time is the modification time of its file. The committed frame of each run is the first frame in its `boot.wim` window, `0006.png` in each run.
+The run script took a screendump about every 2 seconds. A screendump's time is the modification time of its file. A run's `boot.wim` window starts 1 second after the `boot.wim` RRQ with `blksize` and ends at that transfer's `transfer-finished` line. The 1-second delay keeps out a frame taken while the screen may still show the file before `boot.wim`. The committed frame of each run is the first frame in its `boot.wim` window, `0006.png` in each run.
 
 | Run | `Loading files...` screen |
 | --- | --- |
@@ -241,14 +243,15 @@ A script split each frame into bands, as [Commands](#commands) describes. A band
 
 In the committed frames, each run's bands equal its control's.
 
-| Run | `boot.wim` window | Frames in the window | Sets of text bands |
+| Run | `boot.wim` window, from 1 second after the RRQ | Frames in the window | Sets of text bands |
 | --- | --- | --- | --- |
-| `bios` control | 20:28:13.697 to 20:29:43.366 | 44, `0006.png` to `0049.png` | 1 |
-| Run 1 | 20:30:48.002 to 20:32:17.887 | 44, `0006.png` to `0049.png` | 1 |
-| `uefi2023` control | 20:33:21.324 to 20:34:11.170 | 24, `0006.png` to `0029.png` | 1 |
-| Run 2 | 20:59:04.214 to 20:59:57.135 | 25, `0006.png` to `0030.png` | 1 |
+| `bios` control | 20:28:14.697 to 20:29:43.366 | 44, `0006.png` to `0049.png` | 1 |
+| Run 1 | 20:30:49.002 to 20:32:17.887 | 44, `0006.png` to `0049.png` | 1 |
+| `uefi2023` control | 20:33:22.324 to 20:34:11.170 | 24, `0006.png` to `0029.png` | 1 |
+| Run 2 | 20:59:05.214 to 20:59:57.135 | 25, `0006.png` to `0030.png` | 1 |
 
 - In each run, every frame in the window has the same text bands. The bar band changes from frame to frame.
+- Frame `0005.png` of run 1, the `uefi2023` control, and run 2 was taken less than 1 second after the `boot.wim` RRQ, so the window leaves it out. Each of those three frames has the same text bands as `0006.png` of its run. The `bios` control's `0005.png` was taken before its `boot.wim` RRQ.
 - Each run's text bands equal its control's. So run 1's text rendered the same as the `bios` control's, and run 2's text rendered the same as the `uefi2023` control's.
 - The same text bands appear in two frames from #27, taken by hand during `boot.wim` and kept in `~/deployarr-lab/runs/27/`. `bios-01-loading-boot-wim.png` comes from `bootmgr.exe` with `Fonts`. `uefi-01-loading-boot-wim.png` comes from the 2011-signed `bootmgfw.efi` with `Fonts` on the `uefi` VM. The script's `compare` prints `text bands equal` for each against this page's frame of the same size. So every pair of boot manager and font set that the lab has served draws the same text pixels on a screen of the same size.
 
@@ -288,7 +291,7 @@ sudo -n dumpcap -i br-lab -f 'udp and udp[8:2] != 3' -a duration:900 -w - > ~/de
 timeout 900 $LAB/tools/lab/vm.sh <vm> -display none -monitor unix:/tmp/lab-<vm>-mon.sock,server,nowait
 ```
 
-About every 2 seconds, the script sent the HMP command `screendump <file> -f png` through the monitor socket. It stopped 30 seconds after the request for `UnlockToken.pol`, or 240 seconds after the VM started if no such request came. Every run got that request. Then the HMP command `quit` stopped the VM, and `SIGINT` stopped the prototype and then `dumpcap`, by the process IDs that the script recorded.
+About every 2 seconds, the script sent the HMP command `screendump <file> -f png` through the monitor socket. After each screendump it looked for `UnlockToken` in the prototype's log. It stopped about 30 seconds after it found that request, or 240 seconds after the VM started if no such request came. Every run got that request. The stop came 31.0 to 32.3 seconds after the request itself. Then the HMP command `quit` stopped the VM, and `SIGINT` stopped the prototype and then `dumpcap`, by the process IDs that the script recorded.
 
 These commands made the committed files in `~/deployarr-lab/runs/222/commit/`, which were then copied to `docs/research/pxe-lab/captures/`:
 
@@ -297,8 +300,11 @@ tshark -r - -Y 'not tftp.opcode == 4' -w - < ~/deployarr-lab/captures/boot-fonts
 tshark -r - -Y 'tftp.opcode == 3 or ip.flags.mf == 1 or ip.frag_offset > 0' < ~/deployarr-lab/runs/222/commit/boot-fonts-<run>.pcapng
 tshark -r - -Y dhcp -V < ~/deployarr-lab/runs/222/commit/boot-fonts-<run>.pcapng > ~/deployarr-lab/runs/222/commit/boot-fonts-<run>-dhcp.txt
 python3 -I ~/deployarr-lab/runs/222/tools/textrows.py window ~/deployarr-lab/runs/222/boot-fonts-<run>-prototype.log ~/deployarr-lab/runs/222/shots-boot-fonts-<run>/*.png
+cp <first frame> ~/deployarr-lab/runs/222/commit/boot-fonts-<run>-loading-files.png
 python3 -I ~/deployarr-lab/runs/222/tools/textrows.py compare <control frame> <run frame>
 ```
+
+`<first frame>` is the frame on the `first` line of the `window` output. `compare` read the committed frames of the control and the run.
 
 `textrows.py`, SHA-256 `89e24a012b23d6c6841a1f0173dbd918cda6aad36063705b809580f64fd21e83`, uses only Python's standard library.
 
