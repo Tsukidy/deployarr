@@ -12,7 +12,7 @@ use core::fmt;
 
 use uuid::Uuid;
 
-use crate::action::{Action, BuiltinAction};
+use crate::action::{Action, BuiltinAction, SecretSource, source_name};
 use crate::addon::AddOnStep;
 use crate::compile::{action_name, run_in_name, win_pe_full_os_condition};
 use crate::join::{JoinStage, stage_name};
@@ -187,10 +187,9 @@ impl Lowerer<'_> {
             if let Some(condition) = win_pe_full_os_condition(step.run_in, &step.meta) {
                 self.fail(step.meta.id, LowerRule::FullOsCondition { condition });
             }
-            let children = if kept && step.meta.enabled {
-                self.expansion(step)
-            } else {
-                Vec::new()
+            let children = match DeferredKind::of(&step.action) {
+                Some(what) if kept && step.meta.enabled => self.expansion(step, what),
+                _ => Vec::new(),
             };
             return Node::Group(Group {
                 meta: step.meta.clone(),
@@ -212,7 +211,11 @@ impl Lowerer<'_> {
         })
     }
 
-    fn expansion(&mut self, step: &Step<Action>) -> Vec<Node<BuiltinAction>> {
+    fn expansion(
+        &mut self,
+        step: &Step<Action>,
+        what: DeferredKind<'_>,
+    ) -> Vec<Node<BuiltinAction>> {
         let node = step.meta.id;
         let Some(expansion) = self.expansions.get(&node) else {
             self.fail(node, LowerRule::MissingExpansion);
@@ -233,6 +236,17 @@ impl Lowerer<'_> {
             }
             match &expanded.action {
                 Action::Builtin(action) if action.allowed_from_addon() => {
+                    if let BuiltinAction::AddProvisioningPackage { package, .. } = action
+                        && !secret_source_fits(what, package.source)
+                    {
+                        self.fail(
+                            node,
+                            LowerRule::SecretSource {
+                                child,
+                                source: package.source,
+                            },
+                        );
+                    }
                     children.push(Node::Step(Step {
                         meta: NodeMeta {
                             id: child_id(node, child),
@@ -259,6 +273,23 @@ impl Lowerer<'_> {
 
     fn fail(&mut self, node: NodeId, rule: LowerRule) {
         self.errors.push(LowerError { node, rule });
+    }
+}
+
+/// Whether the expansion of a step of kind `what` may name a secret in
+/// `source`.
+///
+/// An add-on step has its config. A join slot has the deployment's join
+/// profile, whose join kind names the step kind that expands the slot. Both
+/// have the settings of the add-on that expands them. The match is
+/// exhaustive, so a new source does not compile until someone decides where
+/// it fits.
+fn secret_source_fits(what: DeferredKind<'_>, source: SecretSource) -> bool {
+    match (what, source) {
+        (DeferredKind::AddOn(_), SecretSource::StepConfig | SecretSource::AddOnSettings)
+        | (DeferredKind::Join(_), SecretSource::JoinProfile | SecretSource::AddOnSettings) => true,
+        (DeferredKind::AddOn(_), SecretSource::JoinProfile)
+        | (DeferredKind::Join(_), SecretSource::StepConfig) => false,
     }
 }
 
@@ -313,6 +344,14 @@ pub enum LowerRule {
     /// expansion, and its action is one that only an expansion may hold. See
     /// [`BuiltinAction::only_from_addon`]. Disabled steps count.
     AddOnOnlyAction { action: &'static str },
+    /// The child is an `AddProvisioningPackage` whose package names a secret
+    /// in a source that the step does not have. An add-on step's expansion
+    /// may name `step_config` or `addon_settings`. The deployment's join
+    /// profile need not belong to the step's add-on, so `join_profile` fails
+    /// there. A join slot's expansion may name `join_profile` or
+    /// `addon_settings`. A join slot has no step config, so `step_config`
+    /// fails there.
+    SecretSource { child: usize, source: SecretSource },
 }
 
 impl fmt::Display for LowerRule {
@@ -356,6 +395,11 @@ impl fmt::Display for LowerRule {
             Self::AddOnOnlyAction { action } => write!(
                 f,
                 "only an add-on step's expansion may hold `{action}`, so a task sequence cannot hold it as a step of its own"
+            ),
+            Self::SecretSource { child, source } => write!(
+                f,
+                "child {child} names a secret in `{}`. An add-on step's expansion may name only `step_config` and `addon_settings`, and a join slot's expansion only `join_profile` and `addon_settings`",
+                source_name(*source)
             ),
         }
     }

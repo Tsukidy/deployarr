@@ -556,7 +556,10 @@ mod tests {
             limits: crate::action::StepLimits::default(),
         });
         actions.push(BuiltinAction::AddProvisioningPackage {
-            package: "enrollment".parse().expect("a valid secret reference"),
+            package: crate::action::SecretRef {
+                source: crate::action::SecretSource::StepConfig,
+                field: "enrollment".parse().expect("a valid field key"),
+            },
             limits: crate::action::StepLimits::default(),
         });
         let mut seen = alloc::collections::BTreeSet::new();

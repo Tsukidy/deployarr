@@ -7,9 +7,10 @@ use alloc::string::String;
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
-use crate::action::SecretRef;
+use crate::action::{EmptyIdError, check_not_empty};
 use crate::addon::AddOnRef;
 use crate::sequence::RunIn;
+use crate::validated_string::validated_string;
 
 /// The stage of a deployment that an `ApplyJoinProfile` join slot marks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -44,6 +45,15 @@ pub(crate) fn stage_name(stage: JoinStage) -> &'static str {
     }
 }
 
+validated_string! {
+    /// Names the join account's password in a `Domain` profile, a secret that
+    /// the server stores with the profile. It never holds the password. It is
+    /// a non-empty string, and no add-on's form holds the secret, so it is not
+    /// a [`crate::action::SecretRef`].
+    #[derive(PartialEq, Eq, Hash)]
+    JoinPasswordRef, EmptyIdError, check_not_empty
+}
+
 /// How a PC joins a workgroup or a directory. An admin defines profiles on
 /// the server, and the `JoinProfile` variable names the one a deployment uses.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +67,7 @@ pub enum JoinProfile {
         /// The full LDAP path of the OU.
         ou: Option<String>,
         account: String,
-        password: SecretRef,
+        password: JoinPasswordRef,
     },
     /// A join kind that an add-on declares, such as Entra ID join. Its config
     /// keeps the JSON text that was saved, as an add-on step's config does.
