@@ -277,7 +277,33 @@ class Option250Test(unittest.TestCase):
         self.assertEqual(wds250.describe(SECOND_REQUEST_250), "architecture(1)=0009,pxe_prompt(11)=02")
 
     def test_describe_unknown_and_unparsed_bytes(self):
-        self.assertEqual(wds250.describe(b"\x07\x01\xaa\x0b\x04\x02"), "unknown(7)=aa,unparsed=0b0402")
+        self.assertEqual(wds250.describe(b"\x0a\x01\xaa\x0b\x04\x02"), "unknown(10)=aa,unparsed=0b0402")
+
+    def test_describe_the_second_requests_of_the_two_stage_lab_runs(self):
+        # docs/research/pxe-lab/two-stage-chain.md, Result. The lab runs of #28
+        # logged these as unknown(12), unknown(13), unknown(14), and unparsed=ff.
+        runs = {
+            "uefi": (bytes.fromhex("0c0102" "0d020800" "01020007" "0e0100" "ff"),
+                     "pxe_prompt_done(12)=02,nbp_ver(13)=0800,architecture(1)=0007,action_done(14)=00,end(255)"),
+            "bios": (bytes.fromhex("0d020800" "0e0101" "01020006" "050400000000" "ff"),
+                     "nbp_ver(13)=0800,action_done(14)=01,architecture(1)=0006,request_id(5)=00000000,end(255)"),
+        }
+        for vm, (payload, expected) in runs.items():
+            with self.subTest(vm=vm):
+                text = wds250.describe(payload)
+                self.assertEqual(text, expected)
+                self.assertNotIn("unknown(", text)
+                self.assertNotIn("unparsed=", text)
+
+    def test_end_marker_stops_the_sub_options(self):
+        self.assertEqual(wds250.decode(b"\x0d\x02\x08\x00\xff\x0e\x01\x01"),
+                         (((13, b"\x08\x00"),), b"\xff\x0e\x01\x01"))
+        self.assertEqual(wds250.describe(b"\x0d\x02\x08\x00\xff\x0e\x01\x01"),
+                         "nbp_ver(13)=0800,end(255),unparsed=0e0101")
+        self.assertEqual(wds250.describe(b"\xff\x00"), "end(255),unparsed=00")
+
+    def test_255_inside_a_value_is_not_an_end_marker(self):
+        self.assertEqual(wds250.describe(b"\x0e\x01\xff\xff"), "action_done(14)=ff,end(255)")
 
 
 

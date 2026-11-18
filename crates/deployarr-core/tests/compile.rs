@@ -1,9 +1,14 @@
+use std::collections::BTreeSet;
+
 use deployarr_core::action::BuiltinAction;
 use deployarr_core::compile::OnError::{Continue, FailDeployment};
 use deployarr_core::compile::{
     CompileError, CompileErrors, Instr, NodePath, OnError, Pc, Program, Rule, compile,
 };
-use deployarr_core::sequence::{Group, LoweredSequence, Node, NodeId, RunIn, Step};
+use deployarr_core::sequence::{
+    AuthoredSequence, Group, LoweredSequence, Node, NodeId, RunIn, Step,
+};
+use deployarr_core::validate::{Finding, Issue, validate};
 use serde_json::{Value, json};
 
 use self::Shape::{Enter, Exec};
@@ -91,6 +96,14 @@ fn restart() -> Value {
     json!({ "restart": { "into": "installed_os" } })
 }
 
+fn drivers() -> Value {
+    json!({ "apply_drivers": { "selection": "auto" } })
+}
+
+fn unattend() -> Value {
+    json!({ "apply_unattend": { "template": "standard" } })
+}
+
 fn installed_msi() -> Value {
     json!({ "installed_msi": { "product_code": "23170f69-40c1-2702-2408-000001000000" } })
 }
@@ -113,14 +126,41 @@ fn parse(document: &Value) -> LoweredSequence {
     LoweredSequence::from_json(&document.to_string()).expect("the document parses")
 }
 
+/// Compiles the document, and checks that `validate` agrees with `compile`.
+fn compile_and_validate(document: &Value) -> Result<Program, CompileErrors> {
+    let result = compile(&parse(document));
+    let authored = AuthoredSequence::from_json(&document.to_string()).expect("the document parses");
+    let errors = match &result {
+        Ok(_) => &[][..],
+        Err(errors) => errors.as_slice(),
+    };
+    assert_validate_agrees(&authored, errors);
+    result
+}
+
+/// `validate` reports the same rules at the same nodes as `compile`, as
+/// errors, for a sequence with no add-on step and no join slot.
+#[track_caller]
+fn assert_validate_agrees(sequence: &AuthoredSequence, errors: &[CompileError]) {
+    let expected: Vec<Finding> = errors
+        .iter()
+        .map(|error| Finding {
+            node: error.node,
+            path: error.path.clone(),
+            issue: Issue::Compile(error.rule.clone()),
+        })
+        .collect();
+    assert_eq!(validate(sequence, &BTreeSet::new()), expected);
+}
+
 fn compile_ok(document: &Value) -> Program {
-    let program = compile(&parse(document)).unwrap_or_else(|errors| panic!("{errors}"));
+    let program = compile_and_validate(document).unwrap_or_else(|errors| panic!("{errors}"));
     assert_jumps_forward(&program);
     program
 }
 
 fn compile_err(document: &Value) -> Vec<CompileError> {
-    match compile(&parse(document)) {
+    match compile_and_validate(document) {
         Ok(program) => panic!("expected errors, compiled {program:?}"),
         Err(errors) => errors.as_slice().to_vec(),
     }
@@ -138,18 +178,25 @@ fn run_in(name: &str) -> RunIn {
     serde_json::from_value(json!(name)).expect("a valid run_in")
 }
 
-/// Every jump lands after its own instruction and no later than the end.
+/// Every jump lands after its own instruction and no later than the end. That
+/// covers the `skip_to` and the `on_error` of each `Enter`, and no `Enter`
+/// holds `Continue`.
 fn assert_jumps_forward(program: &Program) {
     for (pc, instr) in program.instrs().iter().enumerate() {
-        let target = match instr {
-            Instr::Enter { skip_to, .. } => Some(*skip_to),
-            Instr::Exec {
-                on_error: OnError::JumpTo(target),
-                ..
-            } => Some(*target),
-            Instr::Exec { .. } => None,
+        let (skip_to, on_error) = match instr {
+            Instr::Enter {
+                skip_to, on_error, ..
+            } => {
+                assert_ne!(*on_error, Continue, "the Enter at {pc} holds Continue");
+                (Some(*skip_to), *on_error)
+            }
+            Instr::Exec { on_error, .. } => (None, *on_error),
         };
-        if let Some(target) = target {
+        let on_error = match on_error {
+            OnError::JumpTo(target) => Some(target),
+            Continue | FailDeployment => None,
+        };
+        for target in [skip_to, on_error].into_iter().flatten() {
             assert!(
                 Pc(pc) < target && target <= program.end(),
                 "the jump at {pc} goes to {target:?}"
@@ -185,6 +232,34 @@ fn jump_to(pc: usize) -> OnError {
     OnError::JumpTo(Pc(pc))
 }
 
+/// Each `Enter` as its node, shortened like [`short`], and its `on_error`.
+fn enters(program: &Program) -> Vec<(u32, OnError)> {
+    program
+        .instrs()
+        .iter()
+        .filter_map(|instr| match instr {
+            Instr::Enter { node, on_error, .. } => Some((short(*node), *on_error)),
+            Instr::Exec { .. } => None,
+        })
+        .collect()
+}
+
+/// The `on_error` of the instruction for node `n`.
+fn on_error_of(program: &Program, n: u32) -> OnError {
+    program
+        .instrs()
+        .iter()
+        .find_map(|instr| match instr {
+            Instr::Enter { node, on_error, .. } | Instr::Exec { node, on_error, .. }
+                if short(*node) == n =>
+            {
+                Some(*on_error)
+            }
+            Instr::Enter { .. } | Instr::Exec { .. } => None,
+        })
+        .unwrap_or_else(|| panic!("no instruction for node {n:#x}"))
+}
+
 /// The steps of the tree in document order, with the disabled ones and the
 /// ones inside a disabled group left out.
 fn kept_steps<'a>(group: &'a Group<BuiltinAction>, out: &mut Vec<&'a Step<BuiltinAction>>) {
@@ -204,14 +279,16 @@ fn the_sample_compiles_to_a_flat_program() {
     let program = compile(&sequence).unwrap_or_else(|errors| panic!("{errors}"));
 
     assert_jumps_forward(&program);
+    let authored = AuthoredSequence::from_json(SAMPLE).expect("the sample parses");
+    assert_validate_agrees(&authored, &[]);
     assert_eq!(program.source().0.as_str(), "W11-PRO-STD");
     assert_eq!(program.source().1, 7);
     // The root, then "Install Windows" with its 8 steps, then "Finish in
-    // Windows" with 5 of its 6 steps. The last step, 0x10, is disabled.
+    // Windows" with 6 of its 7 steps. Its sixth step, 0x10, is disabled.
     assert_eq!(
         shapes(&program),
         [
-            Enter(0x01, 16),
+            Enter(0x01, 17),
             Enter(0x0a, 10),
             Exec(0x02, FailDeployment),
             Exec(0x03, FailDeployment),
@@ -221,15 +298,16 @@ fn the_sample_compiles_to_a_flat_program() {
             Exec(0x07, FailDeployment),
             Exec(0x08, Continue),
             Exec(0x09, FailDeployment),
-            Enter(0x11, 16),
+            Enter(0x11, 17),
             Exec(0x0b, FailDeployment),
             Exec(0x0c, FailDeployment),
             Exec(0x0d, FailDeployment),
             Exec(0x0e, FailDeployment),
             Exec(0x0f, FailDeployment),
+            Exec(0x12, FailDeployment),
         ]
     );
-    assert_eq!(program.end(), Pc(16));
+    assert_eq!(program.end(), Pc(17));
 
     // Each instruction carries its node's condition, and each step its
     // `run_in` and action.
@@ -349,6 +427,103 @@ fn a_root_with_continue_on_error_catches_failures_at_the_end_of_the_program() {
 }
 
 #[test]
+fn a_group_whose_condition_fails_to_evaluate_fails_like_a_step_directly_inside_it() {
+    let document = root(vec![
+        continue_on_error(group(
+            0x10,
+            vec![
+                step(0x11, "either", command()),
+                group(
+                    0x20,
+                    vec![
+                        step(0x21, "either", command()),
+                        continue_on_error(group(0x30, vec![step(0x31, "either", command())])),
+                        group(0x40, vec![step(0x41, "either", command())]),
+                    ],
+                ),
+                step(0x12, "either", command()),
+            ],
+        )),
+        group(0x50, vec![step(0x51, "either", command())]),
+        step(0x02, "either", command()),
+    ]);
+
+    let program = compile_ok(&document);
+
+    assert_eq!(
+        shapes(&program),
+        [
+            Enter(0x01, 13),
+            Enter(0x10, 10),
+            Exec(0x11, jump_to(10)),
+            Enter(0x20, 9),
+            Exec(0x21, jump_to(10)),
+            Enter(0x30, 7),
+            Exec(0x31, jump_to(7)),
+            Enter(0x40, 9),
+            Exec(0x41, jump_to(10)),
+            Exec(0x12, jump_to(10)),
+            Enter(0x50, 12),
+            Exec(0x51, FailDeployment),
+            Exec(0x02, FailDeployment),
+        ]
+    );
+    assert_eq!(
+        enters(&program),
+        [
+            // No enclosing group has continue_on_error.
+            (0x01, FailDeployment),
+            // A group with continue_on_error jumps to its own skip_to.
+            (0x10, jump_to(10)),
+            // 0x20 has no continue_on_error, so it passes the failure to 0x10.
+            (0x20, jump_to(10)),
+            (0x30, jump_to(7)),
+            // Two levels up, past 0x20 to 0x10. 0x40 and 0x20 both end at 9.
+            (0x40, jump_to(10)),
+            (0x50, FailDeployment),
+        ]
+    );
+    // Each group's `Enter` goes where a failed step without continue_on_error
+    // directly inside the group goes.
+    for (group, step) in [
+        (0x01, 0x02),
+        (0x10, 0x11),
+        (0x20, 0x21),
+        (0x30, 0x31),
+        (0x40, 0x41),
+        (0x50, 0x51),
+    ] {
+        assert_eq!(
+            on_error_of(&program, group),
+            on_error_of(&program, step),
+            "group {group:#x}"
+        );
+    }
+}
+
+#[test]
+fn a_root_whose_condition_fails_to_evaluate_ends_the_program_or_the_deployment() {
+    let children = || {
+        vec![
+            step(0x02, "either", command()),
+            group(0x03, vec![step(0x04, "either", command())]),
+        ]
+    };
+
+    let caught = compile_ok(&continue_on_error(root(children())));
+    let failed = compile_ok(&root(children()));
+
+    // With continue_on_error, the root jumps to the end of the program.
+    assert_eq!(caught.end(), Pc(4));
+    assert_eq!(enters(&caught), [(0x01, jump_to(4)), (0x03, jump_to(4))]);
+    // Without it, the deployment fails.
+    assert_eq!(
+        enters(&failed),
+        [(0x01, FailDeployment), (0x03, FailDeployment)]
+    );
+}
+
+#[test]
 fn disabled_nodes_are_dropped_with_everything_inside_them() {
     let document = root(vec![
         disabled(step(0x02, "either", command())),
@@ -422,7 +597,7 @@ fn a_disabled_root_compiles_to_an_empty_program() {
 
 #[test]
 fn each_action_allows_only_the_run_in_values_in_its_table() {
-    let table: [(&str, Value, &[&str]); 12] = [
+    let table: [(&str, Value, &[&str]); 13] = [
         ("partition_disk", partition(), &["win_pe"]),
         ("apply_os_image", apply_image(), &["win_pe"]),
         (
@@ -443,6 +618,11 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
         (
             "install_applications",
             json!({ "install_applications": { "apps": { "one": "7zip-24.08" } } }),
+            &["full_os"],
+        ),
+        (
+            "install_updates",
+            json!({ "install_updates": {} }),
             &["full_os"],
         ),
         (
@@ -472,13 +652,15 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
     for (name, action, allowed) in table {
         let allowed: Vec<RunIn> = allowed.iter().map(|name| run_in(name)).collect();
         for written in ["win_pe", "full_os", "either"] {
-            // The partition step comes first, so a `win_pe` restart is allowed.
+            // The partition and image steps come first, so a `win_pe` restart,
+            // `apply_drivers`, and `apply_unattend` are allowed.
             let document = root(vec![
                 step(0x02, "win_pe", partition()),
+                step(0x04, "win_pe", apply_image()),
                 step(0x03, written, action.clone()),
             ]);
 
-            let result = compile(&parse(&document));
+            let result = compile_and_validate(&document);
 
             if allowed.contains(&run_in(written)) {
                 assert!(result.is_ok(), "{name} with {written}: {result:?}");
@@ -500,13 +682,46 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
                     panic!("{name} with {written}: {errors}");
                 };
                 assert_eq!(short(*node), 0x03);
-                assert_eq!(path.indices(), [1]);
+                assert_eq!(path.indices(), [2]);
                 assert_eq!(*action, name);
                 assert_eq!(*found, run_in(written));
                 assert_eq!(listed.to_vec(), allowed);
             }
         }
     }
+}
+
+#[test]
+fn an_install_updates_step_in_win_pe_fails_and_the_error_names_the_node() {
+    let document = root(vec![group(
+        0x02,
+        vec![
+            step(0x03, "win_pe", partition()),
+            step(0x04, "win_pe", json!({ "install_updates": {} })),
+        ],
+    )]);
+
+    let errors = compile_err(&document);
+
+    assert_eq!(
+        errors,
+        [error(
+            0x04,
+            vec![0, 1],
+            Rule::RunIn {
+                action: "install_updates",
+                run_in: RunIn::WinPe,
+                allowed: &[RunIn::FullOs],
+            },
+        )]
+    );
+    assert_eq!(
+        errors[0].to_string(),
+        format!(
+            "root.children[0].group.children[1], node {}: `install_updates` runs only with `run_in` `full_os`, and this step has `win_pe`",
+            id_text(0x04)
+        )
+    );
 }
 
 #[test]
@@ -657,6 +872,217 @@ fn a_restart_that_is_not_a_win_pe_step_passes_before_the_partition_step() {
 }
 
 #[test]
+fn an_apply_drivers_or_apply_unattend_step_before_the_first_apply_os_image_fails() {
+    for (action, name) in [(drivers(), "apply_drivers"), (unattend(), "apply_unattend")] {
+        let cases = [
+            // Directly before the image step.
+            (
+                root(vec![
+                    step(0x02, "win_pe", action.clone()),
+                    step(0x03, "win_pe", apply_image()),
+                ]),
+                0x02,
+                vec![0],
+            ),
+            // In a group that comes before the image step's group.
+            (
+                root(vec![
+                    group(
+                        0x02,
+                        vec![
+                            step(0x03, "win_pe", partition()),
+                            step(0x04, "win_pe", action.clone()),
+                        ],
+                    ),
+                    group(0x05, vec![step(0x06, "win_pe", apply_image())]),
+                ]),
+                0x04,
+                vec![0, 1],
+            ),
+            // After a disabled image step, which the program drops.
+            (
+                root(vec![
+                    disabled(step(0x02, "win_pe", apply_image())),
+                    step(0x03, "win_pe", action.clone()),
+                    step(0x04, "win_pe", apply_image()),
+                ]),
+                0x03,
+                vec![1],
+            ),
+            // After an image step inside a disabled group.
+            (
+                root(vec![
+                    disabled(group(0x02, vec![step(0x03, "win_pe", apply_image())])),
+                    step(0x04, "win_pe", action.clone()),
+                    step(0x05, "win_pe", apply_image()),
+                ]),
+                0x04,
+                vec![1],
+            ),
+        ];
+
+        for (document, node, path) in cases {
+            let errors = compile_err(&document);
+
+            assert_eq!(
+                errors,
+                [error(
+                    node,
+                    path.clone(),
+                    Rule::BeforeOsImage { action: name }
+                )],
+                "{document}"
+            );
+            assert_eq!(
+                errors[0].to_string(),
+                format!(
+                    "{}, node {}: `{name}` acts on the applied image, so it must come after the first `apply_os_image` step",
+                    NodePath::from(path),
+                    id_text(node)
+                )
+            );
+        }
+    }
+}
+
+#[test]
+fn apply_drivers_and_apply_unattend_steps_after_the_first_apply_os_image_compile() {
+    // A second image step later does not matter. The first one comes before.
+    let document = root(vec![
+        group(
+            0x02,
+            vec![
+                step(0x03, "win_pe", partition()),
+                step(0x04, "win_pe", apply_image()),
+            ],
+        ),
+        group(
+            0x05,
+            vec![
+                step(0x06, "win_pe", drivers()),
+                step(0x07, "win_pe", unattend()),
+            ],
+        ),
+        step(0x08, "win_pe", apply_image()),
+        step(0x09, "win_pe", drivers()),
+    ]);
+
+    let program = compile_ok(&document);
+
+    assert_eq!(
+        shapes(&program),
+        [
+            Enter(0x01, 9),
+            Enter(0x02, 4),
+            Exec(0x03, FailDeployment),
+            Exec(0x04, FailDeployment),
+            Enter(0x05, 7),
+            Exec(0x06, FailDeployment),
+            Exec(0x07, FailDeployment),
+            Exec(0x08, FailDeployment),
+            Exec(0x09, FailDeployment),
+        ]
+    );
+}
+
+#[test]
+fn an_apply_os_image_step_with_a_condition_still_comes_before() {
+    // The rule ignores conditions. If the image step is skipped at run time,
+    // the agent fails the later step.
+    let cases = [
+        // The image step is in a group with a condition, and the later steps
+        // are outside that group.
+        root(vec![
+            when(
+                group(0x02, vec![step(0x03, "win_pe", apply_image())]),
+                var_exists(),
+            ),
+            step(0x04, "win_pe", drivers()),
+            step(0x05, "win_pe", unattend()),
+        ]),
+        // The image step has a condition of its own.
+        root(vec![
+            when(step(0x02, "win_pe", apply_image()), var_exists()),
+            step(0x03, "win_pe", drivers()),
+            step(0x04, "win_pe", unattend()),
+        ]),
+    ];
+
+    for document in cases {
+        compile_ok(&document);
+    }
+}
+
+#[test]
+fn a_disabled_apply_drivers_or_apply_unattend_step_before_the_image_is_not_checked() {
+    // The program drops disabled steps and everything inside a disabled
+    // group, so the order rule does not see them.
+    compile_ok(&root(vec![
+        disabled(step(0x02, "win_pe", drivers())),
+        disabled(step(0x03, "win_pe", unattend())),
+        disabled(group(
+            0x04,
+            vec![
+                step(0x05, "win_pe", drivers()),
+                step(0x06, "win_pe", unattend()),
+            ],
+        )),
+        step(0x07, "win_pe", apply_image()),
+    ]));
+}
+
+#[test]
+fn a_sequence_with_no_apply_os_image_fails_for_each_apply_drivers_and_apply_unattend() {
+    let document = root(vec![
+        step(0x02, "win_pe", partition()),
+        step(0x03, "win_pe", drivers()),
+        group(
+            0x04,
+            vec![
+                step(0x05, "win_pe", unattend()),
+                step(0x06, "win_pe", drivers()),
+            ],
+        ),
+        disabled(step(0x07, "win_pe", drivers())),
+        step(0x08, "win_pe", unattend()),
+    ]);
+
+    assert_eq!(
+        compile_err(&document),
+        [
+            error(
+                0x03,
+                vec![1],
+                Rule::BeforeOsImage {
+                    action: "apply_drivers",
+                },
+            ),
+            error(
+                0x05,
+                vec![2, 0],
+                Rule::BeforeOsImage {
+                    action: "apply_unattend",
+                },
+            ),
+            error(
+                0x06,
+                vec![2, 1],
+                Rule::BeforeOsImage {
+                    action: "apply_drivers",
+                },
+            ),
+            error(
+                0x08,
+                vec![4],
+                Rule::BeforeOsImage {
+                    action: "apply_unattend",
+                },
+            ),
+        ]
+    );
+}
+
+#[test]
 fn a_node_id_shared_by_two_sibling_steps_fails_and_the_error_names_the_id() {
     let document = root(vec![
         step(0x02, "either", command()),
@@ -793,7 +1219,7 @@ fn every_error_is_reported_in_document_order() {
         ),
     ]);
 
-    let errors = compile(&parse(&document)).expect_err("the sequence breaks five rules");
+    let errors = compile_and_validate(&document).expect_err("the sequence breaks five rules");
 
     assert_eq!(
         errors.as_slice(),
@@ -859,7 +1285,8 @@ fn compile_errors_iterate_in_order() {
         step(0x02, "full_os", apply_image()),
     ]);
 
-    let errors: CompileErrors = compile(&parse(&document)).expect_err("the sequence breaks rules");
+    let errors: CompileErrors =
+        compile_and_validate(&document).expect_err("the sequence breaks rules");
 
     let nodes: Vec<_> = (&errors)
         .into_iter()

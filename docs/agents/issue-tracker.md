@@ -160,7 +160,7 @@ A session works on a fixed list of issues, set when it starts.
 - At the start, list the issues you will work on, and tell the owner. For a named issue or one ticket, the list is that issue. For a run over the frontier or over `needs-triage`, it is the issues there when you start. Claim comments mark the tickets on it.
 - Finish the issues on your list. Review fixes and merge conflicts on your own pull requests are part of that work. A triage run also triages the issues it files itself.
 - Do not move on to an issue that another session opens while you work, or to a ticket that becomes unblocked after you start, without the owner's permission. You may ask.
-- When your list is done, report and stop. Do not list the frontier or `needs-triage` again.
+- When your list is done, report and stop. Do not list the frontier again. A triage run first lists `needs-triage` once more and changes nothing there. Its report names the issues that entered `needs-triage` during the run and tells the owner to start a new session for them.
 
 ## Branches in a cloud session
 

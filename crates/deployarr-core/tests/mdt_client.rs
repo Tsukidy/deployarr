@@ -32,21 +32,26 @@
 //!   default OS (`scripts/LTIApply.wsf:155-157`), so they restart into WinPE.
 //!   The step at line 345 ends Postinstall, after the image is applied, so it
 //!   restarts into the installed OS (inferred).
-//! - Both "Configure" steps run `ZTIConfigure.wsf`, which fills in the answer
-//!   file ([MDT 8456 reference](../../../docs/research/mdt-8456.md#unattend)),
-//!   and both become `apply_unattend`.
-//! - The "Inject Drivers" step at line 275 becomes `apply_drivers` with
-//!   `auto`, the mode that matches its `DriverInjectionMode=AUTO`
-//!   ([Drivers](../../../docs/architecture.md#selection)). The one at line 330
-//!   stays a placeholder. In the Lite Touch Postinstall phase,
-//!   `ZTIDrivers.wsf` copies no drivers and changes only XP answer files
-//!   (`scripts/ZTIDrivers.wsf:171-176, 266-268`).
-//! - The port keeps MDT's order, and the compiler does not check the order of
-//!   these actions. MDT stages drivers and fills its answer file in
-//!   Preinstall, and `LTIApply.wsf` applies both after the image
+//! - `apply_drivers` and `apply_unattend` act on the applied image, so the
+//!   compiler rejects either one before the first `apply_os_image`
+//!   ([Compile the tree into a flat program](../../../docs/architecture.md#compile-the-tree-into-a-flat-program)).
+//!   MDT stages drivers and fills in its answer file in Preinstall, before
+//!   the image, and `LTIApply.wsf` applies both after the image
 //!   ([MDT 8456 reference](../../../docs/research/mdt-8456.md#drivers)). So
-//!   the `apply_drivers` and the first `apply_unattend` come before
-//!   `apply_os_image`. A sequence written for deployarr puts them after it.
+//!   each action goes on the first step after the image that runs the same
+//!   script, and the Preinstall step that runs it is a placeholder.
+//! - Both "Configure" steps run `ZTIConfigure.wsf`, which fills in the answer
+//!   file ([MDT 8456 reference](../../../docs/research/mdt-8456.md#unattend)).
+//!   The one at line 327, in Postinstall, becomes `apply_unattend`. The one at
+//!   line 269, in Preinstall, is a placeholder.
+//! - Both "Inject Drivers" steps run `ZTIDrivers.wsf`. The one at line 330, in
+//!   Postinstall, becomes `apply_drivers` with `auto`, the mode that matches
+//!   the `DriverInjectionMode=AUTO` of the one at line 275
+//!   (`Templates/Client.xml:275-281`,
+//!   [Drivers](../../../docs/architecture.md#selection)). The one at line 275,
+//!   in Preinstall, is a placeholder. In Lite Touch, `ZTIDrivers.wsf` copies
+//!   drivers in Preinstall. In Postinstall it copies none and changes only XP
+//!   answer files (`scripts/ZTIDrivers.wsf:171-176, 196-218, 266-268`).
 //! - A step whose feature has no deployarr action is a `run_command`
 //!   placeholder. Its command names the feature and the MDT script, such as
 //!   `placeholder: tattoo (MDT runs ZTITatoo.wsf)`, and no two are the same.
@@ -70,9 +75,12 @@
 //!   and the engine never reads `startIn`
 //!   ([MDT 8450 binaries reference](../../../docs/research/mdt-8450-binaries.md#instruction-table-and-failure-handling)).
 
+use std::collections::BTreeSet;
+
 use deployarr_core::compile::{Instr, OnError, Pc, compile};
 use deployarr_core::lower::{Expansions, lower};
 use deployarr_core::sequence::AuthoredSequence;
+use deployarr_core::validate::validate;
 use serde_json::Value;
 
 const CLIENT: &str = include_str!("data/mdt-8456-client.json");
@@ -123,9 +131,9 @@ const OUTLINE: &[&str] = &[
     "253       step Unload USMT Hive: run_command, run_in=either, continue on error", // user state migration
     "257     group Refresh only, if DeploymentType equals REFRESH",
     "265       step Backup: run_command, run_in=either", // refresh
-    "269     step Configure: apply_unattend template=standard, run_in=win_pe",
+    "269     step Configure: run_command, run_in=either", // answer file, which MDT fills in before the image
     "272     step Enable BitLocker (Offline): run_command, run_in=either, continue on error", // BitLocker
-    "275     step Inject Drivers: apply_drivers selection=auto, run_in=win_pe",
+    "275     step Inject Drivers: run_command, run_in=either", // drivers, which MDT stages before the image
     "282     step Apply Patches: run_command, run_in=either", // offline update packages, no deployarr feature
     "288     step Next Phase: set_variable name=PHASE value=INSTALL, run_in=either",
     "292   group Install, if PHASE equals INSTALL",
@@ -134,7 +142,7 @@ const OUTLINE: &[&str] = &[
     "316   group Postinstall, if PHASE equals POSTINSTALL",
     "324     step Copy Scripts: run_command, run_in=either", // the agent moves its own state to the disk
     "327     step Configure: apply_unattend template=standard, run_in=win_pe",
-    "330     step Inject Drivers: run_command, run_in=either", // copies no drivers in Lite Touch, see above
+    "330     step Inject Drivers: apply_drivers selection=auto, run_in=win_pe",
     "333     step Apply Patches: run_command, run_in=either", // offline update packages, no deployarr feature
     "339     step Add Windows Recovery (WinRE): run_command, run_in=either", // deployarr sets up WinRE with the disk layout
     "342     step Next Phase: set_variable name=PHASE value=STATERESTORE, run_in=either",
@@ -304,6 +312,8 @@ fn the_port_parses_and_compiles() {
     let lowered = lower(&sequence, &Expansions::new()).unwrap_or_else(|errors| panic!("{errors}"));
 
     let program = compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+    // The save-time check finds nothing either.
+    assert_eq!(validate(&sequence, &BTreeSet::new()), []);
 
     // An `Enter` for each of the 18 groups, the root included, and an `Exec`
     // for each of the 53 steps that are not disabled. Client.xml has 56.
@@ -313,8 +323,13 @@ fn the_port_parses_and_compiles() {
     let mut continuing = 0;
     for (pc, instr) in program.instrs().iter().enumerate() {
         match instr {
-            Instr::Enter { skip_to, .. } => {
+            Instr::Enter {
+                skip_to, on_error, ..
+            } => {
                 assert!(Pc(pc) < *skip_to && *skip_to <= program.end());
+                // A group whose condition fails to evaluate fails the
+                // deployment too.
+                assert_eq!(*on_error, OnError::FailDeployment);
             }
             Instr::Exec {
                 on_error: OnError::Continue,
@@ -357,7 +372,7 @@ fn each_placeholder_names_its_feature_and_the_mdt_script() {
 
     commands(&fixture["root"], &mut all);
 
-    assert_eq!(all.len(), 39);
+    assert_eq!(all.len(), 40);
     for command in &all {
         let (feature, script) = command
             .strip_prefix("placeholder: ")

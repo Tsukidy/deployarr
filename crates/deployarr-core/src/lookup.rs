@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::addon::{AddOnRef, KindId};
 use crate::non_empty::NonEmpty;
+use crate::sequence::TaskSequenceId;
 
 /// One entry of the lookup chain. The server tries the entries in order and
 /// stops at the first one that returns a task sequence.
@@ -195,7 +196,10 @@ impl fmt::Debug for PromptAnswers {
 }
 
 /// What an add-on resolver declares that it reads.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// It is written as `"identity"`, or as `{"prompt": "order-number"}`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ResolverInput {
     /// The PC's usable identity facts.
     Identity,
@@ -215,11 +219,14 @@ pub enum LookupInput {
     Prompt(PromptAnswers),
 }
 
-/// Why the server may erase a PC's disk after an add-on resolver's match.
+/// Why the server may erase a PC's disk: a pre-staged record's match, an
+/// add-on resolver's match, or a technician's pick from the manual list.
 ///
-/// It holds only the authorities that an add-on resolver can lead to. Issue
-/// #187 tracks the ones for a pre-staged record and a technician's pick from
-/// the manual list.
+/// Each path has one constructor, which checks the match or the pick against
+/// the facts, the input, or the list that the server used:
+/// [`WipeAuthority::from_pre_staged_match`],
+/// [`WipeAuthority::from_addon_match`], and
+/// [`WipeAuthority::from_manual_pick`].
 ///
 /// An add-on resolver returns a match and never authority.
 /// [`WipeAuthority::from_addon_match`] builds the authority from the input
@@ -227,10 +234,59 @@ pub enum LookupInput {
 /// code can build them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WipeAuthority {
+    /// A pre-staged record matched the PC's usable identity facts.
+    PreStagedMatch(PreStagedMatch),
     /// An identity resolver matched on facts that the server sent.
     IdentityMatch(IdentityMatch),
     /// A technician typed an answer to a resolver's prompt.
     TechnicianEntry(TechnicianEntry),
+    /// A technician picked a task sequence that the server offered on the
+    /// manual list.
+    ManualPick(ManualPick),
+}
+
+/// A pre-staged record's match. See [`WipeAuthority::PreStagedMatch`].
+///
+/// Only [`WipeAuthority::from_pre_staged_match`] builds one, from a
+/// [`UsableIdentity`]:
+///
+/// ```
+/// use deployarr_core::lookup::{IdentityFact, IdentityKind, UsableIdentity, WipeAuthority};
+///
+/// let serial = IdentityFact {
+///     kind: IdentityKind::BaseboardSerial,
+///     value: "MB-2231-0042".into(),
+/// };
+/// let identity = UsableIdentity::from_gathered(&[serial]).expect("the serial is usable");
+/// let authority = WipeAuthority::from_pre_staged_match(&identity, IdentityKind::BaseboardSerial)?;
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
+///
+/// The compiler rejects one built from raw facts, which could hold a
+/// placeholder:
+///
+/// ```compile_fail,E0451
+/// use deployarr_core::lookup::{IdentityFact, IdentityKind, PreStagedMatch, WipeAuthority};
+/// use deployarr_core::non_empty::NonEmpty;
+///
+/// let serial = IdentityFact {
+///     kind: IdentityKind::BaseboardSerial,
+///     value: "To Be Filled By O.E.M.".into(),
+/// };
+/// let authority = WipeAuthority::PreStagedMatch(PreStagedMatch {
+///     facts: NonEmpty::new(serial),
+/// });
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreStagedMatch {
+    facts: NonEmpty<IdentityFact>,
+}
+
+impl PreStagedMatch {
+    /// The PC's usable facts of the kind that the record matched on.
+    pub fn facts(&self) -> &[IdentityFact] {
+        &self.facts
+    }
 }
 
 /// An identity resolver's match. See [`WipeAuthority::IdentityMatch`].
@@ -273,7 +329,64 @@ impl TechnicianEntry {
     }
 }
 
+/// A technician's pick from the manual list. See
+/// [`WipeAuthority::ManualPick`].
+///
+/// Only [`WipeAuthority::from_manual_pick`] builds one, from the list that
+/// the server offered:
+///
+/// ```
+/// use deployarr_core::lookup::WipeAuthority;
+/// use deployarr_core::sequence::TaskSequenceId;
+///
+/// let offered: [TaskSequenceId; 2] = ["W11-PRO-STD".parse()?, "W11-HOME-STD".parse()?];
+/// let authority = WipeAuthority::from_manual_pick(&offered, &offered[0])?;
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
+///
+/// The compiler rejects one built from a pick alone:
+///
+/// ```compile_fail,E0451
+/// use deployarr_core::lookup::{ManualPick, WipeAuthority};
+/// use deployarr_core::sequence::TaskSequenceId;
+///
+/// let picked: TaskSequenceId = "W11-PRO-STD".parse()?;
+/// let authority = WipeAuthority::ManualPick(ManualPick {
+///     task_sequence: picked,
+/// });
+/// # Ok::<(), Box<dyn core::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManualPick {
+    task_sequence: TaskSequenceId,
+}
+
+impl ManualPick {
+    /// The task sequence that the technician picked.
+    pub fn task_sequence(&self) -> &TaskSequenceId {
+        &self.task_sequence
+    }
+}
+
 impl WipeAuthority {
+    /// The only way a pre-staged record's match becomes authority. Pure.
+    ///
+    /// `identity` is the PC's usable identity that the server matched the
+    /// record against, and `matched_on` is the kind of fact that the record
+    /// matched on. The authority holds every fact of that kind in `identity`.
+    /// It is an error when `identity` holds no fact of that kind.
+    ///
+    /// It takes no gathered facts, so a placeholder never gives authority.
+    pub fn from_pre_staged_match(
+        identity: &UsableIdentity,
+        matched_on: IdentityKind,
+    ) -> Result<Self, AuthorityError> {
+        let facts: Vec<IdentityFact> = identity.of_kind(matched_on).cloned().collect();
+        let facts =
+            NonEmpty::try_from(facts).map_err(|_| AuthorityError::KindNotUsable(matched_on))?;
+        Ok(Self::PreStagedMatch(PreStagedMatch { facts }))
+    }
+
     /// The only way an add-on resolver's match becomes authority. Pure.
     ///
     /// - A resolver that declares [`ResolverInput::Identity`] must name the
@@ -317,10 +430,35 @@ impl WipeAuthority {
             _ => Err(AuthorityError::InputDoesNotMatchDeclaration),
         }
     }
+
+    /// The only way a technician's pick from the manual list becomes
+    /// authority. Pure.
+    ///
+    /// `offered` is the list of task sequences that the server offered, and
+    /// `picked` is the one that the technician picked. It is an error when
+    /// `offered` does not hold `picked`, which it never does when it is empty.
+    pub fn from_manual_pick(
+        offered: &[TaskSequenceId],
+        picked: &TaskSequenceId,
+    ) -> Result<Self, AuthorityError> {
+        if offered.contains(picked) {
+            Ok(Self::ManualPick(ManualPick {
+                task_sequence: picked.clone(),
+            }))
+        } else {
+            Err(AuthorityError::PickNotOffered(picked.clone()))
+        }
+    }
 }
 
-/// Why an add-on resolver's match gives no authority.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Why a resolver's match or a technician's pick gives no authority.
+///
+/// [`WipeAuthority::from_addon_match`] returns [`Self::NoKindNamed`],
+/// [`Self::KindNotSent`], [`Self::KindNamedForPrompt`], and
+/// [`Self::InputDoesNotMatchDeclaration`].
+/// [`WipeAuthority::from_pre_staged_match`] returns [`Self::KindNotUsable`],
+/// and [`WipeAuthority::from_manual_pick`] returns [`Self::PickNotOffered`].
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthorityError {
     /// An identity resolver's match names no kind.
     NoKindNamed,
@@ -332,6 +470,12 @@ pub enum AuthorityError {
     /// the answers to another prompt, which may be a prompt with the same ID
     /// from another add-on.
     InputDoesNotMatchDeclaration,
+    /// A pre-staged record matched on a kind of fact that the PC's usable
+    /// identity does not hold.
+    KindNotUsable(IdentityKind),
+    /// The technician picked a task sequence that the server did not offer on
+    /// the manual list.
+    PickNotOffered(TaskSequenceId),
 }
 
 impl fmt::Display for AuthorityError {
@@ -351,6 +495,14 @@ impl fmt::Display for AuthorityError {
             Self::InputDoesNotMatchDeclaration => {
                 f.write_str("the server sent input that the resolver does not declare")
             }
+            Self::KindNotUsable(kind) => write!(
+                f,
+                "the pre-staged record matched on `{kind}`, and the PC has no usable fact of that kind"
+            ),
+            Self::PickNotOffered(picked) => write!(
+                f,
+                "the technician picked `{picked}`, and the manual list that the server offered does not hold it"
+            ),
         }
     }
 }

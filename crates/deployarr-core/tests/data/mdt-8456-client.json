@@ -544,10 +544,10 @@
 									"enabled": true,
 									"continue_on_error": false
 								},
-								"run_in": "win_pe",
+								"run_in": "either",
 								"action": {
-									"apply_unattend": {
-										"template": "standard"
+									"run_command": {
+										"command": "placeholder: answer file, which MDT fills in before the image (MDT runs ZTIConfigure.wsf)"
 									}
 								}
 							}
@@ -576,10 +576,10 @@
 									"enabled": true,
 									"continue_on_error": false
 								},
-								"run_in": "win_pe",
+								"run_in": "either",
 								"action": {
-									"apply_drivers": {
-										"selection": "auto"
+									"run_command": {
+										"command": "placeholder: drivers, which MDT stages before the image (MDT runs ZTIDrivers.wsf)"
 									}
 								}
 							}
@@ -730,10 +730,10 @@
 									"enabled": true,
 									"continue_on_error": false
 								},
-								"run_in": "either",
+								"run_in": "win_pe",
 								"action": {
-									"run_command": {
-										"command": "placeholder: drivers, which Lite Touch does not copy in Postinstall (MDT runs ZTIdrivers.wsf)"
+									"apply_drivers": {
+										"selection": "auto"
 									}
 								}
 							}
