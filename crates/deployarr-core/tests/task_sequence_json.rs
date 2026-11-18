@@ -8,7 +8,7 @@ use deployarr_core::action::{
     UpdateTimeouts, WsusUrl, WsusUrlError,
 };
 use deployarr_core::condition::{
-    Comparison, Condition, FileVersion, RegData, RegText, RegValueName, RegistryCondition,
+    Comparison, Condition, FileVersion, RegData, RegText, RegType, RegValueName, RegistryCondition,
     RegistryConditionError, Test,
 };
 use deployarr_core::sequence::{
@@ -498,6 +498,10 @@ fn a_bad_value_fails_and_the_error_names_its_field() {
             json!(true),
         ),
         (
+            format!("{FINISH_CONDITION}/all/0/any/1/registry/value_type"),
+            json!("reg_link"),
+        ),
+        (
             format!("{FINISH_CONDITION}/all/2/folder/modified/op"),
             json!("before"),
         ),
@@ -860,6 +864,7 @@ fn a_registry_key_test_needs_no_value_name() {
                 json!({ "registry": {
                     "key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Deployarr",
                     "value": null,
+                    "value_type": null,
                     "test": test,
                 } }),
                 "{condition}"
@@ -876,27 +881,257 @@ fn registry_conditions_built_in_code_cannot_compare_a_key() {
         Test::Equals(RegData::Integer(1)),
         Test::Like(RegData::String(pattern)),
     ] {
-        let error = RegistryCondition::new(key.clone(), None, test).expect_err("no value name");
+        let error =
+            RegistryCondition::new(key.clone(), None, None, test).expect_err("no value name");
 
-        assert_eq!(error, RegistryConditionError);
+        assert_eq!(error, RegistryConditionError::Comparison);
         assert!(error.to_string().contains("needs a value name"), "{error}");
     }
 
     for test in [Test::Exists, Test::NotExists] {
-        let condition =
-            RegistryCondition::new(key.clone(), None, test.clone()).expect("a test of the key");
+        let condition = RegistryCondition::new(key.clone(), None, None, test.clone())
+            .expect("a test of the key");
         assert_eq!(condition.key(), &key);
         assert_eq!(condition.value(), None);
+        assert_eq!(condition.value_type(), None);
         assert_eq!(condition.test(), &test);
     }
 
     let name: RegValueName = "Marker".parse().expect("a name that is not empty");
-    let condition =
-        RegistryCondition::new(key, Some(name.clone()), Test::Equals(RegData::Integer(1)))
-            .expect("a comparison that names a value");
+    let condition = RegistryCondition::new(
+        key,
+        Some(name.clone()),
+        None,
+        Test::Equals(RegData::Integer(1)),
+    )
+    .expect("a comparison that names a value");
     assert_eq!(condition.value(), Some(&name));
     assert!("".parse::<RegValueName>().is_err());
     assert!("".parse::<RegText>().is_err());
+}
+
+/// The message that a value type with no value name fails with, in code and
+/// in the parser.
+const TYPE_WITHOUT_NAME: &str = "a registry value type needs a value name, because a key has no type. Leave out `value_type` to test the key";
+
+#[test]
+fn registry_conditions_built_in_code_cannot_give_a_key_a_value_type() {
+    let key = Template::new(r"HKEY_LOCAL_MACHINE\SOFTWARE\Deployarr");
+    for test in [Test::Exists, Test::NotExists] {
+        let error = RegistryCondition::new(key.clone(), None, Some(RegType::Sz), test)
+            .expect_err("a value type without a value name");
+
+        assert_eq!(error, RegistryConditionError::ValueType);
+        assert_eq!(error.to_string(), TYPE_WITHOUT_NAME);
+    }
+
+    let name: RegValueName = "Marker".parse().expect("a name that is not empty");
+    for test in [Test::Exists, Test::Equals(RegData::Integer(1))] {
+        let condition =
+            RegistryCondition::new(key.clone(), Some(name.clone()), Some(RegType::Dword), test)
+                .expect("a value type that names a value");
+        assert_eq!(condition.value(), Some(&name));
+        assert_eq!(condition.value_type(), Some(RegType::Dword));
+    }
+}
+
+/// A comparison and a value type without a value name break both rules.
+/// `RegistryCondition::new` reports the comparison.
+#[test]
+fn registry_conditions_built_in_code_report_a_comparison_before_a_value_type() {
+    let key = Template::new(r"HKEY_LOCAL_MACHINE\SOFTWARE\Deployarr");
+    for test in [
+        Test::Equals(RegData::Integer(1)),
+        Test::Like(RegData::String("Pro*".parse().expect("text"))),
+    ] {
+        let error = RegistryCondition::new(key.clone(), None, Some(RegType::Sz), test)
+            .expect_err("a comparison and a value type without a value name");
+
+        assert_eq!(error, RegistryConditionError::Comparison);
+    }
+}
+
+/// With a comparison and a value type but no value name, the parser reports
+/// the problem that it finds first, and the comparison when it finds both at
+/// once.
+#[test]
+fn a_registry_comparison_and_value_type_without_a_value_name_fail_at_the_first_problem() {
+    let comparison = RegistryConditionError::Comparison.to_string();
+    let cases = [
+        // With `value` left out, both show at the end.
+        (
+            r#""value_type": "reg_sz", "test": {"equals": 1}"#,
+            "",
+            comparison.as_str(),
+        ),
+        // `value` comes last, after both.
+        (
+            r#""value_type": "reg_sz", "test": {"equals": 1}, "value": null"#,
+            ".value",
+            comparison.as_str(),
+        ),
+        // `value_type` comes before `test`, after `value`.
+        (
+            r#""value": null, "value_type": "reg_sz", "test": {"equals": 1}"#,
+            ".value_type",
+            TYPE_WITHOUT_NAME,
+        ),
+        // `test` comes before `value_type`, after `value`.
+        (
+            r#""value": null, "test": {"equals": 1}, "value_type": "reg_sz""#,
+            ".test.equals",
+            comparison.as_str(),
+        ),
+        // Only `value_type` comes before `value`.
+        (
+            r#""value_type": "reg_sz", "value": null, "test": {"equals": 1}"#,
+            ".value",
+            TYPE_WITHOUT_NAME,
+        ),
+    ];
+
+    for (fields, rest, message) in cases {
+        let condition = registry_text(fields);
+
+        let error = parse_with_condition(&condition).expect_err(&condition);
+
+        assert_eq!(
+            error.path(),
+            format!("{STEP}.meta.condition.registry{rest}"),
+            "{condition}: {error}"
+        );
+        assert!(error.to_string().contains(message), "{condition}: {error}");
+    }
+}
+
+#[test]
+fn a_registry_value_type_without_a_value_name_fails() {
+    let cases = [
+        // With `value` left out, it fails at the condition itself.
+        (r#""value_type": "reg_sz", "test": "exists""#, ""),
+        (r#""test": "not_exists", "value_type": "reg_dword""#, ""),
+        // With `"value": null`, it fails at whichever of the two comes second.
+        (
+            r#""value": null, "value_type": "reg_sz", "test": "exists""#,
+            ".value_type",
+        ),
+        (
+            r#""value_type": "reg_sz", "value": null, "test": "exists""#,
+            ".value",
+        ),
+        (
+            r#""test": "exists", "value_type": "reg_none", "value": null"#,
+            ".value",
+        ),
+    ];
+
+    for (fields, rest) in cases {
+        let condition = registry_text(fields);
+
+        let error = parse_with_condition(&condition).expect_err(&condition);
+
+        assert_eq!(
+            error.path(),
+            format!("{STEP}.meta.condition.registry{rest}"),
+            "{condition}: {error}"
+        );
+        assert!(
+            error.to_string().contains(TYPE_WITHOUT_NAME),
+            "{condition}: {error}"
+        );
+    }
+}
+
+/// The value type of the one `registry` condition in `sequence`.
+fn only_value_type(sequence: &AuthoredSequence) -> Option<RegType> {
+    let [Node::Step(step)] = sequence.root.children.as_slice() else {
+        panic!("expected one step");
+    };
+    let Some(Condition::Registry(registry)) = &step.meta.condition else {
+        panic!("expected a Registry condition");
+    };
+    registry.value_type()
+}
+
+/// The `value_type` field that `sequence` writes for its one condition.
+fn written_value_type(sequence: &AuthoredSequence) -> Value {
+    let written = serde_json::to_value(sequence).expect("a task sequence serializes");
+    let registry = &written["root"]["children"][0]["step"]["meta"]["condition"]["registry"];
+    registry
+        .get("value_type")
+        .cloned()
+        .unwrap_or_else(|| panic!("{registry} has no value_type"))
+}
+
+#[test]
+fn a_registry_value_type_left_out_or_null_names_no_type() {
+    for fields in [
+        r#""value": "Marker", "test": "exists""#,
+        r#""value": "Marker", "value_type": null, "test": "exists""#,
+        r#""value": "Marker", "test": {"equals": 1}, "value_type": null"#,
+        r#""value_type": null, "test": "exists""#,
+        r#""value": null, "value_type": null, "test": "exists""#,
+        r#""value_type": null, "value": null, "test": "not_exists""#,
+    ] {
+        let condition = registry_text(fields);
+
+        let sequence =
+            parse_with_condition(&condition).unwrap_or_else(|error| panic!("{condition}: {error}"));
+
+        assert_eq!(only_value_type(&sequence), None, "{condition}");
+        assert_eq!(written_value_type(&sequence), json!(null), "{condition}");
+    }
+}
+
+#[test]
+fn each_registry_value_type_parses_and_is_written_back_unchanged() {
+    let cases = [
+        ("reg_none", RegType::None),
+        ("reg_sz", RegType::Sz),
+        ("reg_expand_sz", RegType::ExpandSz),
+        ("reg_binary", RegType::Binary),
+        ("reg_dword", RegType::Dword),
+        ("reg_multi_sz", RegType::MultiSz),
+        ("reg_qword", RegType::Qword),
+    ];
+
+    for (name, expected) in cases {
+        let condition = registry_text(&format!(
+            r#""value": "Marker", "value_type": "{name}", "test": "exists""#
+        ));
+
+        let sequence =
+            parse_with_condition(&condition).unwrap_or_else(|error| panic!("{condition}: {error}"));
+
+        assert_eq!(only_value_type(&sequence), Some(expected), "{name}");
+        assert_eq!(written_value_type(&sequence), json!(name), "{name}");
+    }
+}
+
+#[test]
+fn an_unknown_registry_value_type_fails_at_its_field() {
+    for name in [
+        json!("reg_link"),
+        json!("REG_SZ"),
+        json!("Reg_Sz"),
+        json!("sz"),
+        json!(""),
+        json!(1),
+    ] {
+        let document = sequence_with_condition(json!({
+            "registry": {
+                "key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Deployarr",
+                "value": "Marker",
+                "value_type": name,
+                "test": "exists",
+            },
+        }));
+
+        assert_fails_at(
+            &document,
+            &format!("{STEP}.meta.condition.registry.value_type"),
+        );
+    }
 }
 
 fn var(name: &str, test: Value) -> Value {
