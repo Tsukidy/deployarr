@@ -28,7 +28,7 @@ The machine type and the property's value come from the HMP commands `qom-get /m
 | Chain | `--chain single`, with the default store `boot\bios.bcd` |
 | TFTP root | `~/deployarr-lab/tftp/2011`, built by `tools/lab/media.sh` as [step 6 of the lab guide](../../lab-setup.md#6-get-the-windows-files) says |
 | `bios` VM | The `bios` values in `tools/lab/lab.conf` and `tools/lab/vm.sh` at `3fc0d3f`: SeaBIOS, QEMU's `e1000` card with its iPXE ROM, MAC `52:54:00:41:00:21`, `-uuid 4c414200-0000-4000-8000-000000000021`, baseboard serial `DEPLOYARR-LAB-BIOS`, 2 vCPUs, 4 GB. Only `-machine` differs between the runs. |
-| Disk, serial log, and monitor | Each run had a new empty 64 GB disk and its serial log in its own folder, `~/deployarr-lab/runs/217/<run>/vm`, in place of `~/deployarr-lab/bios`. Each run added the HMP monitor socket `/tmp/lab-217-mon.sock`. |
+| Disk, serial log, and monitor | Each run had a new empty 64 GB disk and its serial log in its own folder under `~/deployarr-lab/runs/217/`, `pc-r2/vm`, `q35-r2/vm`, or `pc-ep64-r2/vm`, in place of `~/deployarr-lab/bios`. Each run added the HMP monitor socket `/tmp/lab-217-mon.sock`. |
 
 The runs did not use `tools/lab/vm.sh`. For the `bios` VM, that script always passes `-machine pc,smbios-entry-point-type=32`, and it puts the caller's arguments after its own. QEMU parses every `-machine` into one set of machine options ([`system/vl.c:3405-3410`](https://github.com/qemu/qemu/blob/v10.2.1/system/vl.c#L3405-L3410)), so a later `-machine pc` keeps the property. So each run started `qemu-system-x86_64` with the script's `bios` arguments in the script's order, and its own `-machine` value. Each run's section gives the full command line.
 
@@ -80,7 +80,7 @@ The HMP command `info version` prints `10.2.1Debian 1:10.2.1+ds-1ubuntu3.3` in e
 | `/usr/share/qemu/pxe-e1000.rom`, from `ipxe-qemu` | `d011d9d60664b17312bef960d6ebeae08c8f380b209dceba5f93fdf250879556` | Not listed. No device in `info qtree` names it. |
 | `/usr/share/OVMF/OVMF_CODE_4M.ms.fd` and `OVMF_VARS_4M.ms.fd` | Not recorded | Listed. These runs do not use them. |
 
-`qemu-system-x86_64 -L help` lists `/usr/share/qemu` and `/usr/share/seabios`. Only the second holds `bios-256k.bin`.
+`qemu-system-x86_64 -L help` lists `/usr/share/qemu` and `/usr/share/seabios`. QEMU loaded the `bios-256k.bin` in `/usr/share/seabios` (inferred). The SMBIOS type 0 structure in each dump gives the BIOS version `1.17.0-debian-1.17.0-1ubuntu1`, which ends with the version of the `seabios` package that holds that file. No saved file lists `/usr/share/qemu`, so the runs do not show that it holds no `bios-256k.bin`.
 
 | File in the TFTP root | SHA-256 | In [Versions](single-stage-chain.md#versions) of the single-stage page |
 | --- | --- | --- |
@@ -121,7 +121,7 @@ qemu-system-x86_64 -accel kvm -cpu host -name deployarr-lab-bios
 
 ### SMBIOS entry point
 
-- The dump is 65,536 bytes, SHA-256 `cddb17e8e365efaa92452d9029382eee90024c4d95abf129ddf78a7f7ed39ab1`. Its modification time is 20:51:53.349, 38 ms after the DISCOVER in frame 1.
+- The dump is 65,536 bytes, SHA-256 `cddb17e8e365efaa92452d9029382eee90024c4d95abf129ddf78a7f7ed39ab1`. Its modification time is 20:51:53.348, 38 ms after the DISCOVER in frame 1.
 - The scan counts one entry point, `_SM_` at `0xf5220`, length `0x1f`, version 2.8. Its `_DMI_` anchor and checksum are valid. Its table is 520 bytes at `0x000f5240`, with 11 structures.
 - No aligned `_SM3_` with a valid checksum is in the dump.
 
@@ -278,9 +278,10 @@ The raw evidence stays on the lab host in `~/deployarr-lab/runs/217/`. Each run'
 
 ## Commands
 
-`$WT` is the checkout at `3fc0d3f`. `<run>` is `pc`, `q35`, or `pc-ep64`, and `<machine>` is `pc`, `q35`, or `pc,smbios-entry-point-type=64`. The run script, `run-r2.sh <run>-r2 <machine>`, created the run's disk first. It then started the prototype, then the capture, then QEMU, in the order that [Run an experiment](../../lab-setup.md#run-an-experiment) gives:
+`$WT` is the checkout at `3fc0d3f`. `<run>` is `pc`, `q35`, or `pc-ep64`, and `<machine>` is `pc`, `q35`, or `pc,smbios-entry-point-type=64`. The run script, `run-r2.sh <run>-r2 <machine>`, created the run's folders and its disk first. It then started the prototype, then the capture, then QEMU, in the order that [Run an experiment](../../lab-setup.md#run-an-experiment) gives:
 
 ```bash
+mkdir -p ~/deployarr-lab/runs/217/<run>-r2/vm ~/deployarr-lab/captures
 qemu-img create -q -f qcow2 ~/deployarr-lab/runs/217/<run>-r2/vm/disk.qcow2 64G
 sudo python3 -B $WT/tools/pxe-prototype/pxe_prototype.py --server-ip 10.41.0.1 --interface br-lab --root ~/deployarr-lab/tftp/2011 --chain single --answer-without-guid --no-block-log --log-file ~/deployarr-lab/runs/217/<run>-r2/prototype.log &
 sudo dumpcap -i br-lab -f 'udp and udp[8:2] != 3' -w - > ~/deployarr-lab/captures/ipxe-option-97-<run>-r2.pcapng 2> ~/deployarr-lab/captures/ipxe-option-97-<run>-r2-dumpcap.log &
@@ -310,6 +311,7 @@ python3 -I tools/smbios_walk.py <run>-r2/fseg-f0000.bin > <run>-r2/smbios-walk.t
 These commands make the reduced and the committed files, and check them:
 
 ```bash
+cd $WT
 tshark -r - -Y 'not tftp.opcode == 4' -w - < ~/deployarr-lab/captures/ipxe-option-97-<run>-r2.pcapng > ~/deployarr-lab/captures/ipxe-option-97-<run>-r2-reduced.pcapng
 cp ~/deployarr-lab/captures/ipxe-option-97-<run>-r2-reduced.pcapng docs/research/pxe-lab/captures/ipxe-option-97-<run>.pcapng
 tshark -r - -Y 'tftp.opcode == 3 or ip.flags.mf == 1 or ip.frag_offset > 0' < docs/research/pxe-lab/captures/ipxe-option-97-<run>.pcapng
