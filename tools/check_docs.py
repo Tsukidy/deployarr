@@ -56,8 +56,9 @@ SKIP_DIRS = {".git", "target", "node_modules"}
 # owner raised it to 14,200, so that the rule against keeping a contradiction
 # to stay under the budget fits, beside the docs check line that #223 adds.
 # For #264 the owner raised it to 14,400, so that the Workflow agent cap note
-# fits.
-AGENT_FILES_BUDGET = 14400
+# fits. For #263 the owner raised it to 14,500, so that the docs build line
+# fits beside the sentence that #283 changes.
+AGENT_FILES_BUDGET = 14500
 REQUIRED_AGENT_FILES = ("AGENTS.md", "CLAUDE.md")
 IMPORT_HOPS = 4
 # An @path import. A backslash before a space keeps the space in the path.
