@@ -283,6 +283,7 @@ Scope:
 - Version history with a diff view, and templates.
 - The monitoring dashboard.
 - Join profiles for a workgroup and a domain, and the join kinds that add-ons declare.
+- The domain join check. With a `Domain` profile, the agent fails the deployment in the full OS when the PC did not join the profile's domain. See [Directory join](architecture.md#directory-join).
 - Step kinds from add-ons in the palette, forms drawn from their schemas, the read-only view of a step whose add-on is unavailable, and plan errors. See [Task sequences stay loadable](architecture.md#task-sequences-stay-loadable).
 - Export and import of task sequences, with the descriptors of their add-on steps and the derived list of the add-ons they need.
 - `ApplyJoinProfile` join slots in the built-in Windows client template.
@@ -295,6 +296,7 @@ Check:
 - Build the standard Windows client sequence from scratch in the UI, then deploy with it in the lab. The lab has no uplink for this check, so the sequence has its `InstallUpdates` step turned off. It deploys to the UEFI VM, with Microsoft's KMS client setup key for Pro and `online` off.
 - Edit a sequence while a deployment that uses it is running. The running deployment keeps its pinned version.
 - The UEFI VM, which runs Pro, joins the lab domain. No file in `%WINDIR%\Panther` holds the join password afterward.
+- The UEFI VM deploys again with a `Domain` profile whose join password is wrong. Windows Setup finishes, and the agent fails the deployment in the full OS with no retry. The error names the lab domain and what the PC reports instead.
 - The BIOS VM, which runs Home, has no pre-staged record, so lookup reaches its order row by baseboard serial. The row sets a `Domain` profile. The deployment stops before the disk changes, and its error names the edition ID and the profile.
 - A human checks Entra ID join and Autopilot registration on Pro against a test tenant, because the lab has no tenant. Home supports neither (see [Directory join](architecture.md#directory-join)).
 - The lowered program for `deployarr.entra-join` holds one `AddProvisioningPackage` step and no command. Planning refuses a test add-on that expands to a `RunCommand` naming the enrollment package (item 9).
@@ -329,6 +331,10 @@ Check:
 None of these are scheduled yet:
 
 - BitLocker protectors that need a PIN or a startup key
+- user state migration, the refresh scenario, and in-place upgrades
+- image capture
+- offline update and language packages
+- local Group Policy packs, which an add-on step kind may provide
 - an auto-logon session for installers that fail as LocalSystem
 - iPXE and wimboot over HTTP for BIOS or Secure Boot off
 - multicast
