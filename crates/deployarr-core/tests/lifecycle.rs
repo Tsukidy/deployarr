@@ -283,6 +283,90 @@ fn force_for_the_same_package_takes_the_waiting_operation_over() {
 }
 
 #[test]
+fn force_for_the_same_roll_back_or_disable_takes_the_waiting_operation_over() {
+    // Package 2 is active, and package 1 is the previous one.
+    let world = |open: OpKind| {
+        let mut world = World::with(Installed {
+            active: package(2, "1.1.0"),
+            previous: Some(package(1, "1.0.0")),
+            open: Some(OpenOperation {
+                kind: open,
+                phase: OpPhase::Approved,
+            }),
+            ..installed()
+        });
+        world.usage.running_deployments = 2;
+        world
+    };
+    let roll_back = Change::RollBack {
+        addon: id(),
+        when_busy: WhenBusy::Force,
+    };
+    let disable = Change::Disable {
+        addon: id(),
+        when_busy: WhenBusy::Force,
+    };
+    let forced = Effect::Forced {
+        running_deployments: 2,
+    };
+
+    let plan = world(OpKind::RollBack { to: hash(1) })
+        .plan(&roll_back)
+        .expect("Force takes the waiting roll back over");
+    assert_eq!(plan.kind, Some(OpKind::RollBack { to: hash(1) }));
+    assert_eq!(
+        plan.steps,
+        [
+            Step::TakeOver,
+            Step::Prepare(hash(1)),
+            Step::Check(hash(1)),
+            Step::Commit(Commit::Packages {
+                active: hash(1),
+                previous: Some(hash(2)),
+                publisher: Some("Acme".into()),
+                enabled: true,
+            }),
+        ]
+    );
+    assert_eq!(
+        plan.effects,
+        [
+            Effect::TakesOver,
+            Effect::RollsBack {
+                from: version("1.1.0"),
+                to: version("1.0.0"),
+            },
+            forced.clone(),
+        ]
+    );
+
+    let plan = world(OpKind::Disable)
+        .plan(&disable)
+        .expect("Force takes the waiting disable over");
+    assert_eq!(plan.kind, Some(OpKind::Disable));
+    assert_eq!(
+        plan.steps,
+        [Step::TakeOver, Step::Commit(Commit::Enabled(false))]
+    );
+    assert_eq!(plan.effects, [Effect::TakesOver, Effect::Disables, forced]);
+
+    // Force on another change does not take the waiting operation over.
+    for (waits, change) in [
+        (OpKind::Disable, &roll_back),
+        (OpKind::RollBack { to: hash(1) }, &disable),
+        (OpKind::Apply { package: hash(1) }, &roll_back),
+    ] {
+        let world = world(waits);
+        let open = world.registry.add_ons[&id()].open.clone().unwrap();
+        assert_eq!(
+            world.refusals(change),
+            [Refusal::Busy { open }],
+            "{change:?} while {waits:?} waits"
+        );
+    }
+}
+
+#[test]
 fn cancel_abandons_the_waiting_operation() {
     let world = with_open(waiting());
     let plan = world
@@ -457,6 +541,36 @@ fn a_confirmed_downgrade_goes_ahead() {
             from: version("1.0.0"),
             to: version("0.9.0"),
         }]
+    );
+}
+
+#[test]
+fn versions_that_differ_only_in_build_metadata_are_a_reinstall() {
+    // SemVer 2.0.0 item 10: build metadata is ignored when determining
+    // precedence.
+    let world = World::with(Installed {
+        active: package(1, "1.0.0+def"),
+        ..installed()
+    });
+    for (n, text) in [(2, "1.0.0+abc"), (3, "1.0.0+xyz"), (4, "1.0.0")] {
+        let plan = world
+            .plan(&apply(package(n, text)))
+            .unwrap_or_else(|refusals| panic!("{text}: {refusals}"));
+        assert_eq!(
+            plan.effects,
+            [Effect::Reinstalls {
+                version: version(text)
+            }],
+            "{text}"
+        );
+    }
+    assert_eq!(
+        world.refusals(&apply(package(5, "1.0.0-rc.1+def"))),
+        [Refusal::Downgrade {
+            from: version("1.0.0+def"),
+            to: version("1.0.0-rc.1+def"),
+        }],
+        "a pre-release still has lower precedence"
     );
 }
 

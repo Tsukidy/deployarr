@@ -6,7 +6,6 @@
 //! tagged enum accepted `allow_write = true` on a `sql_text` field.
 
 use deployarr_core::form::{Field, FieldKind, FormSchema, Pattern, ValueError, ValueProblem};
-use deployarr_core::sequence::TaskSequenceIdError;
 use serde_json::{Value, json};
 
 /// One field kind: the table keys it owns, a value it accepts, a value it
@@ -115,7 +114,7 @@ fn kinds() -> Vec<Kind> {
             own: "",
             valid: json!("W11-PRO"),
             invalid: json!("w11 pro"),
-            problem: ValueProblem::TaskSequenceId(TaskSequenceIdError::InvalidChar { found: 'w' }),
+            problem: ValueProblem::NotATaskSequenceId,
             below: "",
             foreign: "max_bytes = 5",
         },
@@ -543,10 +542,7 @@ fn an_optional_field_accepts_empty_text() {
                     pattern: "[A-Z]+".into()
                 }
             ),
-            (
-                "/s".into(),
-                ValueProblem::TaskSequenceId(TaskSequenceIdError::InvalidChar { found: 'w' })
-            ),
+            ("/s".into(), ValueProblem::NotATaskSequenceId),
         ]
     );
     let required = FormSchema::new(vec![
@@ -643,4 +639,22 @@ fn a_value_error_never_holds_the_value() {
     let message = errors.to_string();
     assert!(!message.contains("hunter2"), "{message}");
     assert!(!format!("{errors:?}").contains("hunter2"));
+
+    // A secret typed into another field gets the same errors whatever its
+    // text, so they hold no part of it.
+    let fields = FormSchema::new(vec![
+        field("key = \"t\"\nlabel = \"T\"\nkind = \"text\"\npattern = \"[0-9]+\""),
+        field("key = \"c\"\nlabel = \"C\"\nkind = \"choice\"\noptions = [\"pro\"]"),
+        field("key = \"s\"\nlabel = \"S\"\nkind = \"task_sequence_ref\""),
+    ])
+    .unwrap();
+    let check = |secret: &str| {
+        fields
+            .check(&json!({"t": secret, "c": secret, "s": secret}))
+            .expect_err("each field refuses it")
+    };
+    let (one, two) = (check("Hunter2!"), check("swordfi$"));
+    assert_eq!(one.as_slice().len(), 3, "{one}");
+    assert_eq!(one.as_slice(), two.as_slice());
+    assert_eq!(one.to_string(), two.to_string());
 }

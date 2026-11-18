@@ -34,7 +34,7 @@ use serde_json::{Map, Value};
 
 use crate::addon::KindId;
 use crate::non_empty::NonEmpty;
-use crate::sequence::{TaskSequenceId, TaskSequenceIdError};
+use crate::sequence::TaskSequenceId;
 use crate::validated_string::validated_string;
 
 /// The longest [`FieldKey`]. It is a default until the owner decides the form
@@ -793,10 +793,8 @@ fn check_field(
             };
             if field.required && text.is_empty() {
                 problem(ValueProblem::Empty);
-            } else if !text.is_empty()
-                && let Err(error) = text.parse::<TaskSequenceId>()
-            {
-                problem(ValueProblem::TaskSequenceId(error));
+            } else if !text.is_empty() && text.parse::<TaskSequenceId>().is_err() {
+                problem(ValueProblem::NotATaskSequenceId);
             }
         }
         FieldKind::List { item } => {
@@ -897,8 +895,9 @@ impl fmt::Display for ValueErrors {
 
 impl core::error::Error for ValueErrors {}
 
-/// One problem in a document. No variant holds the value, so a message
-/// cannot leak a secret that was written where it does not belong.
+/// One problem in a document. No `ValueProblem` holds any of the value's
+/// text, so a message cannot leak a secret that was written where it does
+/// not belong.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValueError {
     /// A JSON pointer to the value, such as `/rules/0/statement`. It is empty
@@ -962,7 +961,9 @@ pub enum ValueProblem {
     /// A secret or secret file field holds something other than
     /// `{"set": true}` or `{"set": false}`.
     NotASecretMark,
-    TaskSequenceId(TaskSequenceIdError),
+    /// The text holds a character that a task sequence ID does not allow.
+    /// The variant does not name it, so it holds no part of the value.
+    NotATaskSequenceId,
 }
 
 impl fmt::Display for ValueProblem {
@@ -988,7 +989,9 @@ impl fmt::Display for ValueProblem {
             Self::NotASecretMark => f.write_str(
                 "a secret field holds `{\"set\": true}` or `{\"set\": false}`, never the secret",
             ),
-            Self::TaskSequenceId(error) => write!(f, "{error}"),
+            Self::NotATaskSequenceId => f.write_str(
+                "a task sequence ID holds only upper-case ASCII letters, digits, `_`, and `-`",
+            ),
         }
     }
 }

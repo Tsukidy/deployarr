@@ -1432,7 +1432,7 @@ pub enum BuiltinAction {
 Three more names in `deployarr-core` belong to this model:
 
 - `AddOnRef` is an add-on ID plus a kind ID. `Resolver::AddOn` and `JoinProfile::AddOn` each hold one. An `AddOnId` is `<publisher>.<name>`. Each part holds a lower-case ASCII letter and then lower-case ASCII letters, digits, or `-`. A `KindId` follows the same rule. The lengths, 1 to 32 characters for each part of an `AddOnId` and 1 to 63 for a `KindId`, are defaults until the owner decides the grammar, which is [one-way door](#one-way-doors) 3.
-- `Catalog` is the set of step kind, join kind, resolver, prompt, and importer descriptors, from installed add-ons and from remembered ones. The UI and `validate` read it.
+- `Catalog` is the set of step kind, join kind, resolver, prompt, and importer descriptors, from installed add-ons and from remembered ones. The UI and `validate` read it. A join kind lists the end states it needs in `requires_end_state`, written as the values of the `EndState` variable, such as `CustomerOobe` for Autopilot. An empty list allows both (design decision). `catalog::requirements` lists the add-on step kinds that a sequence holds, disabled steps too, for an export and an add-on's Used by list. It is a free function and reads no catalog, because each step names its kind (design decision).
 - `deferred` lists every enabled add-on step and `ApplyJoinProfile` join slot in a sequence. The server must expand each one before it compiles. It skips a step inside a disabled group, because the compiler drops that step too.
 
 How a stored step behaves:

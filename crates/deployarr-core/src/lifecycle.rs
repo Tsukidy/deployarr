@@ -764,7 +764,7 @@ impl fmt::Display for Refusal {
             ),
             Self::DataTooNew { store, package } => write!(
                 f,
-                "the store holds data version {store}, and the package works with version {package}. Roll back instead"
+                "the store holds data version {store}, and the package works with version {package}. Migrations only go up"
             ),
             Self::RunningDeployments { count } => {
                 write!(f, "{count} running deployments use the add-on")
@@ -940,10 +940,14 @@ impl Planner<'_> {
 
     /// Records the effect of applying `package` over the active package, and
     /// refuses a downgrade that the admin did not confirm.
+    ///
+    /// It compares SemVer precedence, which ignores build metadata (SemVer
+    /// 2.0.0 item 10). Versions that differ only in build metadata are a
+    /// reinstall. `Version`'s `Ord` compares build metadata too.
     fn direction(&mut self, installed: &Installed, package: &Package, approval: &Approval) {
         let from = installed.active.version.clone();
         let to = package.version.clone();
-        let effect = match to.cmp(&from) {
+        let effect = match to.cmp_precedence(&from) {
             Ordering::Greater => Effect::Upgrades { from, to },
             Ordering::Equal => Effect::Reinstalls { version: to },
             Ordering::Less if approval.allow_downgrade => Effect::Downgrades { from, to },
