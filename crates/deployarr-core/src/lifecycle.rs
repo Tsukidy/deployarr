@@ -226,7 +226,8 @@ pub struct Facts<'a> {
     /// The API levels that this server serves.
     pub serves: &'a RangeInclusive<u32>,
     pub trust: &'a Trust,
-    /// The server setting "Allow unsigned add-ons".
+    /// The server setting "Allow unsigned add-ons". It gates uploads only, so
+    /// a roll back and an enable do not read it.
     pub allow_unsigned: bool,
     /// What uses the add-on that the change names.
     pub usage: &'a Usage,
@@ -676,7 +677,8 @@ pub enum Refusal {
         setting_allows: bool,
     },
     /// A publisher signed the add-on, and this package is unsigned or from
-    /// another publisher. An upgrade and a roll back both refuse it.
+    /// another publisher. An upgrade, a roll back, and an enable each refuse
+    /// it.
     PublisherChanged {
         was: String,
         now: Option<String>,
@@ -959,9 +961,15 @@ impl Planner<'_> {
         } else if installed.enabled {
             self.refuse(Refusal::AlreadyEnabled);
         }
-        // The host checks the trust bundle again at every enable.
+        // The host checks the trust bundle and the publisher again at every
+        // enable. The server setting gates uploads only, so an enable does
+        // not read it (owner decision on #88).
         self.check_level(&installed.active);
-        self.check_trust(&installed.active);
+        let verdict = self.check_trust(&installed.active);
+        self.check_publisher(Some(installed), &verdict);
+        if verdict == Verdict::Untrusted {
+            self.effects.push(Effect::Unsigned);
+        }
         self.effects.push(Effect::Enables);
         self.steps.push(Step::Commit(Commit::Enabled(true)));
         Some(OpKind::Enable)
@@ -990,7 +998,8 @@ impl Planner<'_> {
         self.check_level(previous);
         // The admin accepted the previous package when it was installed. The
         // trust bundle may have changed since, and a later package may have
-        // given the add-on a publisher.
+        // given the add-on a publisher. The server setting gates uploads
+        // only, so a roll back does not read it (owner decision on #88).
         let verdict = self.check_trust(previous);
         let publisher = self.check_publisher(Some(installed), &verdict);
         if verdict == Verdict::Untrusted {

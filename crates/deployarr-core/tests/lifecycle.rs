@@ -681,6 +681,18 @@ fn more_refusals() {
         addon: id(),
         when_busy: WhenBusy::Wait,
     };
+    // Acme signed the disabled add-on, and a later trust bundle drops Acme.
+    let unlisted_publisher = || {
+        let mut world = World::with(Installed {
+            enabled: false,
+            ..installed()
+        });
+        world
+            .trust
+            .publishers
+            .retain(|publisher| publisher.key != ACME);
+        world
+    };
     let rows: Vec<(&str, World, Change, Vec<Refusal>)> = vec![
         (
             "a revoked package",
@@ -825,6 +837,15 @@ fn more_refusals() {
             }],
         ),
         (
+            "an enable of a signed add-on whose key the trust bundle no longer lists",
+            unlisted_publisher(),
+            Change::Enable { addon: id() },
+            vec![Refusal::PublisherChanged {
+                was: "Acme".into(),
+                now: None,
+            }],
+        ),
+        (
             "an enable of an enabled add-on",
             World::with(installed()),
             Change::Enable { addon: id() },
@@ -933,27 +954,30 @@ fn a_confirmed_unsigned_package_installs_with_a_badge() {
 }
 
 /// The admin confirmed both packages' hashes when they were uploaded. The
-/// server setting gates an upload, so a roll back does not read it, as an
-/// enable does not.
+/// server setting "Allow unsigned add-ons" gates uploads only, so a roll back
+/// goes ahead with the setting off and shows the Unsigned effect (owner
+/// decision on #88, issue comment 6964617798).
 #[test]
 fn a_roll_back_to_an_unsigned_package_shows_the_badge() {
     let unsigned = |n, text| Package {
         signer: Signer::Unsigned,
         ..package(n, text)
     };
-    let world = World::with(Installed {
+    let mut world = World::with(Installed {
         active: unsigned(2, "1.1.0"),
         previous: Some(unsigned(1, "1.0.0")),
         publisher: None,
         ..installed()
     });
+    let roll_back = Change::RollBack {
+        addon: id(),
+        when_busy: WhenBusy::Wait,
+    };
     assert!(!world.allow_unsigned);
-    let plan = world
-        .plan(&Change::RollBack {
-            addon: id(),
-            when_busy: WhenBusy::Wait,
-        })
-        .expect("a roll back");
+    let plan = world.plan(&roll_back).expect("a roll back");
+    // The planner does not read the setting for a roll back.
+    world.allow_unsigned = true;
+    assert_eq!(world.plan(&roll_back), Ok(plan.clone()));
     assert_eq!(
         plan.effects,
         [
@@ -973,6 +997,41 @@ fn a_roll_back_to_an_unsigned_package_shows_the_badge() {
             enabled: true,
         }))
     );
+}
+
+/// The admin confirmed the package's hash when it was uploaded. An enable
+/// does not read the server setting either, and shows the Unsigned effect
+/// (owner decision on #88, issue comment 6964617798). A key that the trust
+/// bundle does not list counts as unsigned.
+#[test]
+fn an_enable_of_an_unsigned_package_shows_the_badge() {
+    for signer in [Signer::Unsigned, Signer::Key(STRANGER)] {
+        let mut world = World::with(Installed {
+            active: Package {
+                signer,
+                ..package(1, "1.0.0")
+            },
+            enabled: false,
+            publisher: None,
+            ..installed()
+        });
+        let enable = Change::Enable { addon: id() };
+        assert!(!world.allow_unsigned);
+        let plan = world.plan(&enable).expect("an enable");
+        assert_eq!(
+            plan.effects,
+            [Effect::Unsigned, Effect::Enables],
+            "{signer:?}"
+        );
+        assert_eq!(
+            plan.steps,
+            [Step::Approve, Step::Commit(Commit::Enabled(true))],
+            "{signer:?}"
+        );
+        // The planner does not read the setting for an enable.
+        world.allow_unsigned = true;
+        assert_eq!(world.plan(&enable), Ok(plan), "{signer:?}");
+    }
 }
 
 #[test]
