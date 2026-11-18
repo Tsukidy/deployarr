@@ -698,13 +698,19 @@ fn run_in_name(run_in: RunIn) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sequence::LoweredSequence;
 
-    fn steps<'a>(group: &'a Group<BuiltinAction>, out: &mut Vec<&'a Step<BuiltinAction>>) {
+    /// The built-in action of every step in the group, in document order.
+    /// Panics at an add-on step or a join slot.
+    fn built_in_actions(group: &Group<Action>, out: &mut Vec<BuiltinAction>) {
         for child in &group.children {
             match child {
-                Node::Group(group) => steps(group, out),
-                Node::Step(step) => out.push(step),
+                Node::Group(group) => built_in_actions(group, out),
+                Node::Step(step) => match &step.action {
+                    Action::Builtin(action) => out.push(action.clone()),
+                    Action::AddOn(_) | Action::ApplyJoinProfile { .. } => {
+                        panic!("{} holds no built-in action", step.meta.name)
+                    }
+                },
             }
         }
     }
@@ -712,12 +718,10 @@ mod tests {
     #[test]
     fn action_names_are_the_json_keys() {
         let sequence =
-            LoweredSequence::from_json(include_str!("../tests/data/windows-11-pro.json"))
+            AuthoredSequence::from_json(include_str!("../tests/data/windows-11-pro.json"))
                 .expect("the sample parses");
-        let mut all = Vec::new();
-        steps(&sequence.root, &mut all);
-        let mut actions: Vec<BuiltinAction> =
-            all.into_iter().map(|step| step.action.clone()).collect();
+        let mut actions = Vec::new();
+        built_in_actions(&sequence.root, &mut actions);
         // The sample uses every action but the two that add-on steps expand to.
         actions.push(BuiltinAction::ServerCall {
             send: alloc::vec!["SerialNumber".parse().expect("a valid name")],

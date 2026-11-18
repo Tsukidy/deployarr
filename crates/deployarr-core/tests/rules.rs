@@ -2,7 +2,7 @@
 //! sequences with no add-on step and no join slot, and the program that `plan`
 //! builds.
 
-use deployarr_core::action::BuiltinAction;
+use deployarr_core::action::Action;
 use deployarr_core::catalog::Catalog;
 use deployarr_core::plan::{
     Expansions, NodePath, PlanCheck, PlanErrors, PlanIssue, Rule, SaveCheck, SaveIssue, plan,
@@ -10,9 +10,7 @@ use deployarr_core::plan::{
 };
 use deployarr_core::program::OnError::{Continue, FailDeployment};
 use deployarr_core::program::{Instr, OnError, Pc, Program};
-use deployarr_core::sequence::{
-    AuthoredSequence, Group, LoweredSequence, Node, NodeId, RunIn, Step,
-};
+use deployarr_core::sequence::{AuthoredSequence, Group, Node, NodeId, RunIn, Step};
 use serde_json::{Value, json};
 
 use self::Shape::{Enter, Exec};
@@ -286,7 +284,7 @@ fn on_error_of(program: &Program, n: u32) -> OnError {
 
 /// The steps of the tree in document order, with the disabled ones and the
 /// ones inside a disabled group left out.
-fn kept_steps<'a>(group: &'a Group<BuiltinAction>, out: &mut Vec<&'a Step<BuiltinAction>>) {
+fn kept_steps<'a>(group: &'a Group<Action>, out: &mut Vec<&'a Step<Action>>) {
     for child in &group.children {
         match child {
             Node::Group(group) if group.meta.enabled => kept_steps(group, out),
@@ -345,11 +343,10 @@ fn the_sample_compiles_to_a_flat_program() {
     assert_eq!(condition, &finish.meta.condition);
     assert!(condition.is_some());
 
-    // The sample holds no add-on step or join slot, so it parses as a
-    // sequence of built-in steps too.
-    let built_in = LoweredSequence::from_json(SAMPLE).expect("the sample parses");
+    // The sample holds no add-on step or join slot, so each kept step holds a
+    // built-in action.
     let mut steps = Vec::new();
-    kept_steps(&built_in.root, &mut steps);
+    kept_steps(&sequence.root, &mut steps);
     let execs: Vec<_> = program
         .instrs()
         .iter()
@@ -367,12 +364,10 @@ fn the_sample_compiles_to_a_flat_program() {
     let expected: Vec<_> = steps
         .iter()
         .map(|step| {
-            (
-                step.meta.id,
-                &step.meta.condition,
-                step.run_in,
-                &step.action,
-            )
+            let Action::Builtin(action) = &step.action else {
+                panic!("{} holds no built-in action", step.meta.name);
+            };
+            (step.meta.id, &step.meta.condition, step.run_in, action)
         })
         .collect();
     assert_eq!(execs, expected);
