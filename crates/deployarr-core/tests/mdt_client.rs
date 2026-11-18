@@ -69,7 +69,9 @@
 //!   The Capture Image group's restart into WinPE, at line 480, comes after
 //!   "Enable BitLocker", at line 398, so that step cannot become
 //!   `enable_bitlocker`. "Enable BitLocker (Offline)" pre-provisions BitLocker
-//!   in WinPE, which deployarr does not do
+//!   in WinPE
+//!   ([MDT 8456 reference](../../../docs/research/mdt-8456.md#pre-provisioning-in-winpe)),
+//!   which deployarr does not do
 //!   ([No pre-provisioning in WinPE](../../../docs/architecture.md#no-pre-provisioning-in-winpe)).
 //!   "Disable BDE Protectors" suspends the key protectors with a count of 0.
 //!   That count keeps them off until "Enable BitLocker" turns them back on
