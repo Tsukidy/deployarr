@@ -313,8 +313,13 @@ fn the_port_parses_and_compiles() {
     let mut continuing = 0;
     for (pc, instr) in program.instrs().iter().enumerate() {
         match instr {
-            Instr::Enter { skip_to, .. } => {
+            Instr::Enter {
+                skip_to, on_error, ..
+            } => {
                 assert!(Pc(pc) < *skip_to && *skip_to <= program.end());
+                // A group whose condition fails to evaluate fails the
+                // deployment too.
+                assert_eq!(*on_error, OnError::FailDeployment);
             }
             Instr::Exec {
                 on_error: OnError::Continue,
