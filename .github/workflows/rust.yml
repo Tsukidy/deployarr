@@ -20,11 +20,13 @@ jobs:
             os: ubuntu-latest
             wasm: true
             no_std: true
+            docs: true
             agent: false
           - name: Windows
             os: windows-latest
             wasm: false
             no_std: false
+            docs: false
             agent: true
     steps:
       - uses: actions/checkout@v7
@@ -50,6 +52,11 @@ jobs:
       - name: Build deployarr-core without std
         if: matrix.no_std
         run: cargo build -p deployarr-core --target x86_64-unknown-none
+      # With warnings denied, rustdoc fails on a broken intra-doc link, or on a
+      # public doc in a library crate that links a private item.
+      - name: Build the docs with warnings denied
+        if: matrix.docs
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
       - name: Build deployarr-agent in release mode
         if: matrix.agent
         run: cargo build --release -p deployarr-agent
