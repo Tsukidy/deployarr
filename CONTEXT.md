@@ -11,7 +11,7 @@ A task sequence as an admin edits it and the server stores it. Its steps can hol
 _Avoid_: stored sequence
 
 **Lowered sequence**:
-The stage inside planning at which each deferred step holds its expansion, so every step holds a built-in action. Only a lowered sequence can become a program, and it never leaves planning. See [Task sequences stay loadable](docs/architecture.md#task-sequences-stay-loadable).
+The stage inside planning at which each deferred step holds its expansion, so every step holds a built-in action. Only a lowered sequence can become a program. It never leaves planning. See [Task sequences stay loadable](docs/architecture.md#task-sequences-stay-loadable).
 
 **Add-on step**:
 A step whose work an add-on supplies. It is plain data that names the add-on, a step kind, and the step's config, so it still loads and saves when its add-on is disabled or removed. See [Task sequences stay loadable](docs/architecture.md#task-sequences-stay-loadable).
