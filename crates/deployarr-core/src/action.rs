@@ -942,7 +942,8 @@ validated_string! {
     ///
     /// It starts with `http://` or `https://` and names a host. A host in
     /// brackets is an IPv6 address, and no other bracket appears. A port after
-    /// the host is empty or a number from 0 to 65535. It holds only ASCII
+    /// the host is empty or a number from 0 to 65535. At most one `#`
+    /// appears, the one that starts the fragment. It holds only ASCII
     /// letters, digits, and the symbols `-._~:/?#[]@!$&'()*+,;=%`, which are
     /// the characters that RFC 3986 allows in a URI. Each `%` starts a
     /// percent-encoded byte such as `%20`. The parser rejects an `@`
@@ -1002,6 +1003,15 @@ fn check_wsus_url(text: &str) -> Result<(), WsusUrlError> {
     if rest.contains('@') {
         return Err(WsusUrlError::UserInfo);
     }
+    // The first `#` starts the fragment (RFC 3986, section 3.5). A fragment
+    // holds path characters, `/`, and `?`, and a path character is never a
+    // `#` (section 3.3).
+    if rest
+        .split_once('#')
+        .is_some_and(|(_, fragment)| fragment.contains('#'))
+    {
+        return Err(WsusUrlError::Fragment);
+    }
     // The authority ends at the first `/`, `?`, or `#` (RFC 3986, section
     // 3.2).
     let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
@@ -1029,7 +1039,9 @@ fn check_wsus_url(text: &str) -> Result<(), WsusUrlError> {
     if host.is_empty() {
         return Err(WsusUrlError::NoHost);
     }
-    if host.contains(['[', ']']) {
+    // A bracket also fails in a host that is not an IP literal and in the
+    // port.
+    if host.contains(['[', ']']) || after_host.contains(['[', ']']) {
         return Err(WsusUrlError::IpLiteral);
     }
     // A `:` and a port may follow the host. The port is decimal digits (RFC
@@ -1076,6 +1088,9 @@ pub enum WsusUrlError {
     IpLiteral,
     /// A port that is not a number from 0 to 65535.
     Port,
+    /// A second `#`. The first `#` starts the fragment, and a fragment holds
+    /// no `#`.
+    Fragment,
 }
 
 impl fmt::Display for WsusUrlError {
@@ -1097,6 +1112,9 @@ impl fmt::Display for WsusUrlError {
             }
             Self::Port => {
                 "a WSUS URL's port, after the host and a `:`, is a number from 0 to 65535, such as `8531`"
+            }
+            Self::Fragment => {
+                "a WSUS URL holds at most one `#`, the one that starts its fragment"
             }
         })
     }

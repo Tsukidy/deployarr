@@ -1246,6 +1246,11 @@ fn a_bad_update_setting_fails_and_the_error_names_its_field() {
             json!({ "source": { "wsus": "https://wsus.example.com/updates[1]" } }),
             ".source.wsus",
         ),
+        // A fragment holds no `#`.
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com/#a#b" } }),
+            ".source.wsus",
+        ),
         // An `@` fails anywhere in the URL, even in the path.
         (
             json!({ "source": { "wsus": "https://wsus.example.com:8531/updates@site" } }),
@@ -1418,6 +1423,10 @@ fn a_wsus_url_has_brackets_only_around_an_ipv6_address() {
         "https://[10.0.0.5]:8531",
         // A future format with a version flag, which deployarr does not know.
         "https://[v1.fe]:8531",
+        // A bracket in the port.
+        "https://wsus.example.com:85]",
+        "https://wsus.example.com:85[",
+        "https://[fd00::5]:85]",
         "https://wsus.example.com/updates[1]",
         "https://wsus.example.com/?site=[1]",
         "https://wsus.example.com/#[1]",
@@ -1427,6 +1436,19 @@ fn a_wsus_url_has_brackets_only_around_an_ipv6_address() {
             Err(WsusUrlError::IpLiteral),
             "{url}"
         );
+    }
+}
+
+#[test]
+fn a_wsus_url_has_at_most_one_number_sign() {
+    // The first `#` starts the fragment, and a fragment holds no `#`.
+    for url in [
+        "https://wsus.example.com/#a#b",
+        "https://wsus.example.com/?a#b#c",
+        "https://wsus.example.com##",
+        "https://wsus.example.com:8531/updates#a/?#",
+    ] {
+        assert_eq!(url.parse::<WsusUrl>(), Err(WsusUrlError::Fragment), "{url}");
     }
 }
 
