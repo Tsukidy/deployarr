@@ -2,6 +2,8 @@
 
 use std::cell::RefCell;
 
+use deployarr_core::addon::AddOnRef;
+use deployarr_core::lookup::Resolver;
 use deployarr_core::sequence::NodeId;
 use deployarr_core::store::{ReadOnlyError, Sensitivity, SetSource, Source, Value, Vars};
 use deployarr_core::substitution::SubstituteError;
@@ -19,6 +21,16 @@ fn step() -> SetSource {
     SetSource::Step(NodeId(Uuid::from_u128(0x5e7)))
 }
 
+/// A resolver that the SQL order lookup add-on declares.
+fn order_lookup(kind: &str) -> Resolver {
+    Resolver::AddOn(AddOnRef {
+        addon: "deployarr.sql-order-lookup"
+            .parse()
+            .expect("a valid add-on ID"),
+        kind: kind.parse().expect("a valid kind ID"),
+    })
+}
+
 fn no_env(_: &str) -> Option<String> {
     None
 }
@@ -32,7 +44,10 @@ fn value_of(vars: &Vars, text: &str) -> Option<Value> {
 }
 
 fn source(vars: &Vars, text: &str) -> Source {
-    vars.get(&name(text)).expect("a set variable").source()
+    vars.get(&name(text))
+        .expect("a set variable")
+        .source()
+        .clone()
 }
 
 /// `Vars` with each name set by a rule to a plain scalar.
@@ -77,8 +92,13 @@ fn iterates_in_name_order_without_regard_to_case() {
 fn holds_scalars_and_lists() {
     let mut vars = Vars::new();
     let apps = vec!["7-Zip".to_owned(), "Firefox".to_owned()];
-    vars.set(name("Applications"), apps.clone(), Plain, SetSource::Lookup)
-        .unwrap();
+    vars.set(
+        name("Applications"),
+        apps.clone(),
+        Plain,
+        SetSource::Lookup(Resolver::PreStaged),
+    )
+    .unwrap();
     vars.set(name("Make"), "Contoso", Plain, SetSource::Fact)
         .unwrap();
 
@@ -96,8 +116,13 @@ fn records_the_source_of_each_value() {
         .unwrap();
     vars.set(name("SkipWizard"), "YES", Plain, SetSource::Rule)
         .unwrap();
-    vars.set(name("Role"), "Kiosk", Plain, SetSource::Lookup)
-        .unwrap();
+    vars.set(
+        name("Role"),
+        "Kiosk",
+        Plain,
+        SetSource::Lookup(Resolver::PreStaged),
+    )
+    .unwrap();
     vars.set(name("ComputerName"), "PC-01", Plain, SetSource::Prompt)
         .unwrap();
     vars.set(name("Stage"), "1", Plain, step()).unwrap();
@@ -106,7 +131,7 @@ fn records_the_source_of_each_value() {
 
     assert_eq!(source(&vars, "Make"), Source::Fact);
     assert_eq!(source(&vars, "SkipWizard"), Source::Rule);
-    assert_eq!(source(&vars, "Role"), Source::Lookup);
+    assert_eq!(source(&vars, "Role"), Source::Lookup(Resolver::PreStaged));
     assert_eq!(source(&vars, "ComputerName"), Source::Prompt);
     assert_eq!(source(&vars, "Stage"), step().into());
     assert_eq!(source(&vars, "TimeZone"), Source::SequenceDefault);
@@ -124,7 +149,7 @@ fn only_the_agent_sets_names_that_start_with_an_underscore() {
     for source in [
         SetSource::Fact,
         SetSource::Rule,
-        SetSource::Lookup,
+        SetSource::Lookup(Resolver::PreStaged),
         SetSource::Prompt,
         step(),
     ] {
@@ -139,7 +164,7 @@ fn only_the_agent_sets_names_that_start_with_an_underscore() {
 
     let var = vars.get(&name("_SMSTSLogPath")).unwrap();
     assert_eq!(var.value(), &Value::from(r"X:\Deployarr\Logs"));
-    assert_eq!(var.source(), Source::Agent);
+    assert_eq!(var.source(), &Source::Agent);
 
     // Steps can still read them.
     assert_eq!(
@@ -162,14 +187,62 @@ fn a_set_value_beats_a_sequence_default() {
 
     let var = vars.get(&name("OSDComputerName")).unwrap();
     assert_eq!(var.value(), &Value::from("PC-01"));
-    assert_eq!(var.source(), Source::Rule);
+    assert_eq!(var.source(), &Source::Rule);
+}
+
+#[test]
+fn a_lookup_source_names_its_resolver() {
+    let mut vars = Vars::new();
+    vars.set(
+        name("OSDComputerName"),
+        "PC-01",
+        Plain,
+        SetSource::Lookup(order_lookup("by-identity")),
+    )
+    .unwrap();
+    vars.set(
+        name("Role"),
+        "Kiosk",
+        Plain,
+        SetSource::Lookup(Resolver::PreStaged),
+    )
+    .unwrap();
+
+    let Source::Lookup(Resolver::AddOn(resolver)) = source(&vars, "OSDComputerName") else {
+        panic!("an add-on resolver's lookup source");
+    };
+    assert_eq!(resolver.addon.as_str(), "deployarr.sql-order-lookup");
+    assert_eq!(resolver.kind.as_str(), "by-identity");
+    assert_eq!(source(&vars, "Role"), Source::Lookup(Resolver::PreStaged));
+}
+
+#[test]
+fn a_sequence_default_does_not_replace_a_lookup_value() {
+    let mut vars = Vars::new();
+    let lookup = SetSource::Lookup(order_lookup("by-order-number"));
+    vars.set(name("OSDComputerName"), "PC-01", Plain, lookup.clone())
+        .unwrap();
+
+    assert_eq!(
+        vars.apply_default(name("osdcomputername"), "DEFAULT"),
+        Ok(false)
+    );
+
+    let var = vars.get(&name("OSDComputerName")).unwrap();
+    assert_eq!(var.value(), &Value::from("PC-01"));
+    assert_eq!(var.source(), &Source::from(lookup));
 }
 
 #[test]
 fn a_default_fills_a_missing_or_empty_variable() {
     let mut vars = Vars::new();
-    vars.set(name("Empty"), "", Plain, SetSource::Lookup)
-        .unwrap();
+    vars.set(
+        name("Empty"),
+        "",
+        Plain,
+        SetSource::Lookup(Resolver::PreStaged),
+    )
+    .unwrap();
     vars.set(name("NoApps"), Vec::<String>::new(), Plain, SetSource::Rule)
         .unwrap();
 
@@ -238,7 +311,7 @@ fn debug_output_leaves_out_secret_values() {
         name("Keys"),
         vec!["KEY-AAAA".to_owned(), "KEY-BBBB".to_owned()],
         Secret,
-        SetSource::Lookup,
+        SetSource::Lookup(Resolver::PreStaged),
     )
     .unwrap();
     vars.set(name("Make"), "Contoso", Plain, SetSource::Fact)

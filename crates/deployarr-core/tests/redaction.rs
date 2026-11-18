@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use deployarr_core::lookup::Resolver;
 use deployarr_core::store::{Redactor, Sensitivity, SetSource, Vars};
 use deployarr_core::template::Template;
 use deployarr_core::variable::VarName;
@@ -27,7 +28,7 @@ fn a_secret_never_appears_in_redacted_output() {
         name("ProductKeys"),
         vec!["AAAAA-11111".to_owned(), "BBBBB-22222".to_owned()],
         Secret,
-        SetSource::Lookup,
+        SetSource::Lookup(Resolver::PreStaged),
     )
     .unwrap();
     vars.set_by_agent(name("_JoinToken"), "tok-9f8e", Secret);
@@ -131,7 +132,7 @@ fn a_secret_set_again_masks_its_old_and_new_values() {
         name("Keys"),
         vec!["k1".to_owned(), "k2".to_owned()],
         Secret,
-        SetSource::Lookup,
+        SetSource::Lookup(Resolver::PreStaged),
     )
     .unwrap();
     vars.set(name("Keys"), vec!["k3".to_owned()], Secret, SetSource::Rule)
