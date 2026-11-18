@@ -290,6 +290,40 @@ fn lower_rejects_an_install_updates_step_in_an_expansion() {
 }
 
 #[test]
+fn lower_rejects_an_expansion_that_holds_a_bitlocker_action() {
+    let cases = [
+        (json!({ "enable_bitlocker": {} }), "enable_bitlocker"),
+        (
+            json!({ "suspend_bitlocker": { "restarts": 1 } }),
+            "suspend_bitlocker",
+        ),
+    ];
+
+    for (action, name) in cases {
+        let (sequence, mut expansions) = planned();
+        expansions.insert(
+            id(2),
+            vec![
+                child(0x100, "full_os", collect_hash()),
+                child(0x101, "full_os", action),
+            ],
+        );
+
+        assert_rejects(
+            &sequence,
+            &expansions,
+            &[error(
+                2,
+                LowerRule::NotAllowed {
+                    child: 1,
+                    action: name,
+                },
+            )],
+        );
+    }
+}
+
+#[test]
 fn lower_rejects_a_child_with_another_run_in() {
     let (sequence, mut expansions) = planned();
     expansions.insert(id(2), vec![child(0x100, "either", collect_hash())]);

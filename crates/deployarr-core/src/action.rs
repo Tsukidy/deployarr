@@ -266,6 +266,29 @@ pub enum BuiltinAction {
     VerifyDrivers {
         policy: MissingDriverPolicy,
     },
+    /// Turns BitLocker on for the volume of the running Windows, with a TPM
+    /// protector and a recovery password. The recovery password stays on the
+    /// PC. Only the full OS runs it.
+    #[serde(rename = "enable_bitlocker")]
+    EnableBitLocker {
+        #[serde(default)]
+        method: EncryptionMethod,
+        /// `false` encrypts used space only, and `true` the whole volume.
+        #[serde(default)]
+        full_disk: bool,
+        /// How long the step waits for the volume to be fully encrypted, in
+        /// whole seconds. None ends the step while encryption goes on.
+        wait_secs: Option<NonZeroU32>,
+        #[serde(default)]
+        tpm_failure: TpmFailure,
+    },
+    /// Turns the key protectors of the volume of the running Windows off for a
+    /// number of restarts. It never decrypts. Only the full OS runs it.
+    #[serde(rename = "suspend_bitlocker")]
+    SuspendBitLocker {
+        #[serde(default)]
+        restarts: SuspendRestarts,
+    },
     CheckReadiness {
         #[serde(default)]
         checks: ReadinessChecks,
@@ -311,6 +334,8 @@ impl BuiltinAction {
             Self::InstallApplications { .. }
             | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
+            | Self::EnableBitLocker { .. }
+            | Self::SuspendBitLocker { .. }
             | Self::ActivateWindows { .. } => &[RunIn::FullOs],
             Self::RunCommand { .. }
             | Self::RunPowerShell { .. }
@@ -342,6 +367,8 @@ impl BuiltinAction {
             | Self::InstallApplications { .. }
             | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
+            | Self::EnableBitLocker { .. }
+            | Self::SuspendBitLocker { .. }
             | Self::CheckReadiness { .. }
             | Self::ActivateWindows { .. } => false,
         }
@@ -369,6 +396,8 @@ impl BuiltinAction {
             | Self::InstallApplications { .. }
             | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
+            | Self::EnableBitLocker { .. }
+            | Self::SuspendBitLocker { .. }
             | Self::CheckReadiness { .. }
             | Self::ActivateWindows { .. } => false,
         }
@@ -1239,6 +1268,104 @@ impl Default for ProcessorCheck {
         }
     }
 }
+
+/// The algorithm and key size that `EnableBitLocker` asks for.
+///
+/// `OsDefault` leaves the choice to Windows, which picks XTS-AES 128 on
+/// Windows 10 1511 and later. The others are the `EncryptionMethod` values
+/// 3, 4, 6, and 7 of `Win32_EncryptableVolume`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EncryptionMethod {
+    #[default]
+    OsDefault,
+    Aes128,
+    Aes256,
+    XtsAes128,
+    XtsAes256,
+}
+
+/// What `EnableBitLocker` does when the PC has no usable TPM. Any other TPM
+/// failure fails the step, whatever this says.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TpmFailure {
+    /// The step fails.
+    #[default]
+    Fail,
+    /// The step ends with a warning, and has changed nothing.
+    Skip,
+}
+
+/// The number of restarts after which BitLocker turns a suspended volume's
+/// protection back on: 1 to 15. The default is 1.
+///
+/// There is no 0. A count of 0 suspends protection until something turns it
+/// back on, so a deployment with no later step that does would ship the PC
+/// with its key in the clear. The JSON is a bare integer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub struct SuspendRestarts(u8);
+
+impl SuspendRestarts {
+    /// The fewest restarts.
+    pub const MIN: u8 = 1;
+    /// The most restarts.
+    pub const MAX: u8 = 15;
+
+    /// Fails for a count outside 1 to 15.
+    pub fn new(count: u8) -> Result<Self, SuspendRestartsError> {
+        if (Self::MIN..=Self::MAX).contains(&count) {
+            Ok(Self(count))
+        } else {
+            Err(SuspendRestartsError { count })
+        }
+    }
+
+    pub fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl Default for SuspendRestarts {
+    fn default() -> Self {
+        Self(Self::MIN)
+    }
+}
+
+impl TryFrom<u8> for SuspendRestarts {
+    type Error = SuspendRestartsError;
+
+    fn try_from(count: u8) -> Result<Self, Self::Error> {
+        Self::new(count)
+    }
+}
+
+impl From<SuspendRestarts> for u8 {
+    fn from(restarts: SuspendRestarts) -> Self {
+        restarts.0
+    }
+}
+
+/// A count of restarts outside 1 to 15.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SuspendRestartsError {
+    pub count: u8,
+}
+
+impl fmt::Display for SuspendRestartsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { count } = self;
+        write!(
+            f,
+            "BitLocker stays suspended for {} to {} restarts, not {count}",
+            SuspendRestarts::MIN,
+            SuspendRestarts::MAX
+        )
+    }
+}
+
+impl core::error::Error for SuspendRestartsError {}
 
 macro_rules! non_empty_id {
     ($(#[$meta:meta])* $name:ident) => {
