@@ -139,9 +139,9 @@ The last line is `RESULT PASS`. The check writes a folder and a zip named `lab-c
 
 The experiments serve Microsoft's boot programs and WinPE, and the repository never holds them.
 
-1. Download the Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11). A person does this in a browser. Choose Windows 11 (multi-edition ISO for x64 devices), then English, not English International, then 64-bit Download. Either let the browser download the ISO, or copy the download link for the lab host to fetch. The PXE experiments use only the ISO's `sources\boot.wim`, which holds WinPE and the boot programs, and its `boot\boot.sdi`.
+1. Download the Windows 11 ISO from Microsoft's [download page](https://www.microsoft.com/software-download/windows11). A person opens the page in a browser. Choose Windows 11 (multi-edition ISO for x64 devices), then English, not English International, then 64-bit Download. Either let the browser download the ISO, or copy the download link for the lab host to fetch. The PXE experiments use only the ISO's `sources\boot.wim`, which holds WinPE and the boot programs, and its `boot\boot.sdi`.
 
-	An agent on the lab host does not try to get the ISO or its download link from Microsoft's page itself. It fetches only a link that a person gives it. On 2026-11-12, an agent on the lab host tried to download the ISO from the page. Claude Code's auto mode blocked it as bot-check circumvention, and the owner had to get the link by hand. Issue #198 records this.
+	An agent on the lab host does not try to get the ISO or its download link from Microsoft's page itself. Claude Code's auto mode blocks that as bot-check circumvention (#198). The agent fetches only a link that a person gives it.
 
 2. Check the ISO. Its SHA-256 must match the English 64-bit line under Verify your download on the same page:
 
