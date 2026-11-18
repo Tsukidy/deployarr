@@ -12,8 +12,12 @@
 
 ## Merge danger
 
+<!-- The owner says, "I merge pull requests that are ready for review from the lowest number to the highest." -->
+
 **Door:** <!-- one-way or two-way. A two-way door is cheap to roll back. -->
 
 **Blast radius:** <!-- one word, then what could break if this is wrong -->
+
+**Lower-numbered pull requests:** <!-- Each open pull request with a lower number that touches the same files. For each, say whether merging it first leaves this one with a conflict. On a conflict, name the pull request and the files. Write None when no lower-numbered open pull request touches the same files. A named conflict does not hold this pull request back. Mark it ready for review anyway. -->
 
 <!-- Link the issue. Write Closes #<number> when merging completes it, or Refs #<number> when it does not, such as a page for a wontfix issue. -->
