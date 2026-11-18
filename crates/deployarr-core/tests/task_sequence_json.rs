@@ -1188,6 +1188,19 @@ fn a_bad_update_setting_fails_and_the_error_names_its_field() {
             json!({ "source": { "wsus": "https://wsus.example.com:8531\n" } }),
             ".source.wsus",
         ),
+        // RFC 3986 allows a `\` or a `"` in no URI.
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com\\path" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://ho\"st" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com/%zz" } }),
+            ".source.wsus",
+        ),
         (
             json!({ "source": { "wsus": "https://wsus.example.com:notaport" } }),
             ".source.wsus",
@@ -1222,7 +1235,15 @@ fn a_bad_update_setting_fails_and_the_error_names_its_field() {
             ".source.wsus",
         ),
         (
+            json!({ "source": { "wsus": "https://[hello]:8531" } }),
+            ".source.wsus",
+        ),
+        (
             json!({ "source": { "wsus": "https://wsus[1].example.com" } }),
+            ".source.wsus",
+        ),
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com/updates[1]" } }),
             ".source.wsus",
         ),
         // An `@` fails anywhere in the URL, even in the path.
@@ -1364,6 +1385,52 @@ fn a_wsus_url_with_an_at_sign_anywhere_fails() {
 }
 
 #[test]
+fn a_wsus_url_holds_only_the_characters_that_rfc_3986_allows() {
+    // RFC 3986 allows these ASCII symbols in no URI.
+    for symbol in ['"', '<', '>', '\\', '^', '`', '{', '|', '}'] {
+        let url = format!("https://wsus.example.com/a{symbol}b");
+
+        assert_eq!(
+            url.parse::<WsusUrl>(),
+            Err(WsusUrlError::InvalidChar),
+            "{url}"
+        );
+    }
+    // A `%` starts a percent-encoded byte, a `%` and two hex digits.
+    for url in [
+        "https://wsus.example.com/%",
+        "https://wsus.example.com/%2",
+        "https://wsus.example.com/%zz",
+        "https://wsus.example.com/%%41",
+    ] {
+        assert_eq!(
+            url.parse::<WsusUrl>(),
+            Err(WsusUrlError::InvalidChar),
+            "{url}"
+        );
+    }
+}
+
+#[test]
+fn a_wsus_url_has_brackets_only_around_an_ipv6_address() {
+    for url in [
+        "https://[hello]:8531",
+        "https://[10.0.0.5]:8531",
+        // A future format with a version flag, which deployarr does not know.
+        "https://[v1.fe]:8531",
+        "https://wsus.example.com/updates[1]",
+        "https://wsus.example.com/?site=[1]",
+        "https://wsus.example.com/#[1]",
+    ] {
+        assert_eq!(
+            url.parse::<WsusUrl>(),
+            Err(WsusUrlError::IpLiteral),
+            "{url}"
+        );
+    }
+}
+
+#[test]
 fn a_wsus_url_is_an_http_or_https_url_that_names_a_host() {
     for url in [
         "http://wsus:8530",
@@ -1372,9 +1439,13 @@ fn a_wsus_url_is_an_http_or_https_url_that_names_a_host() {
         "https://10.0.0.5:8531/",
         "https://[fd00::5]:8531",
         "https://[fd00::5]/",
+        "https://[::ffff:10.0.0.5]:8531",
         "https://wsus.example.com:65535",
         // An empty port means the default port.
         "https://wsus.example.com:/",
+        // Every symbol that RFC 3986 allows, except the `@` that the parser
+        // rejects and the brackets that belong to an IP literal.
+        "https://wsus.example.com/-._~:!$&'()*+,;=%2F%c3?q=/?#f/?",
     ] {
         let parsed: WsusUrl = url.parse().unwrap_or_else(|error| panic!("{url}: {error}"));
 

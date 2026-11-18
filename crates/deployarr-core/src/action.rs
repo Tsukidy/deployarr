@@ -3,6 +3,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
+use core::net::Ipv6Addr;
 use core::num::{NonZeroU8, NonZeroU32};
 
 use serde::de::value::StrDeserializer;
@@ -939,12 +940,15 @@ impl Default for UpdateTimeouts {
 validated_string! {
     /// The URL of a WSUS server, such as `https://wsus.example.com:8531`.
     ///
-    /// It starts with `http://` or `https://` and names a host. A port after
+    /// It starts with `http://` or `https://` and names a host. A host in
+    /// brackets is an IPv6 address, and no other bracket appears. A port after
     /// the host is empty or a number from 0 to 65535. It holds only ASCII
-    /// letters, digits, and symbols, with no space or control character. The
-    /// parser rejects an `@` anywhere in the URL, not only the one that ends
-    /// user information such as `user:pass@`, to keep a credential out of the
-    /// registry and the logs. No error message repeats the text.
+    /// letters, digits, and the symbols `-._~:/?#[]@!$&'()*+,;=%`, which are
+    /// the characters that RFC 3986 allows in a URI. Each `%` starts a
+    /// percent-encoded byte such as `%20`. The parser rejects an `@`
+    /// anywhere in the URL, not only the one that ends user information such
+    /// as `user:pass@`, to keep a credential out of the registry and the logs.
+    /// No error message repeats the text.
     ///
     /// The parser accepts the scheme in any case and writes it in lower case,
     /// its canonical form. It keeps the rest of the URL as written.
@@ -956,13 +960,31 @@ validated_string! {
 /// authority.
 const WSUS_SCHEMES: [&str; 2] = ["http://", "https://"];
 
+/// The symbols that a URI may hold: the unreserved symbols, the reserved
+/// symbols, and the `%` of a percent-encoded byte (RFC 3986, sections 2.1 to
+/// 2.3).
+const URI_SYMBOLS: &str = "-._~:/?#[]@!$&'()*+,;=%";
+
 fn check_wsus_url(text: &str) -> Result<(), WsusUrlError> {
     if text.is_empty() {
         return Err(WsusUrlError::Empty);
     }
-    // A URI holds only letters, digits, and graphic symbols (RFC 3986,
-    // section 2).
-    if !text.chars().all(|c| c.is_ascii_graphic()) {
+    // A URI holds only letters, digits, and a few graphic symbols (RFC 3986,
+    // section 2). Sections 2.2 and 2.3 list the symbols.
+    if !text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || URI_SYMBOLS.contains(c))
+    {
+        return Err(WsusUrlError::InvalidChar);
+    }
+    // A `%` starts a percent-encoded byte, a `%` and two hex digits (RFC
+    // 3986, section 2.1).
+    let encoded = |after: &str| {
+        after
+            .get(..2)
+            .is_some_and(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit()))
+    };
+    if !text.split('%').skip(1).all(encoded) {
         return Err(WsusUrlError::InvalidChar);
     }
     // A scheme is case-insensitive, and a parser should accept upper case
@@ -985,10 +1007,17 @@ fn check_wsus_url(text: &str) -> Result<(), WsusUrlError> {
     let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
     // A host in brackets is an IP literal. A bracket appears nowhere else in
     // a URI (RFC 3986, section 3.2.2).
+    if rest[authority.len()..].contains(['[', ']']) {
+        return Err(WsusUrlError::IpLiteral);
+    }
     let (host, after_host) = match authority.strip_prefix('[') {
         Some(literal) => {
             let (address, after) = literal.split_once(']').ok_or(WsusUrlError::IpLiteral)?;
-            if address.is_empty() {
+            // An IP literal is an IPv6 address or a future format that starts
+            // with a version flag, a `v` and a hex number. An application that
+            // does not know the version flag should return an error (RFC 3986,
+            // section 3.2.2), and deployarr knows none.
+            if address.parse::<Ipv6Addr>().is_err() {
                 return Err(WsusUrlError::IpLiteral);
             }
             (address, after)
@@ -1034,13 +1063,16 @@ fn lower_case_scheme(mut text: String) -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsusUrlError {
     Empty,
+    /// A character that RFC 3986 allows in no URI, such as a space or a `\`,
+    /// or a `%` without two hex digits after it.
     InvalidChar,
     Scheme,
     /// An `@` anywhere in the URL, which can end user information.
     UserInfo,
     NoHost,
-    /// A `[` without its `]`, an empty `[]`, a bracket elsewhere in the
-    /// host, or text other than a `:` and a port after the `]`.
+    /// A `[` without its `]`, text between the brackets that is not an IPv6
+    /// address, a bracket elsewhere in the URL, or text other than a `:` and a
+    /// port after the `]`.
     IpLiteral,
     /// A port that is not a number from 0 to 65535.
     Port,
@@ -1051,7 +1083,7 @@ impl fmt::Display for WsusUrlError {
         f.write_str(match self {
             Self::Empty => "a WSUS URL must not be empty",
             Self::InvalidChar => {
-                "a WSUS URL holds only ASCII letters, digits, and symbols, with no space or control character"
+                "a WSUS URL holds only ASCII letters, digits, and the symbols `-._~:/?#[]@!$&'()*+,;=%`, and each `%` starts a percent-encoded byte such as `%20`"
             }
             Self::Scheme => "a WSUS URL starts with `http://` or `https://`",
             Self::UserInfo => {
@@ -1061,7 +1093,7 @@ impl fmt::Display for WsusUrlError {
                 "a WSUS URL names a host after `//`, such as `https://wsus.example.com:8531`"
             }
             Self::IpLiteral => {
-                "a WSUS URL writes an IPv6 address in brackets, such as `https://[fd00::5]:8531`, and has no other bracket in its host"
+                "a WSUS URL writes an IPv6 address in brackets, such as `https://[fd00::5]:8531`, and has no other bracket"
             }
             Self::Port => {
                 "a WSUS URL's port, after the host and a `:`, is a number from 0 to 65535, such as `8531`"
