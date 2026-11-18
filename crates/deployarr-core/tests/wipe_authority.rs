@@ -1,5 +1,5 @@
-//! `WipeAuthority::from_addon_match`, `UsableIdentity`, and the lookup
-//! chain's shapes.
+//! `WipeAuthority`'s constructors, `UsableIdentity`, and the lookup chain's
+//! shapes.
 
 use std::collections::BTreeMap;
 
@@ -8,6 +8,7 @@ use deployarr_core::lookup::{
     AuthorityError, IdentityFact, IdentityKind, LookupInput, PromptAnswers, Resolver,
     ResolverInput, UsableIdentity, WipeAuthority,
 };
+use deployarr_core::sequence::TaskSequenceId;
 use serde_json::json;
 
 fn resolver(kind: &str) -> AddOnRef {
@@ -287,4 +288,99 @@ fn identity_kinds_and_resolvers_have_their_json_names() {
         ]
     );
     assert_eq!(serde_json::to_value(&parsed).expect("it serializes"), chain);
+}
+
+/// A PC with a placeholder system serial, a real baseboard serial and UUID,
+/// and two network adapters.
+fn pre_staged_identity() -> UsableIdentity {
+    UsableIdentity::from_gathered(&[
+        fact(IdentityKind::SystemSerial, "To Be Filled By O.E.M."),
+        fact(IdentityKind::BaseboardSerial, "MB-2231-0042"),
+        fact(IdentityKind::Mac, "00:15:5D:01:02:03"),
+        fact(IdentityKind::Uuid, "4c4c4544-0042-3510-8051-b4c04f4e3332"),
+        fact(IdentityKind::Mac, "00:15:5D:01:02:04"),
+    ])
+    .expect("real facts are left")
+}
+
+fn task_sequence(id: &str) -> TaskSequenceId {
+    id.parse().expect("a valid task sequence ID")
+}
+
+#[test]
+fn a_pre_staged_match_on_a_usable_kind_holds_exactly_its_facts() {
+    let cases = [
+        (
+            IdentityKind::BaseboardSerial,
+            vec![fact(IdentityKind::BaseboardSerial, "MB-2231-0042")],
+        ),
+        (
+            IdentityKind::Mac,
+            vec![
+                fact(IdentityKind::Mac, "00:15:5D:01:02:03"),
+                fact(IdentityKind::Mac, "00:15:5D:01:02:04"),
+            ],
+        ),
+    ];
+
+    for (kind, expected) in cases {
+        let authority = WipeAuthority::from_pre_staged_match(&pre_staged_identity(), kind)
+            .expect("the match gives authority");
+
+        let WipeAuthority::PreStagedMatch(found) = authority else {
+            panic!("expected a pre-staged match, found {authority:?}");
+        };
+        assert_eq!(found.facts(), expected, "{kind}");
+    }
+}
+
+#[test]
+fn a_pre_staged_match_on_a_kind_the_identity_lacks_is_an_error() {
+    // The system serial was a placeholder, and the agent gathered no chassis
+    // serial.
+    for kind in [IdentityKind::SystemSerial, IdentityKind::ChassisSerial] {
+        assert_eq!(
+            WipeAuthority::from_pre_staged_match(&pre_staged_identity(), kind),
+            Err(AuthorityError::KindNotUsable(kind))
+        );
+    }
+}
+
+#[test]
+fn a_manual_pick_of_an_offered_task_sequence_is_authority() {
+    let offered = [task_sequence("W11-PRO-STD"), task_sequence("W11-HOME-STD")];
+
+    let authority = WipeAuthority::from_manual_pick(&offered, &task_sequence("W11-HOME-STD"))
+        .expect("the pick gives authority");
+
+    let WipeAuthority::ManualPick(pick) = authority else {
+        panic!("expected a manual pick, found {authority:?}");
+    };
+    assert_eq!(pick.task_sequence(), &task_sequence("W11-HOME-STD"));
+}
+
+#[test]
+fn a_manual_pick_that_was_not_offered_is_an_error() {
+    let picked = task_sequence("W10-PRO-STD");
+    let offered = [task_sequence("W11-PRO-STD"), task_sequence("W11-HOME-STD")];
+
+    for offered in [&offered[..], &[]] {
+        assert_eq!(
+            WipeAuthority::from_manual_pick(offered, &picked),
+            Err(AuthorityError::PickNotOffered(picked.clone())),
+            "offered {offered:?}"
+        );
+    }
+}
+
+#[test]
+fn pre_staged_and_manual_pick_errors_name_what_failed() {
+    assert_eq!(
+        AuthorityError::KindNotUsable(IdentityKind::ChassisSerial).to_string(),
+        "the pre-staged record matched on `chassis_serial`, and the PC has no usable fact of that kind"
+    );
+    assert_eq!(
+        AuthorityError::PickNotOffered(task_sequence("W10-PRO-STD")).to_string(),
+        "the technician picked `W10-PRO-STD`, and the manual list that the server offered does not hold it"
+    );
 }

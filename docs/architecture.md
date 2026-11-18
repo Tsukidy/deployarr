@@ -542,6 +542,13 @@ A zero-touch server can erase any PC that network-boots by mistake. deployarr er
 - a technician's typed answer to an add-on resolver's prompt, such as an order number
 - a technician picking a task sequence
 
+`WipeAuthority` in `deployarr-core` holds one of four authorities. Each variant holds a type with private fields, so only the variant's constructor can build one.
+
+- `PreStagedMatch` holds the PC's usable identity facts of the kind that a pre-staged record matched on. `WipeAuthority::from_pre_staged_match` takes the `UsableIdentity` that the server matched the record against and the `IdentityKind` that the record matched on. It returns an error when the identity holds no fact of that kind. It never takes the gathered facts. `UsableIdentity` holds no placeholder, so a placeholder never gives authority.
+- `IdentityMatch` holds an add-on identity resolver and the facts of the matched kind that the server sent to it. `WipeAuthority::from_addon_match` builds it.
+- `TechnicianEntry` holds an add-on resolver and the ID of the prompt that the technician answered. It does not hold the answer. `WipeAuthority::from_addon_match` builds it.
+- `ManualPick` holds the ID of the task sequence that a technician picked from the manual list. `WipeAuthority::from_manual_pick` takes the task sequences that the server offered on the list and the one that the technician picked. It returns an error for a pick that the server did not offer, so a pick from an empty list is always an error.
+
 An add-on resolver returns a match and never wipe authority. `deployarr-core` builds the authority from the fact or the answer that the server sent. See [Add-on resolvers and wipe authority](#add-on-resolvers-and-wipe-authority).
 
 An unknown PC stops at an add-on's prompt, the manual list, or the no-match screen, whichever the chain reaches first, and does not touch its disk.
@@ -1422,7 +1429,7 @@ The lookup chain's rules stay in the base, as [Lookup chain](#lookup-chain) desc
 - For a resolver with a prompt, `matched_on` must be none, and the server must have sent the answers to the prompt that the resolver's own add-on declares. A prompt ID is unique only within its add-on, so `PromptAnswers` names the prompt with its add-on. The authority is the technician's typed answer.
 - `PromptAnswers` holds at least one answer that is not blank (design decision), because the server never calls a prompt resolver without a typed answer. Its `Debug` prints the field keys and never the answers, because a prompt field can be secret.
 - Any other combination is an error, and the chain moves on.
-- The authority's variants hold types with private fields, so no other code can build one. `WipeAuthority` holds only the authorities that an add-on resolver leads to. [#187](https://github.com/Tsukidy/deployarr/issues/187) adds the ones for a pre-staged record and a manual pick.
+- The authority's variants hold types with private fields, so no other code can build one. `WipeAuthority` also holds the authorities for a pre-staged record and a manual pick, each with its own constructor. See [Wipe safety](#wipe-safety).
 - The host writes the trace line from the fact it sent, never from add-on text.
 - `IdentityKind` lists the system serial, the baseboard serial, the chassis serial, the UUID, and the MAC address. The WIT enum `identity-kind` repeats the list, and a test compares the two. A new kind needs a new API level (design decision).
 
