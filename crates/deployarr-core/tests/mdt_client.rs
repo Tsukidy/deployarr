@@ -58,11 +58,22 @@
 //!   `placeholder: tattoo (MDT runs ZTITatoo.wsf)`, and no two are the same.
 //!   It never holds MDT's command line, because this repository holds no
 //!   Microsoft files. A comment in [`OUTLINE`] also names each placeholder's
-//!   feature. User state migration is in the architecture's "Not in the first
-//!   release". The comment `refresh` marks a step that only a refresh runs. A
-//!   refresh starts in the old Windows (`scripts/LiteTouch.wsf:380-389`), and
-//!   its State Capture phase saves the user state
-//!   (`Templates/Client.xml:61-70`).
+//!   feature. User state migration, the refresh scenario, image capture,
+//!   offline update and language packages, and local Group Policy packs are
+//!   in the architecture's
+//!   ["Not in the first release"](../../../docs/architecture.md#not-in-the-first-release).
+//!   The comment `refresh` marks a step that only a refresh runs. A refresh
+//!   starts in the old Windows (`scripts/LiteTouch.wsf:380-389`), and its
+//!   State Capture phase saves the user state (`Templates/Client.xml:61-70`).
+//! - The BIOS block list, the deployment tattoo, and the CEIP and WER opt-in
+//!   are out of scope. Each has a page that gives the reason:
+//!   [BIOS block list](../../../.out-of-scope/bios-block-list.md),
+//!   [Deployment tattoo](../../../.out-of-scope/deployment-tattoo.md), and
+//!   [CEIP and WER opt-in](../../../.out-of-scope/ceip-and-wer-opt-in.md).
+//! - "Recover From Domain" stays a placeholder. With a `Domain` profile, the
+//!   agent checks the join itself in the full OS and fails the deployment if
+//!   the PC did not join. It does not repair the join, as MDT's step does
+//!   ([Directory join](../../../docs/architecture.md#directory-join)).
 //! - The three BitLocker steps stay placeholders. The compiler rejects a
 //!   `restart` into WinPE after an `enable_bitlocker` step in program order
 //!   ([Compile the tree into a flat program](../../../docs/architecture.md#compile-the-tree-into-a-flat-program)).
@@ -122,7 +133,7 @@ const OUTLINE: &[&str] = &[
     " 13     step Gather local only: run_command, run_in=either", // the agent gathers facts itself
     " 21   group Validation, if any(PHASE equals VALIDATION)",
     " 31     step Validate: check_readiness, run_in=win_pe",
-    " 40     step Check BIOS: run_command, run_in=either", // BIOS block list, no deployarr feature
+    " 40     step Check BIOS: run_command, run_in=either", // BIOS block list, out of scope
     " 43     step Next Phase: set_variable name=PHASE value=STATECAPTURE, run_in=either",
     " 47   group State Capture, if PHASE equals STATECAPTURE",
     " 55     step Generate Application Migration File: run_command, run_in=either", // user state migration
@@ -150,7 +161,7 @@ const OUTLINE: &[&str] = &[
     "269     step Configure: run_command, run_in=either", // answer file, which MDT fills in before the image
     "272     step Enable BitLocker (Offline): run_command, run_in=either, continue on error", // BitLocker
     "275     step Inject Drivers: run_command, run_in=either", // drivers, which MDT stages before the image
-    "282     step Apply Patches: run_command, run_in=either", // offline update packages, no deployarr feature
+    "282     step Apply Patches: run_command, run_in=either", // offline update and language packages
     "288     step Next Phase: set_variable name=PHASE value=INSTALL, run_in=either",
     "292   group Install, if PHASE equals INSTALL",
     "300     step Install Operating System: apply_os_image image=win11-24h2-pro-x64, run_in=win_pe",
@@ -159,16 +170,16 @@ const OUTLINE: &[&str] = &[
     "324     step Copy Scripts: run_command, run_in=either", // the agent moves its own state to the disk
     "327     step Configure: apply_unattend template=standard, run_in=win_pe",
     "330     step Inject Drivers: apply_drivers selection=auto, run_in=win_pe",
-    "333     step Apply Patches: run_command, run_in=either", // offline update packages, no deployarr feature
+    "333     step Apply Patches: run_command, run_in=either", // offline update and language packages
     "339     step Add Windows Recovery (WinRE): run_command, run_in=either", // deployarr sets up WinRE with the disk layout
     "342     step Next Phase: set_variable name=PHASE value=STATERESTORE, run_in=either",
     "345     step Restart computer: restart into=installed_os, run_in=either",
     "354   group State Restore, if PHASE equals STATERESTORE",
     "362     step Gather local only: run_command, run_in=either", // the agent gathers facts itself
     "369     step Post-Apply Cleanup: run_command, run_in=either", // the agent cleans up at the end
-    "372     step Recover From Domain: run_command, run_in=either", // checks the join that the answer file made, no deployarr feature
-    "378     step Tattoo: run_command, run_in=either, continue on error", // no deployarr feature
-    "381     step Opt In to CEIP and WER: run_command, run_in=either, continue on error, disabled", // no deployarr feature
+    "372     step Recover From Domain: run_command, run_in=either", // the agent checks the domain join itself and does not repair it
+    "378     step Tattoo: run_command, run_in=either, continue on error", // deployment tattoo, out of scope
+    "381     step Opt In to CEIP and WER: run_command, run_in=either, continue on error, disabled", // CEIP and WER opt-in, out of scope
     "384     step Windows Update (Pre-Application Installation): install_updates, run_in=full_os, continue on error, disabled",
     "387     step Install Applications: install_applications apps={\"from_list\":\"Applications\"}, run_in=full_os",
     "394     step Windows Update (Post-Application Installation): install_updates, run_in=full_os, continue on error, disabled",
@@ -176,10 +187,10 @@ const OUTLINE: &[&str] = &[
     "398     step Enable BitLocker: run_command, run_in=either, if BdeInstallSuppress not_equals YES, continue on error", // BitLocker
     "415     step Restore User State: run_command, run_in=either", // user state migration
     "418     step Restore Groups: run_command, run_in=either", // user state migration
-    "421     step Apply Local GPO Package: run_command, run_in=either, if ApplyGPOPack not_equals NO", // no deployarr feature
+    "421     step Apply Local GPO Package: run_command, run_in=either, if ApplyGPOPack not_equals NO", // local Group Policy packs
     "431     group Imaging",
     "433       group Prepare Only, if DoCapture equals PREPARE",
-    "441         step Copy Sysprep files: run_command, run_in=either", // image capture, no deployarr feature
+    "441         step Copy Sysprep files: run_command, run_in=either", // image capture
     "445       group Sysprep Only, if DoCapture equals SYSPREP",
     "453         step Add mass storage drivers to sysprep.inf for XP and 2003: run_command, run_in=either", // image capture
     "456         step Execute Sysprep: run_command, run_in=either", // image capture
