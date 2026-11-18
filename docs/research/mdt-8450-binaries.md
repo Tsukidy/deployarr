@@ -253,7 +253,7 @@ winpe     yes
 | Condition | Parameters | Operators |
 | --- | --- | --- |
 | Variable | Variable, Operator, Value | exists, equals, notEquals, greater, greaterEqual, less, lessEqual |
-| Registry | KeyPath, Value, Type (REG_SZ and others), Operator, Data | the same set |
+| Registry | KeyPath, Value, Type (`REG_SZ`, `REG_EXPAND_SZ`, or `REG_DWORD`), Operator, Data (`Workbench/TaskSequenceRegistryCondition.cs:72-75, 86-90`) | exists, notExists, equals, notEquals, greater, greaterEqual, less, lessEqual (`Workbench/TaskSequenceRegistryCondition.cs:63-71, 128-192`) |
 | WMI | Namespace, Query | true if the query returns rows |
 | File | Path, optional Version with VersionOperator, optional DateTime with DateTimeOperator | equals, notEquals, greater, greaterEqual, less, lessEqual |
 | Folder | Path, optional DateTime with DateTimeOperator | the same set |
@@ -261,7 +261,13 @@ winpe     yes
 | OS version | Version, Architecture | from a fixed list in `Bin\OSList.xml` |
 | If statement | `<operator type="and\|or\|not">` | all, any, none |
 
-- The editor maps operators only from lower-case names. Opening a template condition stored as `Equals` or `notExists` and clicking OK saves it as `exists` with an empty value (`Workbench/TaskSequenceVariable.cs:35-49`).
+- The Variable condition dialog maps operators only from lower-case names. Opening a template Variable condition stored as `Equals` or `notExists` and clicking OK saves it as `exists` with an empty value (`Workbench/TaskSequenceVariable.cs:35-49`).
+- The Registry condition dialog maps operators with two methods of its own, `FindEquivalentCMBValue` and `FindEquivalentCMBText`. It writes "not exists" as `notExists` and reads `notExists` back as "not exists" (`Workbench/TaskSequenceRegistryCondition.cs:128-192`).
+- The Registry dialog offers only three value types, `REG_SZ`, `REG_EXPAND_SZ`, and `REG_DWORD` (`Workbench/TaskSequenceRegistryCondition.cs:72-75`).
+- For exists and not exists, the Registry dialog turns off the type box. It does so when it opens a condition with either operator and when the user picks either one (`Workbench/TaskSequenceRegistryCondition.cs:108-114, 291-298`).
+- When the user clicks OK with exists or not exists, the Registry dialog selects `REG_SZ` in the type box and writes it to the condition's `Type`. It writes `Type` only into a condition that already has a `Type` variable (`Workbench/TaskSequenceRegistryCondition.cs:226-236, 258-261`).
+- The editor's "Registry Setting" menu item creates each new Registry condition with `Type` set to `REG_SZ` and then opens the Registry dialog on it (`Workbench/TaskSequenceEditor.cs:1148-1185`). The dialog writes `REG_SZ` to `Type` for exists and not exists, so every exists or not exists test made with this menu item carries `Type` `REG_SZ` (`Workbench/TaskSequenceEditor.cs:1172-1177`, `Workbench/TaskSequenceRegistryCondition.cs:226-236, 258-261`).
+- When `Type` is set, MDT's engine treats a named value whose type differs from it as missing (`TsCore!0x1801a6bec`, `TsCore!0x1801a7c48`, [Conditions](#conditions)). An exists test made with the menu item is therefore false for a named value whose type is not `REG_SZ`, such as a `REG_DWORD` or `REG_EXPAND_SZ` value, and a not exists test is true for one (inferred from the editor code above and the engine rule in [Conditions](#conditions)).
 - File and folder dates are stored in UTC as `yyyyMMddHHmmss.000000+***` (`Workbench/TaskSequenceFilePropertiesCondition.cs:142-146, 310`).
 - The editor checks only required fields per step. It does not check structure, references, or `runIn` (`Workbench/TaskSequenceEditor.cs:265-293`).
 
