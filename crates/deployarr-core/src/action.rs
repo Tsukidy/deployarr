@@ -942,14 +942,9 @@ validated_string! {
     /// It starts with `http://` or `https://` and names a host. A port after
     /// the host is empty or a number from 0 to 65535. It holds only ASCII
     /// letters, digits, and symbols, with no space or control character. The
-    /// parser rejects user information, such as `user:pass@`, to keep a
-    /// credential out of the registry and the logs. No error message repeats
-    /// the text.
-    ///
-    /// A user name or password with an unencoded `#`, `/`, or `?` ends the
-    /// authority early. The URL still parses when the text before that
-    /// character is a valid host and port, such as `admin:123` in
-    /// `https://admin:123#x@wsus.example.com`.
+    /// parser rejects an `@` anywhere in the URL, not only the one that ends
+    /// user information such as `user:pass@`, to keep a credential out of the
+    /// registry and the logs. No error message repeats the text.
     ///
     /// The parser accepts the scheme in any case and writes it in lower case,
     /// its canonical form. It keeps the rest of the URL as written.
@@ -979,12 +974,15 @@ fn check_wsus_url(text: &str) -> Result<(), WsusUrlError> {
             prefix.eq_ignore_ascii_case(scheme).then_some(rest)
         })
         .ok_or(WsusUrlError::Scheme)?;
-    // The authority ends at the first `/`, `?`, or `#` (RFC 3986, section
-    // 3.2). An `@` in it ends the user information (section 3.2.1).
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
-    if authority.contains('@') {
+    // An `@` in the authority ends the user information (RFC 3986, section
+    // 3.2.1). The owner chose to reject an `@` anywhere, so that a password
+    // whose unencoded `#`, `/`, or `?` ends the authority early still fails.
+    if rest.contains('@') {
         return Err(WsusUrlError::UserInfo);
     }
+    // The authority ends at the first `/`, `?`, or `#` (RFC 3986, section
+    // 3.2).
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
     // A host in brackets is an IP literal. A bracket appears nowhere else in
     // a URI (RFC 3986, section 3.2.2).
     let (host, after_host) = match authority.strip_prefix('[') {
@@ -1038,6 +1036,7 @@ pub enum WsusUrlError {
     Empty,
     InvalidChar,
     Scheme,
+    /// An `@` anywhere in the URL, which can end user information.
     UserInfo,
     NoHost,
     /// A `[` without its `]`, an empty `[]`, a bracket elsewhere in the
@@ -1056,7 +1055,7 @@ impl fmt::Display for WsusUrlError {
             }
             Self::Scheme => "a WSUS URL starts with `http://` or `https://`",
             Self::UserInfo => {
-                "a WSUS URL must not hold user information, such as `user:pass@`, so that no credential reaches the registry or a log"
+                "a WSUS URL must not hold an `@`, so that no user information, such as `user:pass@`, reaches the registry or a log"
             }
             Self::NoHost => {
                 "a WSUS URL names a host after `//`, such as `https://wsus.example.com:8531`"

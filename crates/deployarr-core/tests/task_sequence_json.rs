@@ -4,7 +4,7 @@ use std::num::{NonZeroU8, NonZeroU32};
 use deployarr_core::action::{
     Action, AppSelection, BuiltinAction, CheckMode, DiskCheck, DiskSelector, ExitCodes,
     MemoryCheck, MissingUpdatePolicy, ProcessorCheck, ReadinessChecks, StepLimits, UpdateExclusion,
-    UpdateSource, UpdateTimeouts, WsusUrl,
+    UpdateSource, UpdateTimeouts, WsusUrl, WsusUrlError,
 };
 use deployarr_core::condition::{Comparison, Condition, FileVersion, RegData, Test};
 use deployarr_core::sequence::{
@@ -1225,6 +1225,11 @@ fn a_bad_update_setting_fails_and_the_error_names_its_field() {
             json!({ "source": { "wsus": "https://wsus[1].example.com" } }),
             ".source.wsus",
         ),
+        // An `@` fails anywhere in the URL, even in the path.
+        (
+            json!({ "source": { "wsus": "https://wsus.example.com:8531/updates@site" } }),
+            ".source.wsus",
+        ),
         // A WSUS source without its URL.
         (json!({ "source": "wsus" }), ".source.wsus"),
         (json!({ "source": "microsoft_update" }), ".source"),
@@ -1295,10 +1300,14 @@ fn a_wsus_url_with_user_information_fails_and_the_error_holds_none_of_it() {
         "ftp://admin:Hunter2@wsus.example.com",
         "https://admin:Hunter 2@wsus.example.com",
         // A `#`, `/`, or `?` in the password ends the authority early, so the
-        // parser reads the rest of the password as the port.
+        // `@` falls after the authority.
         "https://admin:p#ss@wsus.example.com:8531",
         "https://admin:pa/ss@wsus.example.com:8531",
         "https://admin:p?ss@wsus.example.com",
+        // The text before the `#` is a valid host and port here, `admin` with
+        // the port `123` or an empty port.
+        "https://admin:123#x@wsus.example.com",
+        "https://admin:#x@wsus.example.com",
     ];
     let mut cases: Vec<(Value, &str)> = urls
         .iter()
@@ -1341,6 +1350,20 @@ fn a_wsus_url_with_user_information_fails_and_the_error_holds_none_of_it() {
 }
 
 #[test]
+fn a_wsus_url_with_an_at_sign_anywhere_fails() {
+    for url in [
+        "https://admin:Hunter2@wsus.example.com:8531",
+        "https://admin:123#x@wsus.example.com",
+        "https://admin:#x@wsus.example.com",
+        "https://wsus.example.com:8531/updates@site",
+        "https://wsus.example.com:8531/?site=a@b",
+        "https://wsus.example.com:8531/#a@b",
+    ] {
+        assert_eq!(url.parse::<WsusUrl>(), Err(WsusUrlError::UserInfo), "{url}");
+    }
+}
+
+#[test]
 fn a_wsus_url_is_an_http_or_https_url_that_names_a_host() {
     for url in [
         "http://wsus:8530",
@@ -1352,8 +1375,6 @@ fn a_wsus_url_is_an_http_or_https_url_that_names_a_host() {
         "https://wsus.example.com:65535",
         // An empty port means the default port.
         "https://wsus.example.com:/",
-        // An `@` after the authority is part of the path, not user information.
-        "https://wsus.example.com:8531/updates@site",
     ] {
         let parsed: WsusUrl = url.parse().unwrap_or_else(|error| panic!("{url}: {error}"));
 
