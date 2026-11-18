@@ -84,9 +84,12 @@ impl IdentityFact {
     /// Whether the value is blank or a known placeholder, so that two PCs
     /// could share it.
     ///
-    /// A serial matches [`SERIAL_PLACEHOLDERS`] or holds only `0` digits. A
-    /// UUID or a MAC address holds only `0` digits or only `F` digits, with
-    /// its separators ignored.
+    /// A serial matches a known firmware placeholder, such as
+    /// `To Be Filled By O.E.M.` or `Default string`, compared after trimming
+    /// spaces and ignoring ASCII case, or holds only `0` digits. The private
+    /// constant `SERIAL_PLACEHOLDERS` lists the known placeholders. A UUID or
+    /// a MAC address holds only `0` digits or only `F` digits, with its
+    /// separators ignored.
     pub fn is_placeholder(&self) -> bool {
         let value = self.value.trim();
         if value.is_empty() {
