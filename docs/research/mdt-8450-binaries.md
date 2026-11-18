@@ -248,7 +248,7 @@ winpe     yes
 - Every step added in the editor gets `runIn="WinPEandFullOS"`, whatever it does (`Workbench/TaskSequenceEditor.cs:1713-1722`).
 - Run Command Line can run as another user. The editor stores that user's name and password in plain text as `SMSTSRunCommandLineUserName` and `SMSTSRunCommandLineUserPassword` (`Workbench/TaskSequenceEditor.cs:317-331`).
 - Install Application has two modes, chosen by whether `ApplicationGUID` is empty. A GUID installs one application. An empty GUID installs the `MandatoryApplications` and `Applications` lists (`Actions/ActionInstallApplication.cs:45-111`).
-- The condition editor writes these types and operators:
+- The condition editor writes these types and operators. A `.resx` citation in the table names a file at the top of the `ilspycmd -p` output folder, beside `Microsoft.BDD.Workbench.csproj`, not in the `Microsoft.BDD.Workbench/` folder that holds the `.cs` files.
 
 | Condition | Parameters | Operators |
 | --- | --- | --- |
@@ -303,7 +303,7 @@ winpe     yes
 | `efisys.bin` waits for a key press | The deployarr boot ISO uses the no-prompt EFI boot image |
 | Saved MDT steps have no ID | deployarr's stable `NodeId` is new, and an MDT importer must create IDs |
 | MDT conditions include file version, file and folder dates, installed MSI products, and a WMI failure flag | deployarr's `Condition` gets these types. `Var` and `Registry` tests take all nine `Test` operators, and file version and date comparisons take only the six equality and order operators of `CompareOp` (#62). See [Core data shapes](../architecture.md#core-data-shapes). Make, model, location, and computer checks become variable conditions on gathered facts, with exact matching instead of MDT's substring tests |
-| MDT's editor writes an OS version condition with Architecture, Version, and Operator ([Task sequence editor model](#task-sequence-editor-model)) | deployarr's `Condition` has no OS version type, and `docs/architecture.md` has no rule for this yet ([#291](https://github.com/Tsukidy/deployarr/issues/291)). See [Core data shapes](../architecture.md#core-data-shapes) |
+| MDT's editor writes an OS version condition with `Architecture`, `Version`, and `Operator` ([Task sequence editor model](#task-sequence-editor-model)) | deployarr's `Condition` has no OS version type, and `docs/architecture.md` has no rule for this yet ([#291](https://github.com/Tsukidy/deployarr/issues/291)). See [Core data shapes](../architecture.md#core-data-shapes) |
 | MDT's integer test passes empty text, so an empty variable compares with an integer as an integer, read as 0 (inferred) | An integer has at least one digit, so empty text compares as text |
 | MDT reports a Variable comparison against an empty Value as an error when the condition runs, and accepts Like against an empty Value | A `Var` test compares against a `NonEmptyTemplate`, so the parser rejects an empty Value for every operator, `Like` included, and the sequence fails when it is saved. A Value that expands to empty text follows MDT's rule when the condition runs. See [Parameter types](../architecture.md#parameter-types) |
 | MDT's registry comparisons fail on every value type but `REG_DWORD`, `REG_SZ`, and `REG_EXPAND_SZ` | A `Registry` condition reads `REG_DWORD`, `REG_QWORD`, `REG_SZ`, and `REG_EXPAND_SZ` values, so it also compares a `REG_QWORD` value. See [Parameter types](../architecture.md#parameter-types) |
