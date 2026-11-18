@@ -52,8 +52,10 @@ SKIP_DIRS = {".git", "target", "node_modules"}
 # 13,010 bytes, rounded up to the next 500. For #201 the owner raised it to
 # 13,700, so that the work list rule fits without cutting other text. For
 # #203 the owner raised it to 14,000, so that the rules against cutting text
-# and against recording answers the owner did not give fit.
-AGENT_FILES_BUDGET = 14000
+# and against recording answers the owner did not give fit. For #238 the
+# owner raised it to 14,200, so that the rule against keeping a contradiction
+# to stay under the budget fits, beside the docs check line that #223 adds.
+AGENT_FILES_BUDGET = 14200
 REQUIRED_AGENT_FILES = ("AGENTS.md", "CLAUDE.md")
 IMPORT_HOPS = 4
 # An @path import. A backslash before a space keeps the space in the path.
@@ -321,7 +323,8 @@ def check_agent_files(root):
         lines.append(
             "  Do not delete or shorten existing text to fit. Ask the owner whether to move"
             " named text to its task's doc, behind a one-line link, or to raise"
-            " AGENT_FILES_BUDGET in tools/check_docs.py."
+            " AGENT_FILES_BUDGET in tools/check_docs.py. If the change fixes two rules"
+            " that contradict each other, keep the fix and ask the owner to raise the budget."
         )
         problems.append("\n".join(lines))
     return total, problems

@@ -15,7 +15,8 @@ from check_docs import AGENT_FILES_BUDGET  # noqa: E402
 ADVICE = (
     "Do not delete or shorten existing text to fit. Ask the owner whether to move"
     " named text to its task's doc, behind a one-line link, or to raise"
-    " AGENT_FILES_BUDGET in tools/check_docs.py."
+    " AGENT_FILES_BUDGET in tools/check_docs.py. If the change fixes two rules"
+    " that contradict each other, keep the fix and ask the owner to raise the budget."
 )
 
 
