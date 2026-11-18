@@ -6,7 +6,10 @@ use deployarr_core::action::{
     MemoryCheck, MissingUpdatePolicy, ProcessorCheck, ReadinessChecks, StepLimits, UpdateExclusion,
     UpdateSource, UpdateTimeouts, WsusUrl, WsusUrlError,
 };
-use deployarr_core::condition::{Comparison, Condition, FileVersion, RegData, Test};
+use deployarr_core::condition::{
+    Comparison, Condition, FileVersion, RegData, RegText, RegValueName, RegistryCondition,
+    RegistryConditionError, Test,
+};
 use deployarr_core::sequence::{
     AuthoredSequence, DefaultVars, DefaultVarsError, Node, NodeMeta, ParseError, TaskSequenceId,
 };
@@ -664,6 +667,137 @@ fn a_registry_equals_test_without_data_fails() {
     }
 }
 
+/// A `registry` condition whose `key` is set, with `fields` after it. It is
+/// text, because `Value` sorts object keys and these cases need their order.
+fn registry_text(fields: &str) -> String {
+    format!(r#"{{"registry": {{"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Deployarr", {fields}}}}}"#)
+}
+
+/// Parses a sequence whose step has `condition`, written as text.
+fn parse_with_condition(condition: &str) -> Result<AuthoredSequence, ParseError> {
+    let text = sequence_with_condition(json!("CONDITION"))
+        .to_string()
+        .replace(r#""CONDITION""#, condition);
+    AuthoredSequence::from_json(&text)
+}
+
+#[test]
+fn a_registry_comparison_without_a_value_name_or_with_empty_text_fails() {
+    const NO_NAME: &str = "a registry comparison needs a value name, because a key has no data to compare. `exists` without `value` tests the key";
+    const EMPTY_NAME: &str = "a registry value name must not be empty";
+    const EMPTY_DATA: &str = "the registry data to compare against must not be empty";
+    let cases = [
+        // A comparison with `value` left out fails at the condition itself.
+        (r#""test": {"equals": 1}"#, "", NO_NAME),
+        (r#""test": {"like": "Pro*"}"#, "", NO_NAME),
+        // With `"value": null`, it fails at whichever of the two comes second.
+        (
+            r#""value": null, "test": {"equals": 1}"#,
+            ".test.equals",
+            NO_NAME,
+        ),
+        (r#""test": {"equals": 1}, "value": null"#, ".value", NO_NAME),
+        // An empty value name fails for every test.
+        (r#""value": "", "test": "exists""#, ".value", EMPTY_NAME),
+        (
+            r#""value": "", "test": {"equals": 1}"#,
+            ".value",
+            EMPTY_NAME,
+        ),
+        // Empty text data fails at its operator, `like` included.
+        (
+            r#""value": "Marker", "test": {"equals": ""}"#,
+            ".test.equals",
+            EMPTY_DATA,
+        ),
+        (
+            r#""value": "Marker", "test": {"like": ""}"#,
+            ".test.like",
+            EMPTY_DATA,
+        ),
+    ];
+
+    for (fields, rest, message) in cases {
+        let condition = registry_text(fields);
+
+        let error = parse_with_condition(&condition).expect_err(&condition);
+
+        assert_eq!(
+            error.path(),
+            format!("{STEP}.meta.condition.registry{rest}"),
+            "{condition}: {error}"
+        );
+        assert!(error.to_string().contains(message), "{condition}: {error}");
+    }
+}
+
+#[test]
+fn a_registry_key_test_needs_no_value_name() {
+    for (test, expected) in [("exists", Test::Exists), ("not_exists", Test::NotExists)] {
+        for fields in [
+            format!(r#""test": "{test}""#),
+            format!(r#""value": null, "test": "{test}""#),
+            format!(r#""test": "{test}", "value": null"#),
+        ] {
+            let condition = registry_text(&fields);
+
+            let sequence = parse_with_condition(&condition)
+                .unwrap_or_else(|error| panic!("{condition}: {error}"));
+
+            let [Node::Step(step)] = sequence.root.children.as_slice() else {
+                panic!("expected one step");
+            };
+            let Some(Condition::Registry(registry)) = &step.meta.condition else {
+                panic!("expected a Registry condition");
+            };
+            assert_eq!(registry.value(), None, "{condition}");
+            assert_eq!(*registry.test(), expected, "{condition}");
+            let written =
+                serde_json::to_value(&step.meta.condition).expect("a condition serializes");
+            assert_eq!(
+                written,
+                json!({ "registry": {
+                    "key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Deployarr",
+                    "value": null,
+                    "test": test,
+                } }),
+                "{condition}"
+            );
+        }
+    }
+}
+
+#[test]
+fn registry_conditions_built_in_code_cannot_compare_a_key() {
+    let key = Template::new(r"HKEY_LOCAL_MACHINE\SOFTWARE\Deployarr");
+    let pattern: RegText = "Pro*".parse().expect("text that is not empty");
+    for test in [
+        Test::Equals(RegData::Integer(1)),
+        Test::Like(RegData::String(pattern)),
+    ] {
+        let error = RegistryCondition::new(key.clone(), None, test).expect_err("no value name");
+
+        assert_eq!(error, RegistryConditionError);
+        assert!(error.to_string().contains("needs a value name"), "{error}");
+    }
+
+    for test in [Test::Exists, Test::NotExists] {
+        let condition =
+            RegistryCondition::new(key.clone(), None, test.clone()).expect("a test of the key");
+        assert_eq!(condition.key(), &key);
+        assert_eq!(condition.value(), None);
+        assert_eq!(condition.test(), &test);
+    }
+
+    let name: RegValueName = "Marker".parse().expect("a name that is not empty");
+    let condition =
+        RegistryCondition::new(key, Some(name.clone()), Test::Equals(RegData::Integer(1)))
+            .expect("a comparison that names a value");
+    assert_eq!(condition.value(), Some(&name));
+    assert!("".parse::<RegValueName>().is_err());
+    assert!("".parse::<RegText>().is_err());
+}
+
 fn var(name: &str, test: Value) -> Value {
     json!({ "var": { "name": name, "test": test } })
 }
@@ -785,10 +919,10 @@ fn registry_data_holds_every_qword() {
     let [Node::Step(step)] = sequence.root.children.as_slice() else {
         panic!("expected one step");
     };
-    let Some(Condition::Registry { test, .. }) = &step.meta.condition else {
+    let Some(Condition::Registry(registry)) = &step.meta.condition else {
         panic!("expected a Registry condition");
     };
-    assert_eq!(*test, Test::Equals(RegData::Integer(u64::MAX)));
+    assert_eq!(*registry.test(), Test::Equals(RegData::Integer(u64::MAX)));
 }
 
 #[test]
