@@ -19,7 +19,7 @@ This page records whether each boot manager boots with the other set of boot fon
 
 ## The two font sets
 
-The lab's TFTP roots hold the two sets from the boot image. `~/deployarr-lab/tftp/2011` holds `Windows\Boot\Fonts`, and `~/deployarr-lab/tftp/2023` holds `Windows\Boot\Fonts_EX` with `_EX` removed from each name, as [step 6 of the lab guide](../../lab-setup.md#6-get-the-windows-files) builds them. The two roots list the same 31 files. Exactly 18 of them differ: the 16 fonts in `boot/fonts`, `boot/x64/bootmgfw.efi`, and `boot/x64/wdsmgfw.efi`. `pxeboot.n12`, `bootmgr.exe`, the BCD stores, `boot.sdi`, and `boot.wim` are the same files in both.
+The lab's TFTP roots hold the two sets from the boot image. `tools/lab/media.sh` builds the roots in [step 6 of the lab guide](../../lab-setup.md#6-get-the-windows-files). It fills `~/deployarr-lab/tftp/2011` from `Windows\Boot\Fonts` (line 86) and `~/deployarr-lab/tftp/2023` from `Windows\Boot\Fonts_EX` (line 88). It removes `_EX` from each font's name as it copies the font (line 72). [Where the 2023-signed programs come from](uefi-ca-2023.md#where-the-2023-signed-programs-come-from) also records that the `2023` root has the `Fonts_EX` fonts. The two roots list the same 31 files. Exactly 18 of them differ: the 16 fonts in `boot/fonts`, `boot/x64/bootmgfw.efi`, and `boot/x64/wdsmgfw.efi`. `pxeboot.n12`, `bootmgr.exe`, the BCD stores, `boot.sdi`, and `boot.wim` are the same files in both.
 
 - Neither `bios` run requested `bootmgfw.efi` or `wdsmgfw.efi`. So run 1 differs from the `bios` control only in `boot/fonts`.
 - `bootmgr.exe` is signed through the Microsoft Windows Production PCA 2011. `pxeboot.n12` is not a PE file and carries no signature, and it is the same file in both roots.
@@ -169,7 +169,7 @@ Both runs made 13 TFTP requests, the same 13 as the `bios` run of #27 in [Single
 | `UnlockToken.pol` RRQ | 20:29:43.591, 98.162 s | 20:32:18.137, 98.323 s |
 | WinPE's DISCOVER | 20:29:56.831, 111.402 s | 20:32:31.011, 111.197 s |
 
-The times come from the prototype's log, and the VM start from the run script. Each `boot.wim` transfer sent 393333 blocks of 1456 bytes with no retransmit.
+The times come from the prototype's log, and the VM start from the run script. Each `boot.wim` transfer sent 393333 blocks with no retransmit. The block size was 1456 bytes, so the last block held 198 bytes.
 
 ### Run 1, with `Fonts_EX`
 
@@ -183,7 +183,7 @@ The times come from the prototype's log, and the VM start from the run script. E
 
 - RRQs 9 and 10 went as in run 1, with `tsize=50096`. RRQ 10 completed, 35 blocks in 0.008 seconds with no retransmit.
 - The prototype logged the path `~/deployarr-lab/tftp/2011/boot/fonts/wgl4_boot.ttf`, the `Fonts` file.
-- Frames `0006.png` to `0049.png` show the same `Loading files...` screen as run 1. Frame `0005.png`, at 20:28:13.686, falls between the font and the `boot.wim` request. It shows `Loading files...` with `File: \boot\boot.sdi` and an almost full bar.
+- Frames `0006.png` to `0049.png` show the same `Loading files...` screen as run 1. Frame `0005.png`, at 20:28:13.686, falls between the font and the `boot.wim` RRQ with `blksize`. It shows `Loading files...` with `File: \boot\boot.sdi` and an almost full bar.
 - WinPE's DISCOVER and REQUEST, with option 60 `MSFT 5.0`, are frames 38 and 40 of the committed capture, as in run 1.
 - The last screendump, `0065.png` at 20:30:15.886, shows the same `cmd.exe` window after `wpeinit`. It differs from run 1's last frame in 32 pixels, the text cursor after the prompt, which shows in this frame and not in run 1's. Run 1's last frame is the same file as frames `0058.png` to `0064.png` of the control.
 
@@ -200,7 +200,7 @@ Both runs made 32 TFTP requests, the same 32 as the `uefi2023` single-stage run 
 | `boot.wim` transfer | 49.847 s | 52.921 s |
 | `UnlockToken.pol` RRQ | 20:34:11.312, 57.723 s | 20:59:57.356, 60.942 s |
 
-The times come from the prototype's log, and the VM start from the run script. Each `boot.wim` transfer sent 393333 blocks of 1456 bytes with no retransmit. In both runs, the full capture ends with the reply to the `UnlockToken.pol` request, and holds no packet from WinPE. WinPE on this VM has no driver for its virtio-net card (inferred, see [What is inferred](#what-is-inferred)).
+The times come from the prototype's log, and the VM start from the run script. Each `boot.wim` transfer sent 393333 blocks with no retransmit. The block size was 1456 bytes, so the last block held 198 bytes. In both runs, the full capture ends with the reply to the `UnlockToken.pol` request, and holds no packet from WinPE. WinPE on this VM has no driver for its virtio-net card (inferred, see [What is inferred](#what-is-inferred)).
 
 ### Run 2, with `Fonts`
 
@@ -251,7 +251,7 @@ In the committed frames, each run's bands equal its control's.
 | Run 2 | 20:59:05.214 to 20:59:57.135 | 25, `0006.png` to `0030.png` | 1 |
 
 - In each run, every frame in the window has the same text bands. The bar band changes from frame to frame.
-- Frame `0005.png` of run 1, the `uefi2023` control, and run 2 was taken less than 1 second after the `boot.wim` RRQ, so the window leaves it out. Each of those three frames has the same text bands as `0006.png` of its run. The `bios` control's `0005.png` was taken before its `boot.wim` RRQ.
+- Frame `0005.png` of run 1, the `uefi2023` control, and run 2 was taken less than 1 second after the `boot.wim` RRQ with `blksize`, so the window leaves it out. Each of those three frames has the same text bands as `0006.png` of its run. The `bios` control's `0005.png` was taken before its `boot.wim` RRQ with `blksize`, during the `boot.sdi` transfer.
 - Each run's text bands equal its control's. So run 1's text rendered the same as the `bios` control's, and run 2's text rendered the same as the `uefi2023` control's.
 - The same text bands appear in two frames from #27, taken by hand during `boot.wim` and kept in `~/deployarr-lab/runs/27/`. `bios-01-loading-boot-wim.png` comes from `bootmgr.exe` with `Fonts`. `uefi-01-loading-boot-wim.png` comes from the 2011-signed `bootmgfw.efi` with `Fonts` on the `uefi` VM. The script's `compare` prints `text bands equal` for each against this page's frame of the same size. So every pair of boot manager and font set that the lab has served draws the same text pixels on a screen of the same size.
 
@@ -332,6 +332,6 @@ python3 -I ~/deployarr-lab/runs/222/tools/textrows.py compare <control frame> <r
 
 - One font folder can serve UEFI and BIOS PCs. The 2023-signed `bootmgfw.efi` and the 2011-signed `bootmgr.exe` each started WinPE with either set at `\boot\fonts`, and drew the same `Loading files...` text with each. Both BCD templates keep `{bootmgr}` `fontpath` at the one folder, as [BCD](../../architecture.md#bcd) says. The templates need no change.
 - The folder holds the `Fonts` set, from `Windows\Boot\Fonts`. With that set, each pair of boot manager and font set that the server can send has a lab run. The 2023-signed `bootmgfw.efi` got it in run 2. The 2011-signed `bootmgfw.efi`, which the server setting selects, and `bootmgr.exe` got it in #27 ([Single-stage boot chain in the PXE lab](single-stage-chain.md#result)).
-- [Boot chain](../../architecture.md#boot-chain) says, "Both BCD templates name the same `fontpath`, and no run served a boot manager the other set." It names #222 for that run. This page is that run, so the bullet can say that each boot manager booted with either set and that the server serves `Fonts`.
+- [Boot chain](../../architecture.md#boot-chain) says, "Both BCD templates name the same `fontpath`, and no run served a boot manager the other set." It names #222 for that run. This page is that run. So the bullet can say that the 2023-signed `bootmgfw.efi` and `bootmgr.exe` each booted with either set, and that the server serves `Fonts`. In the lab, the 2011-signed `bootmgfw.efi` booted only with `Fonts`, the set that the folder holds.
 - [Boot chain](../../architecture.md#boot-chain) also says that the server serves "each `Fonts_EX` font with `_EX` removed from its name, as the lab did". With `Fonts` in the folder, the server serves no `Fonts_EX` font, so that renaming has no use.
 - [Boot chain](../../architecture.md#boot-chain) says, "The importer takes `bootmgfw_EX.efi` and `Fonts_EX` too". Its rule also says, "When a boot image has no `bootmgfw_EX.efi` or no `Fonts_EX`, the importer reports the missing copies." While the setting sends the 2023-signed copy, the server refuses to make such an image active, and refuses the switch to the 2023-signed copy while such an image is active. With `Fonts` served to every PC, the 2023-signed copy booted without `Fonts_EX`. So that rule could name only `bootmgfw_EX.efi`. The owner chose the rule, so the change to it is the owner's choice. The runs tested one build of WinPE and one font, as [Not covered](#not-covered) says.
