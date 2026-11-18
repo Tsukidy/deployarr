@@ -9,6 +9,7 @@ use serde_json::value::RawValue;
 
 use crate::action::SecretRef;
 use crate::addon::AddOnRef;
+use crate::sequence::RunIn;
 
 /// The stage of a deployment that an `ApplyJoinProfile` join slot marks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -18,6 +19,29 @@ pub enum JoinStage {
     OfflineImage,
     /// The installed Windows.
     FullOs,
+}
+
+impl JoinStage {
+    /// The `run_in` that a join slot at this stage must have. The offline
+    /// image needs `WinPe`, and the installed Windows needs `FullOs`.
+    /// [`crate::validate::validate`] and [`crate::lower::lower`] reject a join
+    /// slot with any other `run_in`, `Either` included. A `Workgroup` or
+    /// `Domain` profile expands the slot to nothing, so no later check would
+    /// catch it.
+    pub fn run_in(self) -> RunIn {
+        match self {
+            Self::OfflineImage => RunIn::WinPe,
+            Self::FullOs => RunIn::FullOs,
+        }
+    }
+}
+
+/// The stage as the JSON format writes it.
+pub(crate) fn stage_name(stage: JoinStage) -> &'static str {
+    match stage {
+        JoinStage::OfflineImage => "offline_image",
+        JoinStage::FullOs => "full_os",
+    }
 }
 
 /// How a PC joins a workgroup or a directory. An admin defines profiles on
@@ -91,3 +115,16 @@ impl PartialEq for JoinProfile {
 }
 
 impl Eq for JoinProfile {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stage_names_are_the_json_values() {
+        for stage in [JoinStage::OfflineImage, JoinStage::FullOs] {
+            let json = serde_json::to_value(stage).expect("a stage serializes");
+            assert_eq!(json.as_str(), Some(stage_name(stage)));
+        }
+    }
+}

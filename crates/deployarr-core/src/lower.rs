@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::action::{Action, BuiltinAction};
 use crate::addon::AddOnStep;
 use crate::compile::{action_name, run_in_name, win_pe_full_os_condition};
-use crate::join::JoinStage;
+use crate::join::{JoinStage, stage_name};
 use crate::non_empty::NonEmpty;
 use crate::sequence::{
     AuthoredSequence, Group, LoweredSequence, Node, NodeId, NodeMeta, RunIn, Step,
@@ -170,8 +170,21 @@ impl Lowerer<'_> {
 
     fn step(&mut self, step: &Step<Action>, kept: bool) -> Node<BuiltinAction> {
         let Action::Builtin(action) = &step.action else {
+            // Disabled steps count for every rule here, as they do in the
+            // compiler.
+            if let Action::ApplyJoinProfile { stage } = step.action
+                && step.run_in != stage.run_in()
+            {
+                self.fail(
+                    step.meta.id,
+                    LowerRule::JoinStageRunIn {
+                        stage,
+                        run_in: step.run_in,
+                    },
+                );
+            }
             // The compiler checks this rule on steps, and this step becomes a
-            // group. Disabled steps count, as they do in the compiler.
+            // group.
             if let Some(condition) = win_pe_full_os_condition(step.run_in, &step.meta) {
                 self.fail(step.meta.id, LowerRule::FullOsCondition { condition });
             }
@@ -185,6 +198,14 @@ impl Lowerer<'_> {
                 children,
             });
         };
+        if action.only_from_addon() {
+            self.fail(
+                step.meta.id,
+                LowerRule::AddOnOnlyAction {
+                    action: action_name(action),
+                },
+            );
+        }
         Node::Step(Step {
             meta: step.meta.clone(),
             run_in: step.run_in,
@@ -242,8 +263,9 @@ impl Lowerer<'_> {
     }
 }
 
-/// A rule that the input to [`lower`] breaks. `node` is the deferred step's
-/// ID.
+/// A rule that the input to [`lower`] breaks. `node` is the ID of the step
+/// that breaks it: an add-on step or a join slot, or, for
+/// [`LowerRule::AddOnOnlyAction`], a built-in step.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LowerError {
     pub node: NodeId,
@@ -285,6 +307,13 @@ pub enum LowerRule {
     /// steps, and the group that replaces this step keeps its condition.
     /// Disabled steps count.
     FullOsCondition { condition: &'static str },
+    /// The step is a join slot, and its `run_in` is not the one that its
+    /// stage needs. See [`JoinStage::run_in`]. Disabled join slots count.
+    JoinStageRunIn { stage: JoinStage, run_in: RunIn },
+    /// The step is a built-in step of the task sequence, outside any
+    /// expansion, and its action is one that only an expansion may hold. See
+    /// [`BuiltinAction::only_from_addon`]. Disabled steps count.
+    AddOnOnlyAction { action: &'static str },
 }
 
 impl fmt::Display for LowerRule {
@@ -317,6 +346,17 @@ impl fmt::Display for LowerRule {
             Self::FullOsCondition { condition } => write!(
                 f,
                 "a `{condition}` condition works only in the full OS, so a step with `run_in` `win_pe` cannot have one"
+            ),
+            Self::JoinStageRunIn { stage, run_in } => write!(
+                f,
+                "a join slot with `stage` `{}` runs only with `run_in` `{}`, and this step has `{}`",
+                stage_name(*stage),
+                run_in_name(stage.run_in()),
+                run_in_name(*run_in)
+            ),
+            Self::AddOnOnlyAction { action } => write!(
+                f,
+                "only an add-on step's expansion may hold `{action}`, so a task sequence cannot hold it as a step of its own"
             ),
         }
     }

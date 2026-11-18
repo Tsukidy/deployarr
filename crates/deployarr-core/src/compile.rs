@@ -1,7 +1,7 @@
 //! Compiles a lowered task sequence into the flat program that the agent
-//! runs. The server also compiles a sequence when it is saved, to reject one
-//! that cannot run. A sequence with add-on steps or join slots must be
-//! lowered first. Issue #188 tracks the save-time checks for such a sequence.
+//! runs. When a sequence is saved, [`crate::validate::validate`] runs the
+//! same rules on it, to reject one that cannot run. It compiles the sequence
+//! with an empty group in place of each add-on step and join slot.
 //!
 //! [`compile`] takes a [`LoweredSequence`], whose steps hold only built-in
 //! actions, so a program that names an add-on does not type-check.
@@ -403,6 +403,26 @@ pub enum Rule {
     /// An earlier node in the tree, at `first`, has the same ID. Disabled
     /// nodes count.
     DuplicateNodeId { first: NodePath },
+}
+
+impl Rule {
+    /// The JSON name of the full-OS-only condition that the rule is about, if
+    /// it is about one.
+    ///
+    /// [`crate::validate::validate`] reports a full-OS-only condition on an
+    /// add-on step or a join slot itself. It leaves out a compiler error that
+    /// this returns `Some` for at the same node, so that the empty group that
+    /// stands in for the step does not get a second finding. The match is
+    /// exhaustive, so a new rule does not compile until someone decides
+    /// whether it is about such a condition.
+    pub(crate) fn full_os_condition(&self) -> Option<&'static str> {
+        match self {
+            Self::FullOsCondition { condition } => Some(condition),
+            Self::RunIn { .. } | Self::RestartBeforePartition | Self::DuplicateNodeId { .. } => {
+                None
+            }
+        }
+    }
 }
 
 impl fmt::Display for Rule {
