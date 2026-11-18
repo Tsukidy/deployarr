@@ -574,6 +574,48 @@ fn an_add_on_may_return_six_built_in_actions() {
 }
 
 #[test]
+fn only_server_call_and_add_provisioning_package_come_only_from_an_add_on() {
+    let cases = [
+        (json!({ "server_call": { "send": [] } }), true),
+        (
+            json!({ "add_provisioning_package": { "package": "p" } }),
+            true,
+        ),
+        (
+            json!({ "run_command": { "command": "x", "working_dir": null } }),
+            false,
+        ),
+        (
+            json!({ "run_powershell": { "script": "a.ps1", "args": [] } }),
+            false,
+        ),
+        (
+            json!({ "set_variable": { "name": "A", "value": "b" } }),
+            false,
+        ),
+        (json!({ "restart": { "into": "installed_os" } }), false),
+        (json!({ "partition_disk": { "layout": "uefi-gpt" } }), false),
+        (json!({ "apply_os_image": { "image": "w11" } }), false),
+        (json!({ "apply_drivers": { "selection": "auto" } }), false),
+        (json!({ "apply_unattend": { "template": "t" } }), false),
+        (
+            json!({ "install_applications": { "apps": { "one": "a" } } }),
+            false,
+        ),
+        (json!({ "install_updates": {} }), false),
+        (json!({ "verify_drivers": { "policy": "warn" } }), false),
+        (json!({ "check_readiness": {} }), false),
+        (json!({ "activate_windows": { "online": true } }), false),
+    ];
+
+    for (action, only) in cases {
+        let parsed: BuiltinAction =
+            serde_json::from_value(action.clone()).expect("the action parses");
+        assert_eq!(parsed.only_from_addon(), only, "{action}");
+    }
+}
+
+#[test]
 fn add_on_ids_are_publisher_dot_name_in_lower_case() {
     for good in [
         "deployarr.sql-order-lookup",
