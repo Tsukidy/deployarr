@@ -75,9 +75,12 @@
 //!   and the engine never reads `startIn`
 //!   ([MDT 8450 binaries reference](../../../docs/research/mdt-8450-binaries.md#instruction-table-and-failure-handling)).
 
+use std::collections::BTreeSet;
+
 use deployarr_core::compile::{Instr, OnError, Pc, compile};
 use deployarr_core::lower::{Expansions, lower};
 use deployarr_core::sequence::AuthoredSequence;
+use deployarr_core::validate::validate;
 use serde_json::Value;
 
 const CLIENT: &str = include_str!("data/mdt-8456-client.json");
@@ -309,6 +312,8 @@ fn the_port_parses_and_compiles() {
     let lowered = lower(&sequence, &Expansions::new()).unwrap_or_else(|errors| panic!("{errors}"));
 
     let program = compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+    // The save-time check finds nothing either.
+    assert_eq!(validate(&sequence, &BTreeSet::new()), []);
 
     // An `Enter` for each of the 18 groups, the root included, and an `Exec`
     // for each of the 53 steps that are not disabled. Client.xml has 56.

@@ -88,6 +88,10 @@ fn server_call() -> Value {
     json!({ "server_call": { "send": ["HardwareHash"] } })
 }
 
+fn provisioning_package() -> Value {
+    json!({ "add_provisioning_package": { "package": "enrollment_package" } })
+}
+
 /// The root holds a built-in step, the add-on step 2, and the join slot 3.
 fn planned() -> (AuthoredSequence, Expansions) {
     let sequence = sequence(vec![
@@ -504,5 +508,98 @@ fn a_full_os_condition_on_a_full_os_add_on_step_is_fine() {
 
     let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
 
+    compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+}
+
+#[test]
+fn lower_rejects_a_join_slot_whose_run_in_does_not_fit_its_stage() {
+    let cases = [
+        ("offline_image", "full_os", false),
+        ("offline_image", "either", false),
+        ("full_os", "win_pe", false),
+        ("full_os", "either", false),
+        ("offline_image", "win_pe", true),
+        ("full_os", "full_os", true),
+    ];
+
+    for (stage, run_in, fits) in cases {
+        let enabled = sequence(vec![step(3, run_in, join_slot(stage))]);
+        let expansions = Expansions::from([(id(3), Vec::new())]);
+        // A disabled join slot needs no expansion and still counts.
+        let dropped = sequence(vec![disabled(step(3, run_in, join_slot(stage)))]);
+
+        for (sequence, expansions) in [(enabled, expansions), (dropped, Expansions::new())] {
+            if fits {
+                let lowered =
+                    lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
+                compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+            } else {
+                assert_rejects(
+                    &sequence,
+                    &expansions,
+                    &[error(
+                        3,
+                        LowerRule::JoinStageRunIn {
+                            stage: serde_json::from_value(json!(stage)).expect("a valid stage"),
+                            run_in: serde_json::from_value(json!(run_in)).expect("a valid run_in"),
+                        },
+                    )],
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn lower_rejects_an_authored_server_call_or_provisioning_package() {
+    let sequence = sequence(vec![
+        step(2, "full_os", server_call()),
+        disabled(group(3, vec![step(4, "win_pe", provisioning_package())])),
+    ]);
+
+    assert_rejects(
+        &sequence,
+        &Expansions::new(),
+        &[
+            error(
+                2,
+                LowerRule::AddOnOnlyAction {
+                    action: "server_call",
+                },
+            ),
+            error(
+                4,
+                LowerRule::AddOnOnlyAction {
+                    action: "add_provisioning_package",
+                },
+            ),
+        ],
+    );
+}
+
+#[test]
+fn an_expansion_may_hold_a_server_call_and_a_provisioning_package() {
+    let sequence = sequence(vec![step(2, "win_pe", add_on())]);
+    let expansions = Expansions::from([(
+        id(2),
+        vec![
+            child(0x100, "win_pe", server_call()),
+            child(0x101, "win_pe", provisioning_package()),
+        ],
+    )]);
+
+    let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
+
+    let Node::Group(register) = &lowered.root.children[0] else {
+        panic!("expected a group");
+    };
+    let [Node::Step(call), Node::Step(package)] = register.children.as_slice() else {
+        panic!("expected two steps, found {:?}", register.children);
+    };
+    assert!(matches!(call.action, BuiltinAction::ServerCall { .. }));
+    assert!(matches!(
+        package.action,
+        BuiltinAction::AddProvisioningPackage { .. }
+    ));
     compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
 }
