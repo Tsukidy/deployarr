@@ -287,6 +287,33 @@ fn a_win_pe_add_on_step_or_join_slot_with_a_wmi_condition_gets_one_error_for_it(
 }
 
 #[test]
+fn an_add_on_step_with_a_wmi_condition_before_the_first_restart_into_the_os_is_an_error() {
+    let sequence = sequence(vec![
+        when(step(2, "win_pe", add_on()), wmi()),
+        when(step(3, "either", add_on()), wmi()),
+        step(4, "either", restart()),
+        when(step(5, "either", add_on()), wmi()),
+    ]);
+
+    let findings = validate(&sequence, &known());
+
+    // The `win_pe` step gets one finding for its condition. The rule on
+    // conditions before the first restart into the installed OS checks the
+    // empty group that stands in for each add-on step.
+    assert_eq!(
+        findings,
+        [
+            finding(2, vec![0], Issue::FullOsCondition { condition: "wmi" }),
+            finding(
+                3,
+                vec![1],
+                Issue::Compile(Rule::FullOsConditionBeforeInstalledOs { condition: "wmi" }),
+            ),
+        ]
+    );
+}
+
+#[test]
 fn a_join_slot_whose_run_in_does_not_fit_its_stage_is_an_error() {
     let cases = [
         ("offline_image", "full_os", false),

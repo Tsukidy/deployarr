@@ -132,6 +132,8 @@ struct Compiler {
     imaged: bool,
     /// Whether the program holds an `EnableBitLocker` step so far.
     bitlocker_enabled: bool,
+    /// Whether the program holds a `Restart` into the installed OS so far.
+    restarted_into_os: bool,
 }
 
 /// Whether the program keeps a node.
@@ -158,6 +160,7 @@ impl Compiler {
         self.check_id(meta);
         let (children, end) = match place {
             Place::Kept { on_failure } if meta.enabled => {
+                self.check_condition_before_os(meta);
                 let end = Pc(self.instrs.len() + kept_len(group));
                 let on_failure = if meta.continue_on_error {
                     OnError::JumpTo(end)
@@ -264,6 +267,9 @@ impl Compiler {
                 if into == RestartTarget::WinPe && self.bitlocker_enabled {
                     self.fail(step.meta.id, Rule::RestartIntoWinPeAfterBitLocker);
                 }
+                if into == RestartTarget::InstalledOs {
+                    self.restarted_into_os = true;
+                }
             }
             BuiltinAction::ApplyDrivers { .. } | BuiltinAction::ApplyUnattend { .. }
                 if !self.imaged =>
@@ -276,6 +282,26 @@ impl Compiler {
                 );
             }
             _ => {}
+        }
+        // The first `Restart` into the installed OS does not come before
+        // itself, so this check follows the match.
+        if step.run_in == RunIn::Either {
+            self.check_condition_before_os(&step.meta);
+        }
+    }
+
+    /// The rule about a full-OS-only condition before the first `Restart` into
+    /// the installed OS. It covers the groups and the `Either` steps that the
+    /// program keeps.
+    fn check_condition_before_os(&mut self, meta: &NodeMeta) {
+        if self.restarted_into_os {
+            return;
+        }
+        if let Some(condition) = meta.condition.as_ref().and_then(full_os_only) {
+            self.fail(
+                meta.id,
+                Rule::FullOsConditionBeforeInstalledOs { condition },
+            );
         }
     }
 
@@ -308,7 +334,8 @@ fn kept_len(group: &Group<BuiltinAction>) -> usize {
 ///
 /// The compiler rejects a built-in step that has one. [`crate::lower::lower`]
 /// and [`crate::validate::validate`] reject an add-on step or a join slot that
-/// has one, because the group that replaces such a step is not checked.
+/// has one, because the compiler checks the condition of the group that
+/// replaces such a step only before the first `Restart` into the installed OS.
 pub(crate) fn win_pe_full_os_condition(run_in: RunIn, meta: &NodeMeta) -> Option<&'static str> {
     if run_in == RunIn::WinPe {
         meta.condition.as_ref().and_then(full_os_only)
@@ -432,6 +459,16 @@ pub enum Rule {
     /// `installed_msi` or `wmi` condition, which only the full OS can answer.
     /// `condition` names the first one. Disabled steps count.
     FullOsCondition { condition: &'static str },
+    /// The node is a group, the root included, or a step with `run_in`
+    /// `Either`. Its condition holds an `installed_msi` or `wmi` condition,
+    /// and `condition` names the first one. The node comes before the first
+    /// `Restart` with `into` `InstalledOs` in program order. Every run starts
+    /// in WinPE, and only that restart leaves it, so the run reaches the node
+    /// in WinPE, where the condition fails to evaluate on every run.
+    /// Conditions do not count, so a `Restart` with a condition, or in a group
+    /// with one, still counts. The program drops disabled nodes, so they do
+    /// not count.
+    FullOsConditionBeforeInstalledOs { condition: &'static str },
     /// The step is a `Restart` with `run_in` `WinPe`, and no `PartitionDisk`
     /// step comes before it in program order. Until that step, the state is
     /// on `X:`, and a restart loses it. The program drops disabled nodes, so
@@ -466,7 +503,7 @@ impl Rule {
     /// whether it is about such a condition.
     pub(crate) fn is_full_os_condition(&self) -> bool {
         match self {
-            Self::FullOsCondition { .. } => true,
+            Self::FullOsCondition { .. } | Self::FullOsConditionBeforeInstalledOs { .. } => true,
             Self::RunIn { .. }
             | Self::RestartBeforePartition
             | Self::RestartIntoWinPeAfterBitLocker
@@ -496,6 +533,10 @@ impl fmt::Display for Rule {
             Self::FullOsCondition { condition } => write!(
                 f,
                 "a `{condition}` condition works only in the full OS, so a step with `run_in` `win_pe` cannot have one"
+            ),
+            Self::FullOsConditionBeforeInstalledOs { condition } => write!(
+                f,
+                "a `{condition}` condition works only in the full OS. The run reaches this node in WinPE, because no `restart` into `installed_os` comes before it"
             ),
             Self::RestartBeforePartition => f.write_str(
                 "a `restart` with `run_in` `win_pe` must come after the first `partition_disk` step. Until then the state is on `X:`, and the restart loses it",

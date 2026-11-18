@@ -294,13 +294,17 @@ mod tests {
 
     #[test]
     fn a_compiler_error_about_a_full_os_condition_at_a_reported_node_is_left_out() {
-        // No compiler rule checks the condition of the empty group that stands
-        // in for an add-on step yet. A rule on group conditions would, so the
-        // test hands such an error to `compiler_findings` directly.
+        // The rule on conditions before the first `Restart` into the installed
+        // OS checks the empty group that stands in for an add-on step. The test
+        // hands its error to `compiler_findings` directly.
         let wmi = Issue::FullOsCondition { condition: "wmi" };
         let own = [finding(2, vec![0], wmi)];
         let errors = [
-            compile_error(2, vec![0], Rule::FullOsCondition { condition: "wmi" }),
+            compile_error(
+                2,
+                vec![0],
+                Rule::FullOsConditionBeforeInstalledOs { condition: "wmi" },
+            ),
             compile_error(
                 2,
                 vec![0],
