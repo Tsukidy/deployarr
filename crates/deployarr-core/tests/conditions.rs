@@ -1176,10 +1176,9 @@ fn mdt_registry_compares_string_values_without_regard_to_case() {
     }
 }
 
-/// MDT fails a comparison against empty registry data when it runs
-/// (`TsCore!0x1801a6bec`). MDT checks only before the six comparisons.
-/// deployarr's parser rejects empty data for `like` too (owner decision on
-/// #183), so the evaluator never meets it.
+/// MDT fails one of the six comparisons against empty registry data when it
+/// runs (`TsCore!0x1801a6bec`). deployarr's parser rejects the empty data, so
+/// the evaluator never meets it.
 #[test]
 fn mdt_registry_comparing_against_empty_data_fails_to_parse() {
     for op in [
@@ -1189,11 +1188,21 @@ fn mdt_registry_comparing_against_empty_data_fails_to_parse() {
         "less_equal",
         "greater",
         "greater_equal",
-        "like",
     ] {
         let error = parse_error(registry(HKLM_CONTOSO, Some("Stage"), json!({ op: "" })));
         assert!(error.contains("must not be empty"), "{op}: {error}");
     }
+}
+
+/// MDT checks for empty registry data only before the six comparisons
+/// (`TsCore!0x1801a6bec`). Its `like` ignores the data, so `like` with empty
+/// data is true for any `REG_DWORD`, `REG_SZ`, or `REG_EXPAND_SZ` value that
+/// exists, as with any other pattern (`TsCore!0x1801ab054`). deployarr's
+/// parser rejects empty data for `like` too (owner decision on #183).
+#[test]
+fn difference_registry_empty_like_data_fails_to_parse() {
+    let error = parse_error(registry(HKLM_CONTOSO, Some("Stage"), json!({ "like": "" })));
+    assert!(error.contains("must not be empty"), "{error}");
 }
 
 /// "Registry conditions accept only ... `REG_DWORD`, `REG_SZ`, and
