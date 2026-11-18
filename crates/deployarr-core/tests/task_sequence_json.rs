@@ -935,6 +935,75 @@ fn registry_conditions_built_in_code_cannot_give_a_key_a_value_type() {
     }
 }
 
+/// A comparison and a value type without a value name break both rules.
+/// `RegistryCondition::new` reports the comparison.
+#[test]
+fn registry_conditions_built_in_code_report_a_comparison_before_a_value_type() {
+    let key = Template::new(r"HKEY_LOCAL_MACHINE\SOFTWARE\Deployarr");
+    for test in [
+        Test::Equals(RegData::Integer(1)),
+        Test::Like(RegData::String("Pro*".parse().expect("text"))),
+    ] {
+        let error = RegistryCondition::new(key.clone(), None, Some(RegType::Sz), test)
+            .expect_err("a comparison and a value type without a value name");
+
+        assert_eq!(error, RegistryConditionError::Comparison);
+    }
+}
+
+/// With a comparison and a value type but no value name, the parser reports
+/// the problem that it finds first, and the comparison when it finds both at
+/// once.
+#[test]
+fn a_registry_comparison_and_value_type_without_a_value_name_fail_at_the_first_problem() {
+    let comparison = RegistryConditionError::Comparison.to_string();
+    let cases = [
+        // With `value` left out, both show at the end.
+        (
+            r#""value_type": "reg_sz", "test": {"equals": 1}"#,
+            "",
+            comparison.as_str(),
+        ),
+        // `value` comes last, after both.
+        (
+            r#""value_type": "reg_sz", "test": {"equals": 1}, "value": null"#,
+            ".value",
+            comparison.as_str(),
+        ),
+        // `value_type` comes before `test`, after `value`.
+        (
+            r#""value": null, "value_type": "reg_sz", "test": {"equals": 1}"#,
+            ".value_type",
+            TYPE_WITHOUT_NAME,
+        ),
+        // `test` comes before `value_type`, after `value`.
+        (
+            r#""value": null, "test": {"equals": 1}, "value_type": "reg_sz""#,
+            ".test.equals",
+            comparison.as_str(),
+        ),
+        // Only `value_type` comes before `value`.
+        (
+            r#""value_type": "reg_sz", "value": null, "test": {"equals": 1}"#,
+            ".value",
+            TYPE_WITHOUT_NAME,
+        ),
+    ];
+
+    for (fields, rest, message) in cases {
+        let condition = registry_text(fields);
+
+        let error = parse_with_condition(&condition).expect_err(&condition);
+
+        assert_eq!(
+            error.path(),
+            format!("{STEP}.meta.condition.registry{rest}"),
+            "{condition}: {error}"
+        );
+        assert!(error.to_string().contains(message), "{condition}: {error}");
+    }
+}
+
 #[test]
 fn a_registry_value_type_without_a_value_name_fails() {
     let cases = [
