@@ -6,7 +6,7 @@ This file is for coding agents that work in this repository. Claude Code reads i
 
 deployarr is a planned self-hosted Windows deployment server written in Rust, modeled on Microsoft Deployment Toolkit (MDT). A PC network-boots, the server finds what to install from a pre-staged record, an order in an optional SQL database, or a technician's pick from a list, and the PC installs that Windows edition, drivers, and applications. The only other input is the Windows product key from the PC's sticker, which a technician types in WinPE.
 
-The repository holds the design documents and the Cargo workspace for M0. There is no feature code yet. The current milestone is M0 in `docs/roadmap.md`.
+The repository holds the design documents and the Cargo workspace for M0. Only `deployarr-core` has feature code so far. The other `deployarr-*` crates are stubs. The current milestone is M0 in `docs/roadmap.md`.
 
 ## Where things are
 
