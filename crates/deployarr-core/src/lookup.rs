@@ -216,8 +216,8 @@ pub enum LookupInput {
     Prompt(PromptAnswers),
 }
 
-/// Why the server may erase a PC's disk: a match by one of the lookup chain's
-/// resolvers, or a technician's pick from the manual list.
+/// Why the server may erase a PC's disk: a pre-staged record's match, an
+/// add-on resolver's match, or a technician's pick from the manual list.
 ///
 /// Each path has one constructor, which checks the match or the pick against
 /// the facts, the input, or the list that the server used:
