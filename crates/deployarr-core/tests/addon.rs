@@ -561,6 +561,8 @@ fn an_add_on_may_return_six_built_in_actions() {
             false,
         ),
         (json!({ "verify_drivers": { "policy": "warn" } }), false),
+        (json!({ "enable_bitlocker": {} }), false),
+        (json!({ "suspend_bitlocker": { "restarts": 1 } }), false),
         (json!({ "check_readiness": {} }), false),
         (json!({ "activate_windows": { "online": true } }), false),
     ];

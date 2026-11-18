@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
 use deployarr_core::action::{
-    Action, AppSelection, BuiltinAction, CheckMode, DiskCheck, DiskSelector, ExitCodes,
-    MemoryCheck, ProcessorCheck, ReadinessChecks, StepLimits,
+    Action, AppSelection, BuiltinAction, CheckMode, DiskCheck, DiskSelector, EncryptionMethod,
+    ExitCodes, MemoryCheck, ProcessorCheck, ReadinessChecks, StepLimits, SuspendRestarts,
+    SuspendRestartsError, TpmFailure,
 };
 use deployarr_core::condition::{Comparison, Condition, FileVersion, RegData, Test};
 use deployarr_core::sequence::{
@@ -55,6 +56,8 @@ fn action_name(action: &Action) -> &'static str {
         BuiltinAction::ApplyUnattend { .. } => "ApplyUnattend",
         BuiltinAction::InstallApplications { .. } => "InstallApplications",
         BuiltinAction::VerifyDrivers { .. } => "VerifyDrivers",
+        BuiltinAction::EnableBitLocker { .. } => "EnableBitLocker",
+        BuiltinAction::SuspendBitLocker { .. } => "SuspendBitLocker",
         BuiltinAction::CheckReadiness { .. } => "CheckReadiness",
         BuiltinAction::ActivateWindows { .. } => "ActivateWindows",
         BuiltinAction::ServerCall { .. } => "ServerCall",
@@ -136,12 +139,14 @@ fn sample_uses_every_condition_and_every_action_outside_add_ons() {
             "ApplyOsImage",
             "ApplyUnattend",
             "CheckReadiness",
+            "EnableBitLocker",
             "InstallApplications",
             "PartitionDisk",
             "Restart",
             "RunCommand",
             "RunPowerShell",
             "SetVariable",
+            "SuspendBitLocker",
             "VerifyDrivers",
         ])
     );
@@ -458,6 +463,30 @@ fn a_bad_value_fails_and_the_error_names_its_field() {
             json!("true"),
         ),
         (
+            finish("/5/step/action/enable_bitlocker/method"),
+            json!("aes"),
+        ),
+        (
+            finish("/5/step/action/enable_bitlocker/full_disk"),
+            json!("yes"),
+        ),
+        (
+            finish("/5/step/action/enable_bitlocker/wait_secs"),
+            json!(0),
+        ),
+        (
+            finish("/5/step/action/enable_bitlocker/tpm_failure"),
+            json!("warn"),
+        ),
+        (
+            finish("/6/step/action/suspend_bitlocker/restarts"),
+            json!(0),
+        ),
+        (
+            finish("/6/step/action/suspend_bitlocker/restarts"),
+            json!(16),
+        ),
+        (
             format!("{FINISH_CONDITION}/all/0/any/0/registry/test/greater_equal"),
             json!(true),
         ),
@@ -555,6 +584,14 @@ fn an_unknown_field_fails_and_the_error_names_it() {
         (
             "/root/children/0/group/children/6/step/meta/condition/file/version",
             "than",
+        ),
+        (
+            "/root/children/1/group/children/5/step/action/enable_bitlocker",
+            "drive",
+        ),
+        (
+            "/root/children/1/group/children/6/step/action/suspend_bitlocker",
+            "count",
         ),
     ];
 
@@ -1007,4 +1044,221 @@ fn an_omitted_list_in_exit_takes_its_default() {
     };
     assert_eq!(exit.success(), [0, 1]);
     assert_eq!(exit.reboot(), [3010, 1641]);
+}
+
+// The two BitLocker actions. See the architecture's BitLocker section.
+
+/// A sequence whose root holds one full-OS step for each action. Every node
+/// writes every field, so the serializer writes the document back unchanged.
+fn sequence_with_full_os_steps(actions: Vec<Value>) -> Value {
+    let meta = |n: u32| {
+        json!({
+            "id": format!("00000000-0000-4000-8000-{n:012x}"),
+            "name": format!("Node {n}"),
+            "enabled": true,
+            "continue_on_error": false,
+            "condition": null,
+        })
+    };
+    let children: Vec<Value> = (2..)
+        .zip(actions)
+        .map(|(n, action)| json!({ "step": { "meta": meta(n), "run_in": "full_os", "action": action } }))
+        .collect();
+    json!({
+        "schema_version": 1,
+        "id": "BITLOCKER",
+        "version": 1,
+        "name": "BitLocker",
+        "default_vars": [],
+        "root": { "meta": meta(1), "children": children },
+    })
+}
+
+fn builtin_actions(sequence: &AuthoredSequence) -> Vec<BuiltinAction> {
+    sequence
+        .root
+        .children
+        .iter()
+        .map(|child| match child {
+            Node::Step(step) => match &step.action {
+                Action::Builtin(action) => action.clone(),
+                other => panic!("expected a built-in action, found {other:?}"),
+            },
+            Node::Group(_) => panic!("expected only steps"),
+        })
+        .collect()
+}
+
+#[test]
+fn bitlocker_actions_with_every_field_set_round_trip_unchanged() {
+    let methods = [
+        ("os_default", EncryptionMethod::OsDefault),
+        ("aes128", EncryptionMethod::Aes128),
+        ("aes256", EncryptionMethod::Aes256),
+        ("xts_aes128", EncryptionMethod::XtsAes128),
+        ("xts_aes256", EncryptionMethod::XtsAes256),
+    ];
+    let failures = [("fail", TpmFailure::Fail), ("skip", TpmFailure::Skip)];
+    let mut actions = Vec::new();
+    let mut expected = Vec::new();
+    for (index, (method_name, method)) in (0_u32..).zip(methods) {
+        let (failure_name, tpm_failure) = failures[(index % 2) as usize];
+        let full_disk = index % 2 == 1;
+        // None for the first step, then 600, 1200, and so on.
+        let wait_secs = NonZeroU32::new(index * 600);
+        actions.push(json!({
+            "enable_bitlocker": {
+                "method": method_name,
+                "full_disk": full_disk,
+                "wait_secs": wait_secs,
+                "tpm_failure": failure_name,
+            },
+        }));
+        expected.push(BuiltinAction::EnableBitLocker {
+            method,
+            full_disk,
+            wait_secs,
+            tpm_failure,
+        });
+    }
+    for count in [1, 7, 15] {
+        actions.push(json!({ "suspend_bitlocker": { "restarts": count } }));
+        expected.push(BuiltinAction::SuspendBitLocker {
+            restarts: SuspendRestarts::new(count).expect("a count from 1 to 15"),
+        });
+    }
+    let document = sequence_with_full_os_steps(actions);
+
+    let sequence = parse(&document).expect("the document parses");
+
+    assert_eq!(builtin_actions(&sequence), expected);
+    let written = serde_json::to_value(&sequence).expect("a task sequence serializes");
+    assert_eq!(written, document);
+    assert_eq!(parse(&written), Ok(sequence));
+}
+
+#[test]
+fn omitted_bitlocker_fields_take_their_defaults_and_are_written_back() {
+    let document = sequence_with_full_os_steps(vec![
+        json!({ "enable_bitlocker": {} }),
+        json!({ "suspend_bitlocker": {} }),
+    ]);
+
+    let sequence = parse(&document).expect("the document parses");
+
+    assert_eq!(
+        builtin_actions(&sequence),
+        [
+            BuiltinAction::EnableBitLocker {
+                method: EncryptionMethod::OsDefault,
+                full_disk: false,
+                wait_secs: None,
+                tpm_failure: TpmFailure::Fail,
+            },
+            BuiltinAction::SuspendBitLocker {
+                restarts: SuspendRestarts::new(1).expect("a count from 1 to 15"),
+            },
+        ]
+    );
+    assert_eq!(EncryptionMethod::default(), EncryptionMethod::OsDefault);
+    assert_eq!(TpmFailure::default(), TpmFailure::Fail);
+    assert_eq!(SuspendRestarts::default().get(), 1);
+
+    let written = serde_json::to_value(&sequence).expect("a task sequence serializes");
+    let children = &written["root"]["children"];
+    assert_eq!(
+        children[0]["step"]["action"],
+        json!({
+            "enable_bitlocker": {
+                "method": "os_default",
+                "full_disk": false,
+                "wait_secs": null,
+                "tpm_failure": "fail",
+            },
+        })
+    );
+    assert_eq!(
+        children[1]["step"]["action"],
+        json!({ "suspend_bitlocker": { "restarts": 1 } })
+    );
+}
+
+const RESTARTS: &str = "root.children[0].step.action.suspend_bitlocker.restarts";
+
+#[test]
+fn a_suspend_count_outside_1_to_15_fails_at_restarts() {
+    for count in [json!(0), json!(16), json!(255), json!(256), json!(-1)] {
+        let document = sequence_with_action(json!({ "suspend_bitlocker": { "restarts": count } }));
+
+        assert_fails_at(&document, RESTARTS);
+    }
+    for count in [0, 16] {
+        let document = sequence_with_action(json!({ "suspend_bitlocker": { "restarts": count } }));
+
+        let error = assert_fails_at(&document, RESTARTS);
+
+        assert!(
+            error.to_string().contains("1 to 15 restarts"),
+            "{count}: {error}"
+        );
+    }
+    for count in [1, 15] {
+        let action = only_step_action(sequence_with_action(json!({
+            "suspend_bitlocker": { "restarts": count },
+        })));
+
+        assert_eq!(
+            action,
+            BuiltinAction::SuspendBitLocker {
+                restarts: SuspendRestarts::new(count).expect("a count from 1 to 15"),
+            }
+        );
+    }
+}
+
+#[test]
+fn suspend_restarts_built_in_code_holds_1_to_15() {
+    for count in [0, 16, u8::MAX] {
+        let error = SuspendRestarts::new(count).expect_err("a count outside 1 to 15");
+
+        assert_eq!(error, SuspendRestartsError { count });
+        assert_eq!(
+            error.to_string(),
+            format!("BitLocker stays suspended for 1 to 15 restarts, not {count}")
+        );
+    }
+    for count in 1..=15 {
+        let restarts = SuspendRestarts::new(count).expect("a count from 1 to 15");
+
+        assert_eq!(restarts.get(), count);
+    }
+}
+
+#[test]
+fn a_bitlocker_wait_of_zero_seconds_fails() {
+    let document = sequence_with_action(json!({ "enable_bitlocker": { "wait_secs": 0 } }));
+
+    assert_fails_at(
+        &document,
+        "root.children[0].step.action.enable_bitlocker.wait_secs",
+    );
+}
+
+#[test]
+fn an_unknown_field_on_a_bitlocker_action_fails_and_the_error_names_it() {
+    let cases = [
+        (json!({ "enable_bitlocker": { "drive": "C:" } }), "drive"),
+        (
+            json!({ "enable_bitlocker": { "recovery_password": "x" } }),
+            "recovery_password",
+        ),
+        (json!({ "suspend_bitlocker": { "count": 2 } }), "count"),
+    ];
+
+    for (action, field) in cases {
+        let error = parse(&sequence_with_action(action.clone()))
+            .expect_err(&format!("{action} must not parse"));
+
+        assert!(error.to_string().contains(&format!("`{field}`")), "{error}");
+    }
 }

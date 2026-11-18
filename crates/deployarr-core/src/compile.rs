@@ -11,7 +11,7 @@ use alloc::collections::btree_map::Entry;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::action::BuiltinAction;
+use crate::action::{BuiltinAction, RestartTarget};
 use crate::condition::Condition;
 use crate::non_empty::NonEmpty;
 use crate::sequence::{
@@ -90,7 +90,7 @@ pub enum OnError {
 ///
 /// It fails with every rule that the sequence breaks, in document order.
 /// [`Rule`] lists the rules. A disabled node is still checked against every
-/// rule but the one about program order, because it is still part of the
+/// rule but the ones about program order, because it is still part of the
 /// sequence that is saved.
 pub fn compile(sequence: &LoweredSequence) -> Result<Program, CompileErrors> {
     let mut compiler = Compiler::default();
@@ -120,6 +120,8 @@ struct Compiler {
     path: Vec<usize>,
     /// Whether the program holds a `PartitionDisk` step so far.
     partitioned: bool,
+    /// Whether the program holds an `EnableBitLocker` step so far.
+    bitlocker_enabled: bool,
 }
 
 /// Whether the program keeps a node.
@@ -238,8 +240,14 @@ impl Compiler {
     fn check_order(&mut self, step: &Step<BuiltinAction>) {
         match step.action {
             BuiltinAction::PartitionDisk { .. } => self.partitioned = true,
-            BuiltinAction::Restart { .. } if step.run_in == RunIn::WinPe && !self.partitioned => {
-                self.fail(step.meta.id, Rule::RestartBeforePartition);
+            BuiltinAction::EnableBitLocker { .. } => self.bitlocker_enabled = true,
+            BuiltinAction::Restart { into } => {
+                if step.run_in == RunIn::WinPe && !self.partitioned {
+                    self.fail(step.meta.id, Rule::RestartBeforePartition);
+                }
+                if into == RestartTarget::WinPe && self.bitlocker_enabled {
+                    self.fail(step.meta.id, Rule::RestartIntoWinPeAfterBitLocker);
+                }
             }
             _ => {}
         }
@@ -313,6 +321,8 @@ pub(crate) fn action_name(action: &BuiltinAction) -> &'static str {
         BuiltinAction::ApplyUnattend { .. } => "apply_unattend",
         BuiltinAction::InstallApplications { .. } => "install_applications",
         BuiltinAction::VerifyDrivers { .. } => "verify_drivers",
+        BuiltinAction::EnableBitLocker { .. } => "enable_bitlocker",
+        BuiltinAction::SuspendBitLocker { .. } => "suspend_bitlocker",
         BuiltinAction::CheckReadiness { .. } => "check_readiness",
         BuiltinAction::ActivateWindows { .. } => "activate_windows",
         BuiltinAction::ServerCall { .. } => "server_call",
@@ -400,6 +410,13 @@ pub enum Rule {
     /// on `X:`, and a restart loses it. The program drops disabled nodes, so
     /// they do not count.
     RestartBeforePartition,
+    /// The step is a `Restart` with `into` `WinPe`, and an `EnableBitLocker`
+    /// step comes before it in program order. After the partition step, the
+    /// state is on the Windows volume. Once BitLocker protects that volume,
+    /// the agent in WinPE cannot read the state there. The architecture labels
+    /// that last point inferred. The program drops disabled nodes, so they do
+    /// not count.
+    RestartIntoWinPeAfterBitLocker,
     /// An earlier node in the tree, at `first`, has the same ID. Disabled
     /// nodes count.
     DuplicateNodeId { first: NodePath },
@@ -428,6 +445,9 @@ impl fmt::Display for Rule {
             ),
             Self::RestartBeforePartition => f.write_str(
                 "a `restart` with `run_in` `win_pe` must come after the first `partition_disk` step. Until then the state is on `X:`, and the restart loses it",
+            ),
+            Self::RestartIntoWinPeAfterBitLocker => f.write_str(
+                "a `restart` with `into` `win_pe` must not come after an `enable_bitlocker` step. The state is on the Windows volume, and the agent in WinPE cannot read it once BitLocker protects that volume",
             ),
             Self::DuplicateNodeId { first } => {
                 write!(f, "the node at `{first}` has the same ID")
@@ -513,7 +533,7 @@ mod tests {
             seen.insert(action_name(action));
         }
         // Every action was checked.
-        assert_eq!(seen.len(), 14);
+        assert_eq!(seen.len(), 16);
     }
 
     #[test]

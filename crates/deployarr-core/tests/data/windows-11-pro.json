@@ -405,6 +405,43 @@
 						{
 							"step": {
 								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000012",
+									"name": "Turn on BitLocker",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "full_os",
+								"action": {
+									"enable_bitlocker": {
+										"method": "xts_aes256",
+										"full_disk": false,
+										"wait_secs": null,
+										"tpm_failure": "fail"
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000013",
+									"name": "Suspend BitLocker for two restarts",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "full_os",
+								"action": {
+									"suspend_bitlocker": {
+										"restarts": 2
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
 									"id": "6f1d2c3a-0000-4000-8000-000000000010",
 									"name": "Remove the old VPN client",
 									"enabled": false,
