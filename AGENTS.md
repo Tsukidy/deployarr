@@ -83,7 +83,7 @@ Several agents can work in this repository at once. Each one delivers its work t
 - Do not use em dashes or en dashes. Do not use a colon to join two clauses. A colon before a list is fine.
 - Write real file names, commands, and symbols in code font.
 - Leave out marketing words, filler phrases, and claims you cannot back with a citation or a measurement.
-- Run `python3 tools/check_docs.py` before you push. CI runs it on every pull request and fails on a broken link or anchor, an em or en dash, or a curly quote.
+- Run `python3 tools/check_docs.py` before you push. CI runs it on every pull request and fails on a broken link or anchor, an em or en dash, a curly quote, or agent files over `AGENT_FILES_BUDGET`.
 
 ## Code rules
 
