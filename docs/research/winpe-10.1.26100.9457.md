@@ -51,8 +51,13 @@ The architecture names these functions. `Tbsi_GetDeviceInfo` cannot run, because
 | `IPHLPAPI.DLL` | `GetAdaptersAddresses` | [Agent](../architecture.md#agent) |
 | `advapi32.dll` | `RegLoadKeyW` | [Handoff from WinPE to the new OS](../architecture.md#handoff-from-winpe-to-the-new-os) |
 | `cfgmgr32.dll` | `CM_Get_DevNode_Status` | [Injection and verification](../architecture.md#injection-and-verification) |
+| `kernel32.dll` | `LoadLibraryExW` | [TPM version](../architecture.md#tpm-version) |
+| `setupapi.dll` | `SetupDiGetDeviceRegistryPropertyW` | [TPM version](../architecture.md#tpm-version) |
+| `netapi32.dll` | `DsRoleGetPrimaryDomainInformation`, `DsRoleFreeMemory` | [Directory join](../architecture.md#directory-join) |
+| `ole32.dll` | `CoCreateInstance` | [How the agent reaches BitLocker](../architecture.md#how-the-agent-reaches-bitlocker), [Windows Update](../architecture.md#windows-update) |
+| `oleaut32.dll` | `SysAllocString`, `VariantClear` | [Windows Update](../architecture.md#windows-update) |
 
-For five more mechanisms, the architecture names no function. This page checked a usual function for each. The choice is this page's, not the architecture's:
+This table lists five more mechanisms. For three of them, the architecture names no function. For the other two, [TPM version](../architecture.md#tpm-version) names one function each, `SetupDiGetDeviceRegistryPropertyW` for SetupAPI device enumeration and `LoadLibraryExW` for loading `tbs.dll`. The first table lists both. This page checked a usual function for each mechanism. Except for those two, the choice of function is this page's, not the architecture's:
 
 | Mechanism | DLL | Functions |
 | --- | --- | --- |
@@ -63,6 +68,41 @@ For five more mechanisms, the architecture names no function. This page checked 
 | Loading `tbs.dll` at run time | `kernel32.dll` | `LoadLibraryExW` |
 
 A short reader of each DLL's export table checked these names. The rerun script does not repeat it. An export shows that a function exists, not that it works in WinPE. The M3 lab tests that.
+
+### Exports with code and forwarders
+
+An entry in a DLL's export address table either holds the address of the function's code or is a forwarder. A forwarder points to a string that names another DLL and a function in it, so the function is "simultaneously imported and exported" ([PE Format](https://learn.microsoft.com/en-us/windows/win32/debug/pe-format#export-address-table)). `cargo xtask winpe-imports` reads only the module names in the agent's own import tables, so it does not check a forwarder's target module.
+
+A second read of the export tables checked seven functions from the first table in [Functions the architecture names](#functions-the-architecture-names). Code means that the entry holds an address in the DLL's `.text` section:
+
+| DLL | Function | Export |
+| --- | --- | --- |
+| `netapi32.dll` | `DsRoleGetPrimaryDomainInformation` | Forwarder to `DSROLE.DsRoleGetPrimaryDomainInformation` |
+| `netapi32.dll` | `DsRoleFreeMemory` | Forwarder to `DSROLE.DsRoleFreeMemory` |
+| `ole32.dll` | `CoCreateInstance` | Forwarder to `api-ms-win-core-com-l1-1-0.CoCreateInstance` |
+| `oleaut32.dll` | `SysAllocString` | Code |
+| `oleaut32.dll` | `VariantClear` | Code |
+| `kernel32.dll` | `LoadLibraryExW` | Code |
+| `setupapi.dll` | `SetupDiGetDeviceRegistryPropertyW` | Code |
+
+- Each forwarder string names its target module without `.dll`. With `.dll` added, both targets pass the rule in [The list file](#the-list-file). The list holds `dsrole.dll`. `api-ms-win-core-com-l1-1-0.dll` matches the list entry `api-ms-win-core-com-l1-1-3.dll` by that rule.
+- The API set schema names `combase.dll` as the default host of `api-ms-win-core-com-l1-1-3`. The entry maps no importing module to another host. The list holds `combase.dll`.
+- The target modules export these functions with code. `dsrole.dll` exports `DsRoleGetPrimaryDomainInformation` and `DsRoleFreeMemory`, and `combase.dll` exports `CoCreateInstance`.
+- Two of these exports with code are a single jump through the DLL's own import table. `kernel32.dll`'s `LoadLibraryExW` jumps to the `LoadLibraryExW` that it imports from `api-ms-win-core-libraryloader-l1-2-0.dll`. `dsrole.dll`'s `DsRoleFreeMemory` jumps to the `LocalFree` that it imports from `api-ms-win-core-heap-l2-1-0.dll`. Both API sets resolve, and the schema names `kernelbase.dll` as the default host of both. `kernelbase.dll` exports `LoadLibraryExW` with code.
+- `llvm-readobj` 18.1.3 read the export tables with `--coff-exports`. A short reader written with the Python standard library read them again and found the section of each address. Both gave the same ordinals, the same addresses for the exports with code, and the same forwarder strings. `rz-bin` 0.7.4 with `-E` gave the same ordinals, and the same addresses for the exports with code. GNU `objdump` 2.42 disassembled the two single-jump exports, and `llvm-readobj --coff-imports` gave the import behind each jump. The rerun script does not repeat these reads.
+
+The DLLs come from `Windows\System32` in the `winpe.wim` that [Sources](#sources) describes:
+
+| DLL | Bytes | SHA-256 |
+| --- | --- | --- |
+| `netapi32.dll` | 117,160 | `854ca03638be71ce504e0e5040cdcb16569dbcaf1a76a4a0e8a60536f898fa39` |
+| `dsrole.dll` | 55,072 | `336517fd56e2b4e4ee524a8d4d1121173224fe7f142af18739e23c10f3453551` |
+| `ole32.dll` | 1,674,832 | `fda2ee5887922cb9ca97a146ad708c8b56cedfcfc25c0d019ec7c625a136573d` |
+| `combase.dll` | 3,654,152 | `506a2e3ee3ac3f5b094b71ba0bb5e9db332e8d5ce071c35984725fe60516bf9c` |
+| `oleaut32.dll` | 885,624 | `d5b2274f3cbfa58a5bfcff9d2b22920a64e9df523c9054bc13404fc1149e9eb6` |
+| `kernel32.dll` | 827,784 | `e1593f34c26f7ef8e0b8e564c9d3de4bfc78379d6251fa4da150422771822cc9` |
+| `KernelBase.dll` | 3,827,720 | `833b9c0f5c79b413992d2e441fffef58a55a0d1df63197d89c52d785538dfaff` |
+| `setupapi.dll` | 4,749,136 | `4b039cfd96979696add00ca64f294285b33857d477d199d495141fef83d5f4f8` |
 
 ## API sets
 
@@ -93,3 +133,6 @@ A short reader of each DLL's export table checked these names. The rerun script 
    - Add `WinPE-WMI` and `WinPE-SecureStartup` to the boot image. Only DISM can add them, so a Linux server needs a base image serviced on Windows, as the PowerShell components do. See [Boot image](../architecture.md#boot-image).
 3. Load `tbs.dll` with `LoadLibraryExW`, not through the import table or the delay-load import table. The import check that #23 builds reads both tables, so an import of `tbs.dll` in either one fails it.
 4. Record the matching rule from [The list file](#the-list-file) in the Agent section, next to the CI check.
+5. [Directory join](../architecture.md#directory-join) says that base WinPE's list file holds `netapi32.dll`. Add that base WinPE's `netapi32.dll` forwards `DsRoleGetPrimaryDomainInformation` and `DsRoleFreeMemory` to `dsrole.dll`, and that the list file holds `dsrole.dll` too. Cite [Exports with code and forwarders](#exports-with-code-and-forwarders).
+6. [How the agent reaches BitLocker](../architecture.md#how-the-agent-reaches-bitlocker) names `CoCreateInstance` and says that the list file holds `ole32.dll`. Add that base WinPE's `ole32.dll` forwards `CoCreateInstance` to the API set `api-ms-win-core-com-l1-1-0`, whose default host is `combase.dll`, and that the API set and `combase.dll` both pass the list file's rule. Cite [Exports with code and forwarders](#exports-with-code-and-forwarders).
+7. [Windows Update](../architecture.md#windows-update) says that `ole32.dll` exports `CoCreateInstance`. In base WinPE, `ole32.dll` forwards it to `api-ms-win-core-com-l1-1-0`, whose default host is `combase.dll`. Say so, and cite [Exports with code and forwarders](#exports-with-code-and-forwarders).
