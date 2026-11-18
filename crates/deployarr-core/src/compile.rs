@@ -98,7 +98,7 @@ pub enum OnError {
 ///
 /// It fails with every rule that the sequence breaks, in document order.
 /// [`Rule`] lists the rules. A disabled node is still checked against every
-/// rule but the one about program order, because it is still part of the
+/// rule but the ones about program order, because it is still part of the
 /// sequence that is saved.
 pub fn compile(sequence: &LoweredSequence) -> Result<Program, CompileErrors> {
     let mut compiler = Compiler::default();
@@ -128,6 +128,8 @@ struct Compiler {
     path: Vec<usize>,
     /// Whether the program holds a `PartitionDisk` step so far.
     partitioned: bool,
+    /// Whether the program holds an `ApplyOsImage` step so far.
+    imaged: bool,
 }
 
 /// Whether the program keeps a node.
@@ -251,8 +253,19 @@ impl Compiler {
     fn check_order(&mut self, step: &Step<BuiltinAction>) {
         match step.action {
             BuiltinAction::PartitionDisk { .. } => self.partitioned = true,
+            BuiltinAction::ApplyOsImage { .. } => self.imaged = true,
             BuiltinAction::Restart { .. } if step.run_in == RunIn::WinPe && !self.partitioned => {
                 self.fail(step.meta.id, Rule::RestartBeforePartition);
+            }
+            BuiltinAction::ApplyDrivers { .. } | BuiltinAction::ApplyUnattend { .. }
+                if !self.imaged =>
+            {
+                self.fail(
+                    step.meta.id,
+                    Rule::BeforeOsImage {
+                        action: action_name(&step.action),
+                    },
+                );
             }
             _ => {}
         }
@@ -413,6 +426,12 @@ pub enum Rule {
     /// on `X:`, and a restart loses it. The program drops disabled nodes, so
     /// they do not count.
     RestartBeforePartition,
+    /// The step is an `ApplyDrivers` or `ApplyUnattend`, named by `action`,
+    /// and no `ApplyOsImage` step comes before it in program order. Both
+    /// actions act on the applied image. Conditions do not count, so an
+    /// `ApplyOsImage` step in a group with a condition still comes before.
+    /// The program drops disabled nodes, so they do not count.
+    BeforeOsImage { action: &'static str },
     /// An earlier node in the tree, at `first`, has the same ID. Disabled
     /// nodes count.
     DuplicateNodeId { first: NodePath },
@@ -441,6 +460,10 @@ impl fmt::Display for Rule {
             ),
             Self::RestartBeforePartition => f.write_str(
                 "a `restart` with `run_in` `win_pe` must come after the first `partition_disk` step. Until then the state is on `X:`, and the restart loses it",
+            ),
+            Self::BeforeOsImage { action } => write!(
+                f,
+                "`{action}` acts on the applied image, so it must come after the first `apply_os_image` step"
             ),
             Self::DuplicateNodeId { first } => {
                 write!(f, "the node at `{first}` has the same ID")
