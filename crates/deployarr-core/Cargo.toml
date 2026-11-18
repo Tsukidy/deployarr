@@ -25,7 +25,8 @@ serde_path_to_error = "0.1"
 # `time`'s `formatting` feature needs `std`, so `condition::Timestamp` writes its
 # own RFC 3339 text and uses `time` only to parse it.
 time = { version = "0.3", default-features = false, features = ["parsing"] }
-# `v5` derives the IDs of the nodes that `lower` adds. It needs no randomness.
+# `v5` derives the IDs of the steps of each expansion in `plan`. It needs no
+# randomness.
 uuid = { version = "1", default-features = false, features = ["serde", "v5"] }
 
 [dev-dependencies]

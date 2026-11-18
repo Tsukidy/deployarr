@@ -37,8 +37,8 @@ A deferred step as the save check sees it, before any add-on has expanded it. It
 _Avoid_: slot, placeholder, stand-in
 
 **Planning**:
-The work that prepares an authored sequence for one deployment before its first step runs. Each deferred step gets its expansion, which makes a lowered sequence that the compiler then turns into a program. See [Task sequences stay loadable](docs/architecture.md#task-sequences-stay-loadable).
+The work that prepares an authored sequence for one deployment before its first step runs. Each deferred step gets its expansion, which makes a lowered sequence. Planning checks it against the same rules as the save check, then turns it into a program. See [Task sequences stay loadable](docs/architecture.md#task-sequences-stay-loadable).
 _Avoid_: the plan, which also names what the add-on lifecycle planner makes
 
 **Program**:
-The flat list of instructions that the compiler builds from a lowered sequence. The agent runs it from start to end without the tree, and a running deployment keeps the program that planning froze for it. See [Compile the tree into a flat program](docs/architecture.md#compile-the-tree-into-a-flat-program).
+The flat list of instructions that planning builds from a lowered sequence. The agent runs it from start to end without the tree, and a running deployment keeps the program that planning froze for it. See [Compile the tree into a flat program](docs/architecture.md#compile-the-tree-into-a-flat-program).

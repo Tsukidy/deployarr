@@ -193,11 +193,11 @@ impl<'a, M: Mode<'a>> Lowerer<'a, '_, M> {
 
 /// The pass at save. Each deferred step stays unexpanded, and each add-on step
 /// is checked against its kind in the catalog.
-pub(super) struct Save<'c> {
+pub(super) struct Saving<'c> {
     pub catalog: &'c Catalog,
 }
 
-impl<'a> Mode<'a> for Save<'_> {
+impl<'a> Mode<'a> for Saving<'_> {
     type Check = SaveCheck;
 
     fn deferred(
@@ -214,7 +214,7 @@ impl<'a> Mode<'a> for Save<'_> {
     }
 }
 
-impl Save<'_> {
+impl Saving<'_> {
     /// Checks an add-on step against its kind's descriptor. Disabled steps
     /// count.
     fn add_on_step(
@@ -255,13 +255,13 @@ impl Save<'_> {
 
 /// The pass at planning. Each kept deferred step becomes its expansion, which
 /// is checked.
-pub(super) struct Plan<'a> {
+pub(super) struct Planning<'a> {
     expansions: &'a Expansions,
     /// The steps whose expansions were used.
     used: BTreeSet<NodeId>,
 }
 
-impl<'a> Plan<'a> {
+impl<'a> Planning<'a> {
     pub fn new(expansions: &'a Expansions) -> Self {
         Self {
             expansions,
@@ -280,7 +280,7 @@ impl<'a> Plan<'a> {
     }
 }
 
-impl<'a> Mode<'a> for Plan<'a> {
+impl<'a> Mode<'a> for Planning<'a> {
     type Check = PlanCheck;
 
     fn deferred(

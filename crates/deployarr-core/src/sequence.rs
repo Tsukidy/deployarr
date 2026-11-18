@@ -34,7 +34,8 @@ pub type AuthoredSequence = TaskSequence<Action>;
 
 /// A task sequence in which every step holds a built-in action, as an
 /// authored sequence is once each add-on step and join slot holds its
-/// expansion. [`crate::plan::plan`] builds the program without making one.
+/// expansion. [`crate::plan::plan`] makes such a sequence as a private tree,
+/// not as this type, and builds the program from it.
 pub type LoweredSequence = TaskSequence<BuiltinAction>;
 
 impl<A: DeserializeOwned> TaskSequence<A> {

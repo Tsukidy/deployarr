@@ -2,14 +2,19 @@
 //! steps and join slots. It reports the rules that planning checks, with each
 //! add-on step and join slot unexpanded. With a catalog, it checks each add-on
 //! step against its kind's descriptor. `validate_join_profile` checks a join
-//! profile's config the same way. `tests/plan.rs` tests the three rules about
-//! add-on steps, join slots, and the actions that only an expansion may hold.
+//! profile's config the same way. Each rule test also runs `plan` with every
+//! add-on step and join slot expanded to nothing. `tests/plan.rs` tests the
+//! three rules about add-on steps, join slots, and the actions that only an
+//! expansion may hold.
 
 use deployarr_core::addon::AddOnRef;
 use deployarr_core::catalog::Catalog;
 use deployarr_core::form::{ValueError, ValueProblem};
 use deployarr_core::join::{JoinProfile, JoinProfileIssue, JoinStage, validate_join_profile};
-use deployarr_core::plan::{NodePath, Rule, SaveCheck, SaveIssue, Severity, validate};
+use deployarr_core::plan::{
+    Expansions, NodePath, PlanCheck, PlanIssue, Rule, SaveCheck, SaveIssue, Severity, deferred,
+    plan, validate,
+};
 use deployarr_core::sequence::{AuthoredSequence, NodeId, RunIn};
 use serde_json::{Value, json};
 
@@ -169,6 +174,45 @@ fn finding(n: u32, path: Vec<usize>, check: SaveCheck) -> SaveIssue {
     }
 }
 
+/// What `plan` reports when each deferred step expands to nothing, an
+/// expansion that any add-on may return.
+fn plan_with_empty_expansions(sequence: &AuthoredSequence) -> Vec<PlanIssue> {
+    let expansions: Expansions = deferred(sequence)
+        .iter()
+        .map(|found| (found.node.id, Vec::new()))
+        .collect();
+    match plan(sequence, &expansions) {
+        Ok(_) => Vec::new(),
+        Err(errors) => {
+            assert_eq!(errors.unused_expansions(), []);
+            errors.issues().to_vec()
+        }
+    }
+}
+
+/// The rules among `findings`, as plan issues at the same nodes.
+fn as_plan_issues(findings: &[SaveIssue]) -> Vec<PlanIssue> {
+    findings
+        .iter()
+        .filter_map(|found| match &found.check {
+            SaveCheck::Rule(rule) => Some(PlanIssue {
+                node: found.node,
+                path: found.path.clone(),
+                check: PlanCheck::Rule(rule.clone()),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn plan_rule(n: u32, path: Vec<usize>, rule: Rule) -> PlanIssue {
+    PlanIssue {
+        node: id(n),
+        path: NodePath::from(path),
+        check: PlanCheck::Rule(rule),
+    }
+}
+
 #[test]
 fn a_run_in_that_the_action_does_not_allow_beside_an_add_on_step_is_an_error() {
     let sequence = sequence(vec![
@@ -197,6 +241,10 @@ fn a_run_in_that_the_action_does_not_allow_beside_an_add_on_step_is_an_error() {
             "root.children[1], node {}: error: `apply_os_image` runs only with `run_in` `win_pe`, and this step has `full_os`",
             id_text(3)
         )
+    );
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        as_plan_issues(&findings)
     );
 }
 
@@ -244,6 +292,10 @@ fn an_add_on_step_or_join_slot_that_shares_an_id_gets_the_duplicate_id_error() {
             "{}",
             findings[0]
         );
+        assert_eq!(
+            plan_with_empty_expansions(&sequence),
+            as_plan_issues(&findings)
+        );
     }
 }
 
@@ -254,8 +306,10 @@ fn a_win_pe_step_with_an_installed_msi_condition_beside_an_add_on_step_is_an_err
         when(step(3, "win_pe", command()), installed_msi()),
     ]);
 
+    let findings = validate(&sequence, &known("full_os"));
+
     assert_eq!(
-        validate(&sequence, &known("full_os")),
+        findings,
         [finding(
             3,
             vec![1],
@@ -263,6 +317,10 @@ fn a_win_pe_step_with_an_installed_msi_condition_beside_an_add_on_step_is_an_err
                 condition: "installed_msi",
             }),
         )]
+    );
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        as_plan_issues(&findings)
     );
 }
 
@@ -274,13 +332,19 @@ fn a_win_pe_restart_before_the_first_partition_beside_an_add_on_step_is_an_error
         step(4, "win_pe", partition()),
     ]);
 
+    let findings = validate(&sequence, &known("win_pe"));
+
     assert_eq!(
-        validate(&sequence, &known("win_pe")),
+        findings,
         [finding(
             3,
             vec![1],
             SaveCheck::Rule(Rule::RestartBeforePartition)
         )]
+    );
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        as_plan_issues(&findings)
     );
 }
 
@@ -309,6 +373,16 @@ fn an_add_on_steps_own_wmi_condition_before_the_first_restart_into_the_os_is_an_
             ),
         ]
     );
+    // The join slot's rule belongs to the substitution pass, so `plan` stops
+    // before the rule pass.
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        [plan_rule(
+            3,
+            vec![1],
+            Rule::FullOsCondition { condition: "wmi" }
+        )]
+    );
 }
 
 #[test]
@@ -323,6 +397,15 @@ fn a_wmi_group_before_the_first_add_on_step_is_an_error_at_save() {
         validate(&sequence, &known("either")),
         [finding(2, vec![0], SaveCheck::Rule(before_installed_os()))]
     );
+    // An empty expansion holds no restart, so `plan` reports the later group
+    // too.
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        [
+            plan_rule(2, vec![0], before_installed_os()),
+            plan_rule(5, vec![2], before_installed_os()),
+        ]
+    );
 }
 
 #[test]
@@ -335,9 +418,16 @@ fn a_disabled_add_on_step_defers_nothing() {
     for earlier in cases {
         let sequence = sequence(vec![earlier.clone(), wmi_group(3)]);
 
+        let findings = validate(&sequence, &known("either"));
+
         assert_eq!(
-            validate(&sequence, &known("either")),
+            findings,
             [finding(3, vec![1], SaveCheck::Rule(before_installed_os()))],
+            "{earlier}"
+        );
+        assert_eq!(
+            plan_with_empty_expansions(&sequence),
+            as_plan_issues(&findings),
             "{earlier}"
         );
     }

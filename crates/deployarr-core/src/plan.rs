@@ -131,7 +131,7 @@ pub type Expansions = BTreeMap<NodeId, Vec<Step<Action>>>;
 /// [`crate::catalog::Availability`] changes nothing. Disabled nodes count,
 /// because they are still part of the sequence that is saved.
 pub fn validate(sequence: &AuthoredSequence, catalog: &Catalog) -> Vec<SaveIssue> {
-    let (tree, mut found) = lower::lower(sequence, &mut lower::Save { catalog });
+    let (tree, mut found) = lower::lower(sequence, &mut lower::Saving { catalog });
     let (_, rules) = compile::compile(&tree);
     found.extend(rules.into_iter().map(Found::from_rule));
     // Both lists are in document order, and a node's path sorts in document
@@ -156,13 +156,13 @@ pub fn validate(sequence: &AuthoredSequence, catalog: &Catalog) -> Vec<SaveIssue
 /// so a failure needs no group stack at run time.
 ///
 /// It fails with every check of the substitution pass that the input breaks,
-/// then the expansions that no kept deferred step used. Only when the
-/// substitution pass finds nothing does it run the rule pass, and then it
-/// fails with every rule that the result breaks. [`PlanCheck`] lists the
+/// then the expansions that no kept deferred step used. Only when it finds
+/// neither does it run the rule pass, and then it fails with every rule that
+/// the result breaks. [`PlanCheck`] lists the
 /// checks. Both lists are in document order. An error inside an expansion
 /// names the deferred step, its path, and the child's index.
 pub fn plan(sequence: &AuthoredSequence, expansions: &Expansions) -> Result<Program, PlanErrors> {
-    let mut deferral = lower::Plan::new(expansions);
+    let mut deferral = lower::Planning::new(expansions);
     let (tree, found) = lower::lower(sequence, &mut deferral);
     let unused_expansions = deferral.unused();
     if !found.is_empty() || !unused_expansions.is_empty() {
