@@ -65,8 +65,8 @@ impl Catalog {
 /// A step kind is declared when the catalog holds its descriptor, whether or
 /// not its add-on is installed now.
 impl StepKinds for Catalog {
-    fn declares(&self, kind: &AddOnRef) -> bool {
-        self.step_kind(kind).is_some()
+    fn descriptor(&self, kind: &AddOnRef) -> Option<&StepKindInfo> {
+        self.step_kind(kind)
     }
 }
 
