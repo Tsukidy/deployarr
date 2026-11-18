@@ -683,9 +683,12 @@ fn difference_gathered_facts_compare_exactly_not_by_substring() {
 
 // Substitution.
 
-/// "Every parameter ... is `%VAR%`-expanded when the condition runs"
-/// (`TsCore!0x1801a96c0`). Each `Template` field is substituted when the
-/// condition is evaluated, so a later value changes the answer.
+/// "The File, Folder, Registry, and Variable evaluators `%VAR%`-expand every
+/// parameter when the condition runs ... The WMI evaluator expands its
+/// namespace and its query ..." (`TsCore!0x1801a2494`, `TsCore!0x1801a3970`,
+/// `TsCore!0x1801a6bec`, `TsCore!0x1801a96c0`, `TsCore!0x1801aa380`). Each
+/// `Template` field is substituted when the condition is evaluated, so a later
+/// value changes the answer.
 #[test]
 fn mdt_template_fields_are_substituted_when_the_condition_runs() {
     let machine = Machine::new()
@@ -779,10 +782,12 @@ fn difference_substituted_text_is_not_scanned_again() {
     ));
 }
 
-/// "Every parameter, including the variable name and the WMI query, is
-/// `%VAR%`-expanded" (`TsCore!0x1801a96c0`). deployarr substitutes only its
-/// `Template` fields. A variable name, a registry value name, registry data,
-/// and a WMI namespace are taken as written.
+/// "The File, Folder, Registry, and Variable evaluators `%VAR%`-expand every
+/// parameter when the condition runs ... The WMI evaluator expands its
+/// namespace and its query ..." (`TsCore!0x1801a6bec`, `TsCore!0x1801a96c0`,
+/// `TsCore!0x1801aa380`). deployarr substitutes only its `Template` fields. A
+/// variable name, a registry value name, registry data, and a WMI namespace
+/// are taken as written.
 #[test]
 fn difference_only_template_fields_are_substituted() {
     assert!("%Name%".parse::<VarName>().is_err());
