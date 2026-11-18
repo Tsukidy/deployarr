@@ -9,6 +9,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
+use crate::lookup::Resolver;
 use crate::sequence::NodeId;
 use crate::variable::VarName;
 
@@ -70,7 +71,7 @@ pub enum Sensitivity {
 
 /// Where a variable's value came from. The UI shows it as a trace for each
 /// deployment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Source {
     /// A fact the agent gathered from the machine, such as its serial number.
     Fact,
@@ -79,9 +80,10 @@ pub enum Source {
     /// A lookup chain match: a pre-staged record, or a row that a resolver
     /// returned.
     ///
-    /// The architecture's trace also names the resolver, a
-    /// [`crate::lookup::Resolver`]. `Source` does not name it yet.
-    Lookup,
+    /// It names the resolver that supplied the value. For an add-on resolver,
+    /// the [`AddOnRef`](crate::addon::AddOnRef) names the add-on and the
+    /// resolver's kind within it.
+    Lookup(Resolver),
     /// A technician's answer to a prompt.
     Prompt,
     /// A step, through `SetVariable` or `deployarr-agent var set`.
@@ -125,14 +127,14 @@ pub enum Source {
 /// vars.set("TimeZone".parse()?, "UTC", Sensitivity::Plain, Source::Agent)?;
 /// # Ok::<(), Box<dyn core::error::Error>>(())
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SetSource {
     /// See [`Source::Fact`].
     Fact,
     /// See [`Source::Rule`].
     Rule,
     /// See [`Source::Lookup`].
-    Lookup,
+    Lookup(Resolver),
     /// See [`Source::Prompt`].
     Prompt,
     /// See [`Source::Step`].
@@ -144,7 +146,7 @@ impl From<SetSource> for Source {
         match source {
             SetSource::Fact => Self::Fact,
             SetSource::Rule => Self::Rule,
-            SetSource::Lookup => Self::Lookup,
+            SetSource::Lookup(resolver) => Self::Lookup(resolver),
             SetSource::Prompt => Self::Prompt,
             SetSource::Step(node) => Self::Step(node),
         }
@@ -177,8 +179,8 @@ impl Var {
     }
 
     /// Where the latest write came from.
-    pub fn source(&self) -> Source {
-        self.source
+    pub fn source(&self) -> &Source {
+        &self.source
     }
 }
 
