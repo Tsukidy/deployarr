@@ -572,11 +572,15 @@ fn the_new_built_in_actions_have_their_json_keys() {
     assert_eq!(package.source, SecretSource::AddOnSettings);
     assert_eq!(package.field.as_str(), "enrollment_package");
     assert_eq!(limits, StepLimits::default());
+    let empty = serde_json::from_value::<BuiltinAction>(json!({
+        "add_provisioning_package": {
+            "package": { "source": "step_config", "field": "" },
+        },
+    }))
+    .expect_err("an empty field key must not parse");
     assert!(
-        serde_json::from_value::<BuiltinAction>(json!({
-            "add_provisioning_package": { "package": "" },
-        }))
-        .is_err()
+        empty.to_string().contains("a field key must not be empty"),
+        "{empty}"
     );
 }
 
@@ -685,7 +689,11 @@ fn only_server_call_and_add_provisioning_package_come_only_from_an_add_on() {
     let cases = [
         (json!({ "server_call": { "send": [] } }), true),
         (
-            json!({ "add_provisioning_package": { "package": "p" } }),
+            json!({
+                "add_provisioning_package": {
+                    "package": { "source": "step_config", "field": "p" },
+                },
+            }),
             true,
         ),
         (
