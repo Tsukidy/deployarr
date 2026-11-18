@@ -5,10 +5,12 @@
 
 use std::collections::BTreeSet;
 
+use deployarr_core::action::Action;
 use deployarr_core::addon::AddOnRef;
-use deployarr_core::compile::{NodePath, Rule};
+use deployarr_core::compile::{CompileError, NodePath, Rule, compile};
 use deployarr_core::join::JoinStage;
-use deployarr_core::sequence::{AuthoredSequence, NodeId, RunIn};
+use deployarr_core::lower::{Expansions, lower};
+use deployarr_core::sequence::{AuthoredSequence, NodeId, RunIn, Step};
 use deployarr_core::validate::{Finding, Issue, Severity, validate};
 use serde_json::{Value, json};
 
@@ -48,7 +50,12 @@ fn disabled(mut node: Value) -> Value {
 }
 
 fn when(mut node: Value, condition: Value) -> Value {
-    node["step"]["meta"]["condition"] = condition;
+    let key = if node.get("step").is_some() {
+        "step"
+    } else {
+        "group"
+    };
+    node[key]["meta"]["condition"] = condition;
     node
 }
 
@@ -132,6 +139,22 @@ fn wmi() -> Value {
 
 fn installed_msi() -> Value {
     json!({ "installed_msi": { "product_code": "23170f69-40c1-2702-2408-000001000000" } })
+}
+
+/// A step of an expansion. Its ID is `n`, which `lower` replaces.
+fn child(n: u32, run_in: &str, action: Value) -> Step<Action> {
+    let value = json!({ "meta": meta(n), "run_in": run_in, "action": action });
+    serde_json::from_value(value).expect("the step parses")
+}
+
+/// Group `n` with a `wmi` condition, which holds one step with `run_in`
+/// `either`.
+fn wmi_group(n: u32) -> Value {
+    when(group(n, vec![step(n + 1, "either", command())]), wmi())
+}
+
+fn before_installed_os() -> Rule {
+    Rule::FullOsConditionBeforeInstalledOs { condition: "wmi" }
 }
 
 fn finding(n: u32, path: Vec<usize>, issue: Issue) -> Finding {
@@ -287,30 +310,98 @@ fn a_win_pe_add_on_step_or_join_slot_with_a_wmi_condition_gets_one_error_for_it(
 }
 
 #[test]
-fn an_add_on_step_with_a_wmi_condition_before_the_first_restart_into_the_os_is_an_error() {
+fn an_add_on_steps_own_wmi_condition_before_the_first_restart_into_the_os_is_an_error() {
+    // The empty group that stands in for an add-on step comes before its own
+    // expansion, so the rule checks its condition at save.
     let sequence = sequence(vec![
-        when(step(2, "win_pe", add_on()), wmi()),
-        when(step(3, "either", add_on()), wmi()),
-        step(4, "either", restart()),
-        when(step(5, "either", add_on()), wmi()),
+        when(step(2, "either", add_on()), wmi()),
+        when(step(3, "win_pe", add_on()), wmi()),
+        wmi_group(4),
     ]);
 
     let findings = validate(&sequence, &known());
 
-    // The `win_pe` step gets one finding for its condition. The rule on
-    // conditions before the first restart into the installed OS checks the
-    // empty group that stands in for each add-on step.
+    // The `win_pe` step gets one finding for its condition. The group comes
+    // after an add-on step, so planning checks it.
     assert_eq!(
         findings,
         [
-            finding(2, vec![0], Issue::FullOsCondition { condition: "wmi" }),
-            finding(
-                3,
-                vec![1],
-                Issue::Compile(Rule::FullOsConditionBeforeInstalledOs { condition: "wmi" }),
-            ),
+            finding(2, vec![0], Issue::Compile(before_installed_os())),
+            finding(3, vec![1], Issue::FullOsCondition { condition: "wmi" }),
         ]
     );
+}
+
+#[test]
+fn a_wmi_group_after_an_add_on_step_or_join_slot_waits_for_planning() {
+    let cases = [
+        (
+            step(2, "either", add_on()),
+            vec![child(0x100, "either", restart())],
+            vec![child(0x100, "either", command())],
+        ),
+        (
+            step(2, "full_os", join_slot("full_os")),
+            vec![child(0x100, "full_os", restart())],
+            vec![child(0x100, "full_os", command())],
+        ),
+    ];
+
+    for (deferred, restarts, does_not) in cases {
+        let sequence = sequence(vec![deferred.clone(), wmi_group(3)]);
+
+        // The step's expansion might hold a restart into the installed OS.
+        assert_eq!(validate(&sequence, &known()), [], "{deferred}");
+
+        let expansions = Expansions::from([(id(2), restarts)]);
+        let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
+        compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+
+        let expansions = Expansions::from([(id(2), does_not)]);
+        let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
+        let errors = compile(&lowered).expect_err("the group comes before any restart");
+        assert_eq!(
+            errors.as_slice(),
+            [CompileError {
+                node: id(3),
+                path: NodePath::from(vec![1]),
+                rule: before_installed_os(),
+            }],
+            "{deferred}"
+        );
+    }
+}
+
+#[test]
+fn a_wmi_group_before_the_first_add_on_step_is_an_error_at_save() {
+    let sequence = sequence(vec![
+        wmi_group(2),
+        step(4, "either", add_on()),
+        wmi_group(5),
+    ]);
+
+    assert_eq!(
+        validate(&sequence, &known()),
+        [finding(2, vec![0], Issue::Compile(before_installed_os()))]
+    );
+}
+
+#[test]
+fn a_disabled_add_on_step_defers_nothing() {
+    let cases = [
+        disabled(step(2, "either", add_on())),
+        disabled(group(2, vec![step(5, "either", add_on())])),
+    ];
+
+    for earlier in cases {
+        let sequence = sequence(vec![earlier.clone(), wmi_group(3)]);
+
+        assert_eq!(
+            validate(&sequence, &known()),
+            [finding(3, vec![1], Issue::Compile(before_installed_os()))],
+            "{earlier}"
+        );
+    }
 }
 
 #[test]

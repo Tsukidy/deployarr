@@ -51,7 +51,7 @@ Check:
 
 Check of the add-on shapes:
 - A task sequence with a step from an add-on that no catalog knows round-trips through JSON byte for byte, and `validate` returns a warning, not an error. The step's config holds keys out of order and the integer `12345678901234567890123`, and both come back unchanged (item 6).
-- `validate` returns every rule that the compiler checks as an error, with an empty group in place of each add-on step and join slot. It also returns as errors a join slot whose `run_in` does not fit its stage, and a `ServerCall` or `AddProvisioningPackage` outside an expansion. For the sample sequence and the compiler's test cases, it returns the same rules at the same nodes as `compile`.
+- `validate` returns every rule that the compiler checks as an error, with an empty group in place of each add-on step and join slot. After the first add-on step or join slot that the program keeps, it leaves the rule on an `InstalledMsi` or `Wmi` condition at or before the first `Restart` into the installed OS to planning. It also returns as errors a join slot whose `run_in` does not fit its stage, and a `ServerCall` or `AddProvisioningPackage` outside an expansion. For the sample sequence and the compiler's test cases, it returns the same rules at the same nodes as `compile`.
 - A built-in `SetVariable` with an extra field, an add-on step with an extra envelope field, and an unknown action type each fail to parse (item 6).
 - A bad field inside an add-on step's envelope, and one inside a built-in action at the top level of a step, each fail with the field's full path, such as `root.children[0].step.action.add_on.config_version` (item 6).
 - A `trybuild` test shows that a call of `compile` on an authored sequence does not compile.
