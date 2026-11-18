@@ -7,8 +7,8 @@ use deployarr_core::addon::AddOnRef;
 use deployarr_core::catalog::{Availability, Catalog, requirements};
 use deployarr_core::end_state::EndState;
 use deployarr_core::lookup::ResolverInput;
+use deployarr_core::plan::{SaveCheck, validate};
 use deployarr_core::sequence::{AuthoredSequence, RunIn};
-use deployarr_core::validate::{Issue, validate};
 
 const CATALOG: &str = r#"{
   "acme.autopilot": {
@@ -148,7 +148,7 @@ fn validate_reads_the_step_kinds_of_the_catalog() {
     let findings = validate(&unknown, &catalog);
     assert!(matches!(
         findings.as_slice(),
-        [finding] if finding.issue == Issue::UnknownStepKind { kind: kind("acme.gone", "register") }
+        [finding] if finding.check == SaveCheck::UnknownStepKind { kind: kind("acme.gone", "register") }
     ));
 }
 

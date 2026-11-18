@@ -25,7 +25,8 @@ serde_path_to_error = "0.1"
 # `time`'s `formatting` feature needs `std`, so `condition::Timestamp` writes its
 # own RFC 3339 text and uses `time` only to parse it.
 time = { version = "0.3", default-features = false, features = ["parsing"] }
-# `v5` derives the IDs of the nodes that `lower` adds. It needs no randomness.
+# `v5` derives the IDs of the steps of each expansion in `plan`. It needs no
+# randomness.
 uuid = { version = "1", default-features = false, features = ["serde", "v5"] }
 
 [dev-dependencies]
@@ -34,8 +35,6 @@ uuid = { version = "1", default-features = false, features = ["serde", "v5"] }
 # for the library too. Only the `wasm32` and `x86_64-unknown-none` builds catch
 # library code that needs them.
 time = { version = "0.3", features = ["serde-well-known"] }
-# `tests/compile_types.rs` shows that `compile` rejects an authored sequence.
-trybuild = "1"
 # `tests/form.rs` and `tests/prompt.rs` parse form fields and prompts from
 # TOML, as a schema file and a manifest hold them.
 toml = "1"

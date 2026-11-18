@@ -2,8 +2,8 @@
 //! a step from an add-on.
 //!
 //! An add-on step is plain data. It loads, saves, shows, and exports whether
-//! or not its add-on is installed. See [`crate::lower`] for how the server
-//! replaces it with built-in steps before it compiles.
+//! or not its add-on is installed. See [`crate::plan`] for how the server
+//! replaces it with built-in steps when it plans a deployment.
 
 use alloc::boxed::Box;
 use core::fmt;

@@ -20,7 +20,6 @@ use crate::form::FormSchema;
 use crate::lookup::ResolverInput;
 use crate::prompt::PromptSpec;
 use crate::sequence::{AuthoredSequence, Group, Node, RunIn};
-use crate::validate::StepKinds;
 
 /// Every add-on's contributions, by add-on ID.
 ///
@@ -59,14 +58,6 @@ impl Catalog {
             .get(&importer.addon)?
             .importers
             .get(&importer.kind)
-    }
-}
-
-/// A step kind is declared when the catalog holds its descriptor, whether or
-/// not its add-on is installed now.
-impl StepKinds for Catalog {
-    fn descriptor(&self, kind: &AddOnRef) -> Option<&StepKindInfo> {
-        self.step_kind(kind)
     }
 }
 

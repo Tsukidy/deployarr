@@ -25,9 +25,9 @@ use crate::variable::{SettableVarName, VarName};
 
 /// What a stored step holds. An admin edits it and the server stores it.
 ///
-/// [`crate::lower::lower`] replaces each add-on step and join slot with
-/// built-in steps before the server compiles, so the compiler and the agent
-/// see only [`BuiltinAction`].
+/// [`crate::plan::plan`] puts the built-in steps that add-ons return in place
+/// of each add-on step and join slot, so the program and the agent see only
+/// [`BuiltinAction`].
 ///
 /// `Deserialize` is written by hand. It reads the action object's one key and
 /// passes the value on without buffering it:
@@ -378,8 +378,7 @@ impl BuiltinAction {
 
     /// Whether only an add-on's expansion may hold this action. A task
     /// sequence may not hold it as a step of its own, so
-    /// [`crate::validate::validate`] and [`crate::lower::lower`] reject it
-    /// there. Two actions are like this: `ServerCall` and
+    /// [`crate::plan::validate`] and [`crate::plan::plan`] reject it there. Two actions are like this: `ServerCall` and
     /// `AddProvisioningPackage`. Both stay allowed inside an expansion.
     ///
     /// The match is exhaustive, so a new action does not compile until someone
@@ -1467,8 +1466,8 @@ non_empty_id!(AppId);
 ///
 /// It holds no add-on ID. The server finds the add-on and its config from the
 /// deployment and the node, as it does for a `ServerCall`, so a reference
-/// cannot name another add-on's field. [`crate::lower::lower`] checks that
-/// the source fits the step that the expansion replaces.
+/// cannot name another add-on's field. [`crate::plan::plan`] checks that the
+/// source fits the step that the expansion replaces.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SecretRef {

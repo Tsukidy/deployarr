@@ -3,12 +3,19 @@
 
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec::Vec;
+use core::fmt;
 
 use serde::{Deserialize, Serialize};
 use serde_json::value::RawValue;
 
 use crate::action::{EmptyIdError, check_not_empty};
 use crate::addon::AddOnRef;
+use crate::catalog::Catalog;
+use crate::form::{
+    ConfigProblem, UNREADABLE_CONFIG, ValueError, check_config, config_error, no_config_schema,
+};
+use crate::plan::Severity;
 use crate::sequence::RunIn;
 use crate::validated_string::validated_string;
 
@@ -25,8 +32,8 @@ pub enum JoinStage {
 impl JoinStage {
     /// The `run_in` that a join slot at this stage must have. The offline
     /// image needs `WinPe`, and the installed Windows needs `FullOs`.
-    /// [`crate::validate::validate`] and [`crate::lower::lower`] reject a join
-    /// slot with any other `run_in`, `Either` included. A `Workgroup` or
+    /// [`crate::plan::validate`] and [`crate::plan::plan`] reject a join slot
+    /// with any other `run_in`, `Either` included. A `Workgroup` or
     /// `Domain` profile expands the slot to nothing, so no later check would
     /// catch it.
     pub fn run_in(self) -> RunIn {
@@ -125,6 +132,85 @@ impl PartialEq for JoinProfile {
 }
 
 impl Eq for JoinProfile {}
+
+/// Checks a join profile against the join kinds in the catalog, and returns
+/// what it finds. Pure. The server runs it when a profile is saved.
+///
+/// A `Workgroup` or `Domain` profile gets no finding. For an add-on's join
+/// kind, it checks the profile's config against the kind's schema at the
+/// profile's `config_version`, as [`crate::plan::validate`] does for an add-on
+/// step. The kind's [`crate::catalog::Availability`] changes nothing.
+pub fn validate_join_profile(profile: &JoinProfile, catalog: &Catalog) -> Vec<JoinProfileIssue> {
+    match profile {
+        JoinProfile::Workgroup { .. } | JoinProfile::Domain { .. } => Vec::new(),
+        JoinProfile::AddOn {
+            kind,
+            config_version,
+            config,
+        } => {
+            let Some(info) = catalog.join_kind(kind) else {
+                return Vec::from([JoinProfileIssue::UnknownJoinKind { kind: kind.clone() }]);
+            };
+            check_config(&info.config, *config_version, config)
+                .into_iter()
+                .map(|problem| match problem {
+                    ConfigProblem::NoSchema => JoinProfileIssue::NoConfigSchema {
+                        kind: kind.clone(),
+                        config_version: *config_version,
+                    },
+                    ConfigProblem::Unreadable => JoinProfileIssue::UnreadableConfig,
+                    ConfigProblem::Value(error) => JoinProfileIssue::Config(error),
+                })
+                .collect()
+        }
+    }
+}
+
+/// What [`validate_join_profile`] finds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JoinProfileIssue {
+    /// No installed add-on, and no descriptor that the server keeps for a
+    /// removed one, declares the profile's join kind. The profile saves.
+    UnknownJoinKind { kind: AddOnRef },
+    /// The join kind's descriptor holds no schema for the profile's
+    /// `config_version`, so its config could not be checked. The profile
+    /// saves.
+    NoConfigSchema { kind: AddOnRef, config_version: u32 },
+    /// The profile's config does not fit the schema at its `config_version`.
+    /// [`ValueError::path`] is a JSON pointer into the config.
+    Config(ValueError),
+    /// The profile's config text holds a value that a [`serde_json::Value`]
+    /// cannot hold, such as a number out of range, so the schema check cannot
+    /// read it.
+    UnreadableConfig,
+}
+
+impl JoinProfileIssue {
+    pub fn severity(&self) -> Severity {
+        match self {
+            Self::UnknownJoinKind { .. } | Self::NoConfigSchema { .. } => Severity::Warning,
+            Self::Config(_) | Self::UnreadableConfig => Severity::Error,
+        }
+    }
+}
+
+impl fmt::Display for JoinProfileIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownJoinKind { kind } => write!(
+                f,
+                "no add-on that this server knows declares the join kind `{}` of `{}`",
+                kind.kind, kind.addon
+            ),
+            Self::NoConfigSchema {
+                kind,
+                config_version,
+            } => no_config_schema(f, "join", kind, *config_version),
+            Self::Config(error) => config_error(f, error),
+            Self::UnreadableConfig => f.write_str(UNREADABLE_CONFIG),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

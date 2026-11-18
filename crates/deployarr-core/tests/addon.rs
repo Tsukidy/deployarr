@@ -1,15 +1,14 @@
 //! The stored shapes of add-on steps, join slots, and the actions that add-on
 //! steps expand to.
 
-use std::collections::BTreeSet;
-
 use deployarr_core::action::{
     Action, ActionKind, BuiltinAction, FileName, SecretSource, StepFile, StepFiles, StepLimits,
 };
 use deployarr_core::addon::{AddOnId, AddOnRef, KindId};
+use deployarr_core::catalog::Catalog;
 use deployarr_core::join::{JoinProfile, JoinStage};
+use deployarr_core::plan::{SaveCheck, Severity, validate};
 use deployarr_core::sequence::{AuthoredSequence, LoweredSequence, Node, ParseError, Step};
-use deployarr_core::validate::{Issue, Severity, validate};
 use serde_json::{Value, json};
 
 /// A config with its keys out of order, an integer that no `u64` or `f64`
@@ -109,88 +108,20 @@ fn validate_warns_about_a_step_kind_that_no_catalog_knows() {
     let sequence =
         AuthoredSequence::from_json(&document_with_unknown_add_on()).expect("the document parses");
 
-    let findings = validate(&sequence, &BTreeSet::new());
+    let findings = validate(&sequence, &Catalog::default());
 
     assert_eq!(findings.len(), 1, "{findings:?}");
     let finding = &findings[0];
     assert_eq!(finding.severity(), Severity::Warning);
     assert_eq!(finding.path.to_string(), "root.children[0]");
     assert_eq!(
-        finding.issue,
-        Issue::UnknownStepKind {
+        finding.check,
+        SaveCheck::UnknownStepKind {
             kind: AddOnRef {
                 addon: "acme.autopilot".parse().expect("a valid add-on ID"),
                 kind: "register".parse().expect("a valid kind ID"),
             },
         }
-    );
-}
-
-#[test]
-fn validate_finds_nothing_when_the_catalog_knows_the_step_kind() {
-    let sequence =
-        AuthoredSequence::from_json(&document_with_unknown_add_on()).expect("the document parses");
-    let known = BTreeSet::from([AddOnRef {
-        addon: "acme.autopilot".parse().expect("a valid add-on ID"),
-        kind: "register".parse().expect("a valid kind ID"),
-    }]);
-
-    assert_eq!(validate(&sequence, &known), []);
-}
-
-#[test]
-fn validate_rejects_a_win_pe_add_on_step_or_join_slot_with_a_full_os_condition() {
-    let wmi = json!({
-        "wmi": { "namespace": "root\\cimv2", "query": "SELECT * FROM Win32_Battery", "ignore_failure": true },
-    });
-    let installed_msi = json!({
-        "not": { "installed_msi": { "product_code": "23170f69-40c1-2702-2408-000001000000" } },
-    });
-    let mut document = document();
-    let register = &mut document["root"]["children"][0]["step"];
-    register["run_in"] = json!("win_pe");
-    register["meta"]["condition"] = wmi;
-    let join = &mut document["root"]["children"][2]["step"];
-    join["run_in"] = json!("win_pe");
-    join["action"]["apply_join_profile"]["stage"] = json!("offline_image");
-    join["meta"]["condition"] = installed_msi;
-    let sequence = parse(&document).expect("the document parses");
-
-    let findings = validate(&sequence, &BTreeSet::new());
-
-    let found: Vec<(String, Severity, Issue)> = findings
-        .iter()
-        .map(|finding| {
-            (
-                finding.path.to_string(),
-                finding.severity(),
-                finding.issue.clone(),
-            )
-        })
-        .collect();
-    let unknown = Issue::UnknownStepKind {
-        kind: AddOnRef {
-            addon: "acme.autopilot".parse().expect("a valid add-on ID"),
-            kind: "register".parse().expect("a valid kind ID"),
-        },
-    };
-    assert_eq!(
-        found,
-        [
-            (
-                "root.children[0]".to_owned(),
-                Severity::Error,
-                Issue::FullOsCondition { condition: "wmi" },
-            ),
-            ("root.children[0]".to_owned(), Severity::Warning, unknown),
-            (
-                "root.children[2]".to_owned(),
-                Severity::Error,
-                Issue::FullOsCondition {
-                    condition: "installed_msi",
-                },
-            ),
-        ]
     );
 }
 
@@ -347,7 +278,7 @@ fn a_bad_field_fails_with_its_full_path() {
 
 /// The document with an `AddProvisioningPackage` in place of the built-in
 /// step. The parser reads one outside an expansion, and `validate` and
-/// `lower` reject it.
+/// `plan` reject it.
 fn document_with_package(package: Value) -> Value {
     let mut document = document();
     *document.pointer_mut(SET).expect("the step") =

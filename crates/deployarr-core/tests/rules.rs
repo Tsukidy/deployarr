@@ -1,14 +1,18 @@
-use std::collections::BTreeSet;
+//! The rules that both `validate` and `plan` check, run through both on
+//! sequences with no add-on step and no join slot, and the program that `plan`
+//! builds.
 
 use deployarr_core::action::BuiltinAction;
-use deployarr_core::compile::OnError::{Continue, FailDeployment};
-use deployarr_core::compile::{
-    CompileError, CompileErrors, Instr, NodePath, OnError, Pc, Program, Rule, compile,
+use deployarr_core::catalog::Catalog;
+use deployarr_core::plan::{
+    Expansions, NodePath, PlanCheck, PlanErrors, PlanIssue, Rule, SaveCheck, SaveIssue, plan,
+    validate,
 };
+use deployarr_core::program::OnError::{Continue, FailDeployment};
+use deployarr_core::program::{Instr, OnError, Pc, Program};
 use deployarr_core::sequence::{
     AuthoredSequence, Group, LoweredSequence, Node, NodeId, RunIn, Step,
 };
-use deployarr_core::validate::{Finding, Issue, validate};
 use serde_json::{Value, json};
 
 use self::Shape::{Enter, Exec};
@@ -134,55 +138,63 @@ fn var_exists() -> Value {
     json!({ "var": { "name": "AssetTag", "test": "exists" } })
 }
 
-fn parse(document: &Value) -> LoweredSequence {
-    LoweredSequence::from_json(&document.to_string()).expect("the document parses")
+fn parse(document: &Value) -> AuthoredSequence {
+    AuthoredSequence::from_json(&document.to_string()).expect("the document parses")
 }
 
-/// Compiles the document, and checks that `validate` agrees with `compile`.
-fn compile_and_validate(document: &Value) -> Result<Program, CompileErrors> {
-    let result = compile(&parse(document));
-    let authored = AuthoredSequence::from_json(&document.to_string()).expect("the document parses");
+/// Plans the document, and checks that `validate` agrees with `plan`.
+fn plan_and_validate(document: &Value) -> Result<Program, PlanErrors> {
+    let sequence = parse(document);
+    let result = plan(&sequence, &Expansions::new());
     let errors = match &result {
         Ok(_) => &[][..],
-        Err(errors) => errors.as_slice(),
+        Err(errors) => {
+            assert_eq!(errors.unused_expansions(), []);
+            errors.issues()
+        }
     };
-    assert_validate_agrees(&authored, errors);
+    assert_validate_agrees(&sequence, errors);
     result
 }
 
-/// `validate` reports the same rules at the same nodes as `compile`, as
-/// errors, for a sequence with no add-on step and no join slot.
+/// `validate` reports the same rules at the same nodes as `plan`, as errors,
+/// for a sequence with no add-on step and no join slot.
 #[track_caller]
-fn assert_validate_agrees(sequence: &AuthoredSequence, errors: &[CompileError]) {
-    let expected: Vec<Finding> = errors
+fn assert_validate_agrees(sequence: &AuthoredSequence, errors: &[PlanIssue]) {
+    let expected: Vec<SaveIssue> = errors
         .iter()
-        .map(|error| Finding {
-            node: error.node,
-            path: error.path.clone(),
-            issue: Issue::Compile(error.rule.clone()),
+        .map(|error| {
+            let PlanCheck::Rule(rule) = &error.check else {
+                panic!("expected a rule, found {error}");
+            };
+            SaveIssue {
+                node: error.node,
+                path: error.path.clone(),
+                check: SaveCheck::Rule(rule.clone()),
+            }
         })
         .collect();
-    assert_eq!(validate(sequence, &BTreeSet::new()), expected);
+    assert_eq!(validate(sequence, &Catalog::default()), expected);
 }
 
-fn compile_ok(document: &Value) -> Program {
-    let program = compile_and_validate(document).unwrap_or_else(|errors| panic!("{errors}"));
+fn plan_ok(document: &Value) -> Program {
+    let program = plan_and_validate(document).unwrap_or_else(|errors| panic!("{errors}"));
     assert_jumps_forward(&program);
     program
 }
 
-fn compile_err(document: &Value) -> Vec<CompileError> {
-    match compile_and_validate(document) {
+fn plan_err(document: &Value) -> Vec<PlanIssue> {
+    match plan_and_validate(document) {
         Ok(program) => panic!("expected errors, compiled {program:?}"),
-        Err(errors) => errors.as_slice().to_vec(),
+        Err(errors) => errors.issues().to_vec(),
     }
 }
 
-fn error(n: u32, path: Vec<usize>, rule: Rule) -> CompileError {
-    CompileError {
+fn error(n: u32, path: Vec<usize>, rule: Rule) -> PlanIssue {
+    PlanIssue {
         node: id(n),
         path: NodePath::from(path),
-        rule,
+        check: PlanCheck::Rule(rule),
     }
 }
 
@@ -286,13 +298,12 @@ fn kept_steps<'a>(group: &'a Group<BuiltinAction>, out: &mut Vec<&'a Step<Builti
 
 #[test]
 fn the_sample_compiles_to_a_flat_program() {
-    let sequence = LoweredSequence::from_json(SAMPLE).expect("the sample parses");
+    let sequence = AuthoredSequence::from_json(SAMPLE).expect("the sample parses");
 
-    let program = compile(&sequence).unwrap_or_else(|errors| panic!("{errors}"));
+    let program = plan(&sequence, &Expansions::new()).unwrap_or_else(|errors| panic!("{errors}"));
 
     assert_jumps_forward(&program);
-    let authored = AuthoredSequence::from_json(SAMPLE).expect("the sample parses");
-    assert_validate_agrees(&authored, &[]);
+    assert_validate_agrees(&sequence, &[]);
     assert_eq!(program.source().0.as_str(), "W11-PRO-STD");
     assert_eq!(program.source().1, 7);
     // The root, then "Install Windows" with its 8 steps, then "Finish in
@@ -334,8 +345,11 @@ fn the_sample_compiles_to_a_flat_program() {
     assert_eq!(condition, &finish.meta.condition);
     assert!(condition.is_some());
 
+    // The sample holds no add-on step or join slot, so it parses as a
+    // sequence of built-in steps too.
+    let built_in = LoweredSequence::from_json(SAMPLE).expect("the sample parses");
     let mut steps = Vec::new();
-    kept_steps(&sequence.root, &mut steps);
+    kept_steps(&built_in.root, &mut steps);
     let execs: Vec<_> = program
         .instrs()
         .iter()
@@ -392,7 +406,7 @@ fn on_error_jumps_to_the_end_of_the_nearest_group_with_continue_on_error() {
         group(0x40, vec![step(0x41, "either", command())]),
     ]);
 
-    let program = compile_ok(&document);
+    let program = plan_ok(&document);
 
     assert_eq!(
         shapes(&program),
@@ -426,7 +440,7 @@ fn a_root_with_continue_on_error_catches_failures_at_the_end_of_the_program() {
         group(0x03, vec![step(0x04, "either", command())]),
     ]));
 
-    let program = compile_ok(&document);
+    let program = plan_ok(&document);
 
     assert_eq!(
         shapes(&program),
@@ -462,7 +476,7 @@ fn a_group_whose_condition_fails_to_evaluate_fails_like_a_step_directly_inside_i
         step(0x02, "either", command()),
     ]);
 
-    let program = compile_ok(&document);
+    let program = plan_ok(&document);
 
     assert_eq!(
         shapes(&program),
@@ -524,8 +538,8 @@ fn a_root_whose_condition_fails_to_evaluate_ends_the_program_or_the_deployment()
         ]
     };
 
-    let caught = compile_ok(&continue_on_error(root(children())));
-    let failed = compile_ok(&root(children()));
+    let caught = plan_ok(&continue_on_error(root(children())));
+    let failed = plan_ok(&root(children()));
 
     // With continue_on_error, the root jumps to the end of the program.
     assert_eq!(caught.end(), Pc(4));
@@ -558,7 +572,7 @@ fn disabled_nodes_are_dropped_with_everything_inside_them() {
         step(0x09, "either", command()),
     ]);
 
-    let program = compile_ok(&document);
+    let program = plan_ok(&document);
 
     assert_eq!(
         shapes(&program),
@@ -583,7 +597,7 @@ fn a_disabled_step_is_still_checked_by_itself() {
     ]);
 
     assert_eq!(
-        compile_err(&document),
+        plan_err(&document),
         [
             error(
                 0x02,
@@ -603,7 +617,7 @@ fn a_disabled_step_is_still_checked_by_itself() {
 fn a_disabled_root_compiles_to_an_empty_program() {
     let document = disabled(root(vec![step(0x02, "either", command())]));
 
-    let program = compile_ok(&document);
+    let program = plan_ok(&document);
 
     assert_eq!(program.instrs(), []);
     assert_eq!(program.end(), Pc(0));
@@ -676,24 +690,24 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
                 step(0x03, written, action.clone()),
             ]);
 
-            let result = compile_and_validate(&document);
+            let result = plan_and_validate(&document);
 
             if allowed.contains(&run_in(written)) {
                 assert!(result.is_ok(), "{name} with {written}: {result:?}");
             } else {
                 let errors = result.expect_err(&format!("{name} with {written} must fail"));
                 let [
-                    CompileError {
+                    PlanIssue {
                         node,
                         path,
-                        rule:
-                            Rule::RunIn {
+                        check:
+                            PlanCheck::Rule(Rule::RunIn {
                                 action,
                                 run_in: found,
                                 allowed: listed,
-                            },
+                            }),
                     },
-                ] = errors.as_slice()
+                ] = errors.issues()
                 else {
                     panic!("{name} with {written}: {errors}");
                 };
@@ -717,7 +731,7 @@ fn an_install_updates_step_in_win_pe_fails_and_the_error_names_the_node() {
         ],
     )]);
 
-    let errors = compile_err(&document);
+    let errors = plan_err(&document);
 
     assert_eq!(
         errors,
@@ -759,7 +773,7 @@ fn a_win_pe_step_with_an_installed_msi_or_wmi_condition_fails() {
         )]);
 
         assert_eq!(
-            compile_err(&document),
+            plan_err(&document),
             [error(
                 0x02,
                 vec![0],
@@ -775,7 +789,7 @@ fn a_win_pe_step_with_an_installed_msi_or_wmi_condition_fails() {
                 step(0x03, "either", restart()),
                 when(step(0x02, other, command()), condition.clone()),
             ]);
-            compile_ok(&document);
+            plan_ok(&document);
         }
     }
 }
@@ -791,7 +805,7 @@ fn a_win_pe_step_with_a_condition_that_win_pe_can_answer_compiles() {
     ];
 
     for condition in conditions {
-        compile_ok(&root(vec![when(
+        plan_ok(&root(vec![when(
             step(0x02, "win_pe", command()),
             condition,
         )]));
@@ -828,7 +842,7 @@ fn a_root_with_a_wmi_condition_fails() {
     for children in cases {
         let document = when(root(children), wmi());
 
-        let errors = compile_err(&document);
+        let errors = plan_err(&document);
 
         assert_eq!(
             errors,
@@ -858,7 +872,7 @@ fn a_group_with_a_nested_installed_msi_condition_before_the_first_restart_into_t
         ),
     ]);
 
-    let errors = compile_err(&document);
+    let errors = plan_err(&document);
 
     assert_eq!(
         errors,
@@ -901,7 +915,7 @@ fn a_group_with_a_nested_installed_msi_condition_after_the_first_restart_into_th
     ];
 
     for document in cases {
-        compile_ok(&document);
+        plan_ok(&document);
     }
 }
 
@@ -924,7 +938,7 @@ fn only_an_enabled_restart_into_the_os_lets_a_later_group_have_a_wmi_condition()
         ]);
 
         assert_eq!(
-            compile_err(&document),
+            plan_err(&document),
             [error(0x04, vec![2], before_installed_os("wmi"))],
             "{document}"
         );
@@ -943,7 +957,7 @@ fn a_disabled_group_with_a_wmi_condition_before_the_first_restart_into_the_os_co
     ];
 
     for document in cases {
-        compile_ok(&document);
+        plan_ok(&document);
     }
 }
 
@@ -954,7 +968,7 @@ fn an_either_step_with_a_wmi_condition_fails_only_before_the_first_restart_into_
         step(0x03, "either", restart()),
     ]);
     assert_eq!(
-        compile_err(&before),
+        plan_err(&before),
         [error(0x02, vec![0], before_installed_os("wmi"))]
     );
 
@@ -962,10 +976,10 @@ fn an_either_step_with_a_wmi_condition_fails_only_before_the_first_restart_into_
         step(0x03, "either", restart()),
         when(step(0x02, "either", command()), wmi()),
     ]);
-    compile_ok(&after);
+    plan_ok(&after);
 
     // The rule checks neither a `full_os` step nor a disabled `either` step.
-    compile_ok(&root(vec![
+    plan_ok(&root(vec![
         when(step(0x02, "full_os", command()), wmi()),
         disabled(when(step(0x04, "either", command()), wmi())),
         step(0x03, "either", restart()),
@@ -987,11 +1001,11 @@ fn the_first_either_restart_into_the_os_with_a_wmi_condition_fails() {
         ),
     ]);
     assert_eq!(
-        compile_err(&document),
+        plan_err(&document),
         [error(0x04, vec![1, 0], before_installed_os("wmi"))]
     );
 
-    compile_ok(&root(vec![
+    plan_ok(&root(vec![
         step(0x02, "win_pe", partition()),
         step(0x03, "win_pe", restart()),
         when(step(0x04, "either", restart()), wmi()),
@@ -1022,7 +1036,7 @@ fn full_os_conditions_before_the_first_restart_into_the_os_are_reported_in_docum
     );
 
     assert_eq!(
-        compile_err(&document),
+        plan_err(&document),
         [
             error(0x01, vec![], before_installed_os("wmi")),
             error(0x02, vec![0], before_installed_os("wmi")),
@@ -1070,7 +1084,7 @@ fn a_win_pe_restart_before_the_first_partition_disk_fails() {
 
     for (document, node, path) in cases {
         assert_eq!(
-            compile_err(&document),
+            plan_err(&document),
             [error(node, path, Rule::RestartBeforePartition)],
             "{document}"
         );
@@ -1096,7 +1110,7 @@ fn a_win_pe_restart_after_the_first_partition_disk_compiles() {
         ),
     ]);
 
-    let program = compile_ok(&document);
+    let program = plan_ok(&document);
 
     assert_eq!(
         shapes(&program),
@@ -1115,13 +1129,13 @@ fn a_win_pe_restart_after_the_first_partition_disk_compiles() {
 #[test]
 fn a_restart_that_is_not_a_win_pe_step_passes_before_the_partition_step() {
     for written in ["either", "full_os"] {
-        compile_ok(&root(vec![
+        plan_ok(&root(vec![
             step(0x02, written, restart()),
             step(0x03, "win_pe", partition()),
         ]));
     }
     // A disabled restart is dropped, so it is not checked.
-    compile_ok(&root(vec![
+    plan_ok(&root(vec![
         disabled(step(0x02, "win_pe", restart())),
         step(0x03, "win_pe", partition()),
     ]));
@@ -1178,7 +1192,7 @@ fn an_apply_drivers_or_apply_unattend_step_before_the_first_apply_os_image_fails
         ];
 
         for (document, node, path) in cases {
-            let errors = compile_err(&document);
+            let errors = plan_err(&document);
 
             assert_eq!(
                 errors,
@@ -1223,7 +1237,7 @@ fn apply_drivers_and_apply_unattend_steps_after_the_first_apply_os_image_compile
         step(0x09, "win_pe", drivers()),
     ]);
 
-    let program = compile_ok(&document);
+    let program = plan_ok(&document);
 
     assert_eq!(
         shapes(&program),
@@ -1265,7 +1279,7 @@ fn an_apply_os_image_step_with_a_condition_still_comes_before() {
     ];
 
     for document in cases {
-        compile_ok(&document);
+        plan_ok(&document);
     }
 }
 
@@ -1273,7 +1287,7 @@ fn an_apply_os_image_step_with_a_condition_still_comes_before() {
 fn a_disabled_apply_drivers_or_apply_unattend_step_before_the_image_is_not_checked() {
     // The program drops disabled steps and everything inside a disabled
     // group, so the order rule does not see them.
-    compile_ok(&root(vec![
+    plan_ok(&root(vec![
         disabled(step(0x02, "win_pe", drivers())),
         disabled(step(0x03, "win_pe", unattend())),
         disabled(group(
@@ -1304,7 +1318,7 @@ fn a_sequence_with_no_apply_os_image_fails_for_each_apply_drivers_and_apply_unat
     ]);
 
     assert_eq!(
-        compile_err(&document),
+        plan_err(&document),
         [
             error(
                 0x03,
@@ -1398,7 +1412,7 @@ fn a_restart_into_win_pe_after_enable_bitlocker_fails() {
 
     for (document, node, path) in cases {
         assert_eq!(
-            compile_err(&document),
+            plan_err(&document),
             [error(node, path, Rule::RestartIntoWinPeAfterBitLocker)],
             "{document}"
         );
@@ -1414,7 +1428,7 @@ fn every_restart_into_win_pe_after_enable_bitlocker_fails() {
         step(0x05, "full_os", restart_into_win_pe()),
     ]);
 
-    let errors = compile_err(&document);
+    let errors = plan_err(&document);
 
     assert_eq!(
         errors,
@@ -1446,7 +1460,7 @@ fn a_restart_into_win_pe_after_a_disabled_enable_bitlocker_compiles() {
     ];
 
     for document in documents {
-        compile_ok(&document);
+        plan_ok(&document);
     }
 }
 
@@ -1476,7 +1490,7 @@ fn other_restarts_around_enable_bitlocker_compile() {
     ];
 
     for document in documents {
-        compile_ok(&document);
+        plan_ok(&document);
     }
 }
 
@@ -1487,7 +1501,7 @@ fn a_node_id_shared_by_two_sibling_steps_fails_and_the_error_names_the_id() {
         step(0x02, "either", command()),
     ]);
 
-    let errors = compile_err(&document);
+    let errors = plan_err(&document);
 
     assert_eq!(
         errors,
@@ -1512,7 +1526,7 @@ fn a_node_id_shared_by_two_sibling_steps_fails_and_the_error_names_the_id() {
 fn a_node_id_shared_by_a_group_and_its_child_step_fails_and_the_error_names_the_id() {
     let document = root(vec![group(0x02, vec![step(0x02, "either", command())])]);
 
-    let errors = compile_err(&document);
+    let errors = plan_err(&document);
 
     assert_eq!(
         errors,
@@ -1595,7 +1609,7 @@ fn every_node_counts_for_a_duplicate_id() {
     ];
 
     for (document, expected) in cases {
-        assert_eq!(compile_err(&document), expected, "{document}");
+        assert_eq!(plan_err(&document), expected, "{document}");
     }
 }
 
@@ -1617,10 +1631,10 @@ fn every_error_is_reported_in_document_order() {
         ),
     ]);
 
-    let errors = compile_and_validate(&document).expect_err("the sequence breaks five rules");
+    let errors = plan_and_validate(&document).expect_err("the sequence breaks five rules");
 
     assert_eq!(
-        errors.as_slice(),
+        errors.issues(),
         [
             error(
                 0x02,
@@ -1677,17 +1691,17 @@ fn every_error_is_reported_in_document_order() {
 }
 
 #[test]
-fn compile_errors_iterate_in_order() {
+fn plan_errors_list_their_issues_in_order() {
     let document = root(vec![
         step(0x02, "full_os", apply_image()),
         step(0x02, "full_os", apply_image()),
     ]);
 
-    let errors: CompileErrors =
-        compile_and_validate(&document).expect_err("the sequence breaks rules");
+    let errors: PlanErrors = plan_and_validate(&document).expect_err("the sequence breaks rules");
 
-    let nodes: Vec<_> = (&errors)
-        .into_iter()
+    let nodes: Vec<_> = errors
+        .issues()
+        .iter()
         .map(|error| error.path.to_string())
         .collect();
     assert_eq!(

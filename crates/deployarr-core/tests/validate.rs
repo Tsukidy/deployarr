@@ -1,23 +1,21 @@
-//! `validate`, the save-time check of an authored sequence. It reports the
-//! compiler's rules with an empty group in place of each add-on step and join
-//! slot, and the rules about add-on steps, join slots, and the actions that
-//! only an add-on's expansion may hold. With a catalog, it checks each add-on
+//! `validate`, the save-time check of an authored sequence, beside add-on
+//! steps and join slots. It reports the rules that planning checks, with each
+//! add-on step and join slot unexpanded. With a catalog, it checks each add-on
 //! step against its kind's descriptor. `validate_join_profile` checks a join
-//! profile's config the same way.
+//! profile's config the same way. Each rule test also runs `plan` with every
+//! add-on step and join slot expanded to nothing. `tests/plan.rs` tests the
+//! three rules about add-on steps, join slots, and the actions that only an
+//! expansion may hold.
 
-use std::collections::BTreeSet;
-
-use deployarr_core::action::Action;
 use deployarr_core::addon::AddOnRef;
 use deployarr_core::catalog::Catalog;
-use deployarr_core::compile::{CompileError, NodePath, Rule, compile};
 use deployarr_core::form::{ValueError, ValueProblem};
-use deployarr_core::join::{JoinProfile, JoinStage};
-use deployarr_core::lower::{Expansions, lower};
-use deployarr_core::sequence::{AuthoredSequence, NodeId, RunIn, Step};
-use deployarr_core::validate::{
-    Finding, Issue, JoinProfileIssue, Severity, validate, validate_join_profile,
+use deployarr_core::join::{JoinProfile, JoinProfileIssue, JoinStage, validate_join_profile};
+use deployarr_core::plan::{
+    Expansions, NodePath, PlanCheck, PlanIssue, Rule, SaveCheck, SaveIssue, Severity, deferred,
+    plan, validate,
 };
+use deployarr_core::sequence::{AuthoredSequence, NodeId, RunIn};
 use serde_json::{Value, json};
 
 fn id_text(n: u32) -> String {
@@ -95,10 +93,29 @@ fn register() -> AddOnRef {
     }
 }
 
-/// The step kinds that the add-on steps in these tests use, so that a test
-/// sees no warning about an unknown kind.
-fn known() -> BTreeSet<AddOnRef> {
-    BTreeSet::from([register()])
+/// A catalog whose `register` step kind runs with `run_in`, so that the
+/// add-on steps in a test with that `run_in` see no finding about their kind.
+fn known(run_in: &str) -> Catalog {
+    serde_json::from_value(json!({
+        "acme.autopilot": {
+            "step_kinds": {
+                "register": {
+                    "label": "Register with Autopilot",
+                    "run_in": run_in,
+                    "availability": "enabled",
+                    "config": {
+                        "current": 1,
+                        "versions": {
+                            "1": {"field": [
+                                {"key": "group_tag", "label": "Group tag", "kind": "template", "required": true},
+                            ]},
+                        },
+                    },
+                },
+            },
+        },
+    }))
+    .expect("the catalog parses")
 }
 
 fn join_slot(stage: &str) -> Value {
@@ -125,14 +142,6 @@ fn server_call() -> Value {
     json!({ "server_call": { "send": ["HardwareHash"] } })
 }
 
-fn provisioning_package() -> Value {
-    json!({
-        "add_provisioning_package": {
-            "package": { "source": "step_config", "field": "enrollment_package" },
-        },
-    })
-}
-
 fn wmi() -> Value {
     json!({
         "wmi": {
@@ -147,12 +156,6 @@ fn installed_msi() -> Value {
     json!({ "installed_msi": { "product_code": "23170f69-40c1-2702-2408-000001000000" } })
 }
 
-/// A step of an expansion. Its ID is `n`, which `lower` replaces.
-fn child(n: u32, run_in: &str, action: Value) -> Step<Action> {
-    let value = json!({ "meta": meta(n), "run_in": run_in, "action": action });
-    serde_json::from_value(value).expect("the step parses")
-}
-
 /// Group `n` with a `wmi` condition, which holds one step with `run_in`
 /// `either`.
 fn wmi_group(n: u32) -> Value {
@@ -163,20 +166,51 @@ fn before_installed_os() -> Rule {
     Rule::FullOsConditionBeforeInstalledOs { condition: "wmi" }
 }
 
-fn finding(n: u32, path: Vec<usize>, issue: Issue) -> Finding {
-    Finding {
+fn finding(n: u32, path: Vec<usize>, check: SaveCheck) -> SaveIssue {
+    SaveIssue {
         node: id(n),
         path: NodePath::from(path),
-        issue,
+        check,
     }
 }
 
-fn stage(name: &str) -> JoinStage {
-    serde_json::from_value(json!(name)).expect("a valid stage")
+/// What `plan` reports when each deferred step expands to nothing, an
+/// expansion that any add-on may return.
+fn plan_with_empty_expansions(sequence: &AuthoredSequence) -> Vec<PlanIssue> {
+    let expansions: Expansions = deferred(sequence)
+        .iter()
+        .map(|found| (found.node.id, Vec::new()))
+        .collect();
+    match plan(sequence, &expansions) {
+        Ok(_) => Vec::new(),
+        Err(errors) => {
+            assert_eq!(errors.unused_expansions(), []);
+            errors.issues().to_vec()
+        }
+    }
 }
 
-fn run_in(name: &str) -> RunIn {
-    serde_json::from_value(json!(name)).expect("a valid run_in")
+/// The rules among `findings`, as plan issues at the same nodes.
+fn as_plan_issues(findings: &[SaveIssue]) -> Vec<PlanIssue> {
+    findings
+        .iter()
+        .filter_map(|found| match &found.check {
+            SaveCheck::Rule(rule) => Some(PlanIssue {
+                node: found.node,
+                path: found.path.clone(),
+                check: PlanCheck::Rule(rule.clone()),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn plan_rule(n: u32, path: Vec<usize>, rule: Rule) -> PlanIssue {
+    PlanIssue {
+        node: id(n),
+        path: NodePath::from(path),
+        check: PlanCheck::Rule(rule),
+    }
 }
 
 #[test]
@@ -186,14 +220,14 @@ fn a_run_in_that_the_action_does_not_allow_beside_an_add_on_step_is_an_error() {
         step(3, "full_os", apply_image()),
     ]);
 
-    let findings = validate(&sequence, &known());
+    let findings = validate(&sequence, &known("full_os"));
 
     assert_eq!(
         findings,
         [finding(
             3,
             vec![1],
-            Issue::Compile(Rule::RunIn {
+            SaveCheck::Rule(Rule::RunIn {
                 action: "apply_os_image",
                 run_in: RunIn::FullOs,
                 allowed: &[RunIn::WinPe],
@@ -207,6 +241,10 @@ fn a_run_in_that_the_action_does_not_allow_beside_an_add_on_step_is_an_error() {
             "root.children[1], node {}: error: `apply_os_image` runs only with `run_in` `win_pe`, and this step has `full_os`",
             id_text(3)
         )
+    );
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        as_plan_issues(&findings)
     );
 }
 
@@ -222,7 +260,7 @@ fn an_add_on_step_or_join_slot_that_shares_an_id_gets_the_duplicate_id_error() {
             finding(
                 2,
                 vec![1],
-                Issue::Compile(Rule::DuplicateNodeId {
+                SaveCheck::Rule(Rule::DuplicateNodeId {
                     first: NodePath::from(vec![0]),
                 }),
             ),
@@ -236,7 +274,7 @@ fn an_add_on_step_or_join_slot_that_shares_an_id_gets_the_duplicate_id_error() {
             finding(
                 2,
                 vec![1, 0],
-                Issue::Compile(Rule::DuplicateNodeId {
+                SaveCheck::Rule(Rule::DuplicateNodeId {
                     first: NodePath::from(vec![0]),
                 }),
             ),
@@ -244,7 +282,7 @@ fn an_add_on_step_or_join_slot_that_shares_an_id_gets_the_duplicate_id_error() {
     ];
 
     for (sequence, expected) in cases {
-        let findings = validate(&sequence, &known());
+        let findings = validate(&sequence, &known("full_os"));
 
         assert_eq!(findings, [expected]);
         assert!(
@@ -253,6 +291,10 @@ fn an_add_on_step_or_join_slot_that_shares_an_id_gets_the_duplicate_id_error() {
                 .contains("the node at `root.children[0]` has the same ID"),
             "{}",
             findings[0]
+        );
+        assert_eq!(
+            plan_with_empty_expansions(&sequence),
+            as_plan_issues(&findings)
         );
     }
 }
@@ -264,15 +306,21 @@ fn a_win_pe_step_with_an_installed_msi_condition_beside_an_add_on_step_is_an_err
         when(step(3, "win_pe", command()), installed_msi()),
     ]);
 
+    let findings = validate(&sequence, &known("full_os"));
+
     assert_eq!(
-        validate(&sequence, &known()),
+        findings,
         [finding(
             3,
             vec![1],
-            Issue::Compile(Rule::FullOsCondition {
+            SaveCheck::Rule(Rule::FullOsCondition {
                 condition: "installed_msi",
             }),
         )]
+    );
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        as_plan_issues(&findings)
     );
 }
 
@@ -284,98 +332,57 @@ fn a_win_pe_restart_before_the_first_partition_beside_an_add_on_step_is_an_error
         step(4, "win_pe", partition()),
     ]);
 
+    let findings = validate(&sequence, &known("win_pe"));
+
     assert_eq!(
-        validate(&sequence, &known()),
+        findings,
         [finding(
             3,
             vec![1],
-            Issue::Compile(Rule::RestartBeforePartition)
+            SaveCheck::Rule(Rule::RestartBeforePartition)
         )]
     );
-}
-
-#[test]
-fn a_win_pe_add_on_step_or_join_slot_with_a_wmi_condition_gets_one_error_for_it() {
-    let sequence = sequence(vec![
-        when(step(2, "win_pe", add_on()), wmi()),
-        disabled(when(step(3, "win_pe", join_slot("offline_image")), wmi())),
-    ]);
-
-    let findings = validate(&sequence, &known());
-
-    let wmi = Issue::FullOsCondition { condition: "wmi" };
     assert_eq!(
-        findings,
-        [finding(2, vec![0], wmi.clone()), finding(3, vec![1], wmi)]
-    );
-    assert!(
-        findings
-            .iter()
-            .all(|finding| finding.severity() == Severity::Error)
+        plan_with_empty_expansions(&sequence),
+        as_plan_issues(&findings)
     );
 }
 
 #[test]
 fn an_add_on_steps_own_wmi_condition_before_the_first_restart_into_the_os_is_an_error() {
-    // The empty group that stands in for an add-on step comes before its own
-    // expansion, so the rule checks its condition at save.
+    // An add-on step's own condition comes before its expansion, so the rule
+    // checks it at save.
     let sequence = sequence(vec![
         when(step(2, "either", add_on()), wmi()),
-        when(step(3, "win_pe", add_on()), wmi()),
+        when(step(3, "win_pe", join_slot("offline_image")), wmi()),
         wmi_group(4),
     ]);
 
-    let findings = validate(&sequence, &known());
+    let findings = validate(&sequence, &known("either"));
 
-    // The `win_pe` step gets one finding for its condition. The group comes
-    // after an add-on step, so planning checks it.
+    // The `win_pe` join slot gets one finding for its condition. The group
+    // comes after an add-on step, so planning checks it.
     assert_eq!(
         findings,
         [
-            finding(2, vec![0], Issue::Compile(before_installed_os())),
-            finding(3, vec![1], Issue::FullOsCondition { condition: "wmi" }),
+            finding(2, vec![0], SaveCheck::Rule(before_installed_os())),
+            finding(
+                3,
+                vec![1],
+                SaveCheck::Rule(Rule::FullOsCondition { condition: "wmi" })
+            ),
         ]
     );
-}
-
-#[test]
-fn a_wmi_group_after_an_add_on_step_or_join_slot_waits_for_planning() {
-    let cases = [
-        (
-            step(2, "either", add_on()),
-            vec![child(0x100, "either", restart())],
-            vec![child(0x100, "either", command())],
-        ),
-        (
-            step(2, "full_os", join_slot("full_os")),
-            vec![child(0x100, "full_os", restart())],
-            vec![child(0x100, "full_os", command())],
-        ),
-    ];
-
-    for (deferred, restarts, does_not) in cases {
-        let sequence = sequence(vec![deferred.clone(), wmi_group(3)]);
-
-        // The step's expansion might hold a restart into the installed OS.
-        assert_eq!(validate(&sequence, &known()), [], "{deferred}");
-
-        let expansions = Expansions::from([(id(2), restarts)]);
-        let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
-        compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
-
-        let expansions = Expansions::from([(id(2), does_not)]);
-        let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
-        let errors = compile(&lowered).expect_err("the group comes before any restart");
-        assert_eq!(
-            errors.as_slice(),
-            [CompileError {
-                node: id(3),
-                path: NodePath::from(vec![1]),
-                rule: before_installed_os(),
-            }],
-            "{deferred}"
-        );
-    }
+    // The join slot's rule belongs to the substitution pass, so `plan` stops
+    // before the rule pass.
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        [plan_rule(
+            3,
+            vec![1],
+            Rule::FullOsCondition { condition: "wmi" }
+        )]
+    );
 }
 
 #[test]
@@ -387,8 +394,17 @@ fn a_wmi_group_before_the_first_add_on_step_is_an_error_at_save() {
     ]);
 
     assert_eq!(
-        validate(&sequence, &known()),
-        [finding(2, vec![0], Issue::Compile(before_installed_os()))]
+        validate(&sequence, &known("either")),
+        [finding(2, vec![0], SaveCheck::Rule(before_installed_os()))]
+    );
+    // An empty expansion holds no restart, so `plan` reports the later group
+    // too.
+    assert_eq!(
+        plan_with_empty_expansions(&sequence),
+        [
+            plan_rule(2, vec![0], before_installed_os()),
+            plan_rule(5, vec![2], before_installed_os()),
+        ]
     );
 }
 
@@ -402,95 +418,19 @@ fn a_disabled_add_on_step_defers_nothing() {
     for earlier in cases {
         let sequence = sequence(vec![earlier.clone(), wmi_group(3)]);
 
+        let findings = validate(&sequence, &known("either"));
+
         assert_eq!(
-            validate(&sequence, &known()),
-            [finding(3, vec![1], Issue::Compile(before_installed_os()))],
+            findings,
+            [finding(3, vec![1], SaveCheck::Rule(before_installed_os()))],
+            "{earlier}"
+        );
+        assert_eq!(
+            plan_with_empty_expansions(&sequence),
+            as_plan_issues(&findings),
             "{earlier}"
         );
     }
-}
-
-#[test]
-fn a_join_slot_whose_run_in_does_not_fit_its_stage_is_an_error() {
-    let cases = [
-        ("offline_image", "full_os", false),
-        ("offline_image", "either", false),
-        ("full_os", "win_pe", false),
-        ("full_os", "either", false),
-        ("offline_image", "win_pe", true),
-        ("full_os", "full_os", true),
-    ];
-
-    for (written_stage, written_run_in, fits) in cases {
-        for node in [
-            step(2, written_run_in, join_slot(written_stage)),
-            disabled(step(2, written_run_in, join_slot(written_stage))),
-        ] {
-            let sequence = sequence(vec![node.clone()]);
-
-            let findings = validate(&sequence, &known());
-
-            if fits {
-                assert_eq!(findings, [], "{node}");
-            } else {
-                assert_eq!(
-                    findings,
-                    [finding(
-                        2,
-                        vec![0],
-                        Issue::JoinStageRunIn {
-                            stage: stage(written_stage),
-                            run_in: run_in(written_run_in),
-                        },
-                    )],
-                    "{node}"
-                );
-                assert_eq!(findings[0].severity(), Severity::Error);
-            }
-        }
-    }
-}
-
-#[test]
-fn an_authored_server_call_or_provisioning_package_is_an_error() {
-    let sequence = sequence(vec![
-        step(2, "full_os", server_call()),
-        group(3, vec![disabled(step(4, "win_pe", provisioning_package()))]),
-    ]);
-
-    let findings = validate(&sequence, &known());
-
-    assert_eq!(
-        findings,
-        [
-            finding(
-                2,
-                vec![0],
-                Issue::AddOnOnlyAction {
-                    action: "server_call",
-                },
-            ),
-            finding(
-                4,
-                vec![1, 0],
-                Issue::AddOnOnlyAction {
-                    action: "add_provisioning_package",
-                },
-            ),
-        ]
-    );
-    assert!(
-        findings
-            .iter()
-            .all(|finding| finding.severity() == Severity::Error)
-    );
-    assert_eq!(
-        findings[0].to_string(),
-        format!(
-            "root.children[0], node {}: error: only an add-on step's expansion may hold `server_call`, so a task sequence cannot hold it as a step of its own",
-            id_text(2)
-        )
-    );
 }
 
 #[test]
@@ -501,14 +441,14 @@ fn an_unknown_step_kind_alone_is_one_warning() {
         step(4, "full_os", join_slot("full_os")),
     ]);
 
-    let findings = validate(&sequence, &BTreeSet::new());
+    let findings = validate(&sequence, &Catalog::default());
 
     assert_eq!(
         findings,
         [finding(
             3,
             vec![1],
-            Issue::UnknownStepKind { kind: register() }
+            SaveCheck::UnknownStepKind { kind: register() }
         )]
     );
     assert_eq!(findings[0].severity(), Severity::Warning);
@@ -529,24 +469,24 @@ fn findings_come_in_document_order_with_the_steps_own_findings_first() {
         step(3, "full_os", add_on()),
     ]);
 
-    let findings = validate(&sequence, &BTreeSet::new());
+    let findings = validate(&sequence, &Catalog::default());
 
-    let unknown = Issue::UnknownStepKind { kind: register() };
+    let unknown = SaveCheck::UnknownStepKind { kind: register() };
     assert_eq!(
         findings,
         [
             finding(
                 3,
                 vec![0, 0],
-                Issue::FullOsCondition {
+                SaveCheck::Rule(Rule::FullOsCondition {
                     condition: "installed_msi",
-                },
+                }),
             ),
             finding(3, vec![0, 0], unknown.clone()),
             finding(
                 4,
                 vec![0, 1],
-                Issue::Compile(Rule::RunIn {
+                SaveCheck::Rule(Rule::RunIn {
                     action: "apply_os_image",
                     run_in: RunIn::FullOs,
                     allowed: &[RunIn::WinPe],
@@ -555,23 +495,23 @@ fn findings_come_in_document_order_with_the_steps_own_findings_first() {
             finding(
                 5,
                 vec![1],
-                Issue::JoinStageRunIn {
+                SaveCheck::Rule(Rule::JoinStageRunIn {
                     stage: JoinStage::FullOs,
                     run_in: RunIn::WinPe,
-                },
+                }),
             ),
             finding(
                 6,
                 vec![2],
-                Issue::AddOnOnlyAction {
+                SaveCheck::Rule(Rule::AddOnOnlyAction {
                     action: "server_call",
-                },
+                }),
             ),
             finding(3, vec![3], unknown),
             finding(
                 3,
                 vec![3],
-                Issue::Compile(Rule::DuplicateNodeId {
+                SaveCheck::Rule(Rule::DuplicateNodeId {
                     first: NodePath::from(vec![0, 0]),
                 }),
             ),
@@ -653,8 +593,8 @@ fn sequence_with_config_text(config_version: u32, config: &str) -> AuthoredSeque
     AuthoredSequence::from_json(&text).expect("the document parses")
 }
 
-fn config_error(path: &str, problem: ValueProblem) -> Issue {
-    Issue::Config(ValueError {
+fn config_error(path: &str, problem: ValueProblem) -> SaveCheck {
+    SaveCheck::Config(ValueError {
         path: path.to_owned(),
         problem,
     })
@@ -774,7 +714,7 @@ fn a_step_whose_run_in_differs_from_its_kinds_is_an_error_that_names_both() {
         [finding(
             2,
             vec![0],
-            Issue::StepKindRunIn {
+            SaveCheck::StepKindRunIn {
                 kind: register(),
                 declared: RunIn::FullOs,
                 run_in: RunIn::Either,
@@ -811,7 +751,7 @@ fn a_config_version_with_no_schema_is_one_warning() {
             [finding(
                 2,
                 vec![0],
-                Issue::NoConfigSchema {
+                SaveCheck::NoConfigSchema {
                     kind: register(),
                     config_version,
                 }
@@ -875,7 +815,11 @@ fn a_step_kind_that_no_catalog_knows_is_still_one_warning() {
 
     assert_eq!(
         findings,
-        [finding(2, vec![0], Issue::UnknownStepKind { kind: gone })]
+        [finding(
+            2,
+            vec![0],
+            SaveCheck::UnknownStepKind { kind: gone }
+        )]
     );
     assert_eq!(findings[0].severity(), Severity::Warning);
 }
@@ -922,14 +866,14 @@ fn a_steps_own_findings_come_before_the_compilers_at_one_node() {
             finding(
                 2,
                 vec![1],
-                Issue::FullOsCondition {
+                SaveCheck::Rule(Rule::FullOsCondition {
                     condition: "installed_msi",
-                },
+                }),
             ),
             finding(
                 2,
                 vec![1],
-                Issue::StepKindRunIn {
+                SaveCheck::StepKindRunIn {
                     kind: register(),
                     declared: RunIn::FullOs,
                     run_in: RunIn::WinPe,
@@ -943,7 +887,7 @@ fn a_steps_own_findings_come_before_the_compilers_at_one_node() {
             finding(
                 2,
                 vec![1],
-                Issue::Compile(Rule::DuplicateNodeId {
+                SaveCheck::Rule(Rule::DuplicateNodeId {
                     first: NodePath::from(vec![0]),
                 }),
             ),
@@ -982,7 +926,7 @@ fn a_config_that_the_check_cannot_read_is_an_error() {
 
     let findings = validate(&sequence, &catalog("enabled"));
 
-    assert_eq!(findings, [finding(2, vec![0], Issue::UnreadableConfig)]);
+    assert_eq!(findings, [finding(2, vec![0], SaveCheck::UnreadableConfig)]);
     assert_eq!(findings[0].severity(), Severity::Error);
 }
 
