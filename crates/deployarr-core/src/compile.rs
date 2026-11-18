@@ -256,6 +256,12 @@ impl Compiler {
     /// The rules about program order, which cover only the steps that the
     /// program keeps.
     fn check_order(&mut self, step: &Step<BuiltinAction>) {
+        // The run evaluates the condition of the first `Restart` into the
+        // installed OS in WinPE, so this check comes before the match marks
+        // that restart.
+        if step.run_in == RunIn::Either {
+            self.check_condition_before_os(&step.meta);
+        }
         match step.action {
             BuiltinAction::PartitionDisk { .. } => self.partitioned = true,
             BuiltinAction::ApplyOsImage { .. } => self.imaged = true,
@@ -283,16 +289,11 @@ impl Compiler {
             }
             _ => {}
         }
-        // The first `Restart` into the installed OS does not come before
-        // itself, so this check follows the match.
-        if step.run_in == RunIn::Either {
-            self.check_condition_before_os(&step.meta);
-        }
     }
 
-    /// The rule about a full-OS-only condition before the first `Restart` into
-    /// the installed OS. It covers the groups and the `Either` steps that the
-    /// program keeps.
+    /// The rule about a full-OS-only condition at or before the first
+    /// `Restart` into the installed OS. It covers the groups and the `Either`
+    /// steps that the program keeps.
     fn check_condition_before_os(&mut self, meta: &NodeMeta) {
         if self.restarted_into_os {
             return;
@@ -461,13 +462,14 @@ pub enum Rule {
     FullOsCondition { condition: &'static str },
     /// The node is a group, the root included, or a step with `run_in`
     /// `Either`. Its condition holds an `installed_msi` or `wmi` condition,
-    /// and `condition` names the first one. The node comes before the first
-    /// `Restart` with `into` `InstalledOs` in program order. Every run starts
-    /// in WinPE, and only that restart leaves it, so the run reaches the node
-    /// in WinPE, where the condition fails to evaluate on every run.
-    /// Conditions do not count, so a `Restart` with a condition, or in a group
-    /// with one, still counts. The program drops disabled nodes, so they do
-    /// not count.
+    /// and `condition` names the first one. The node comes at or before the
+    /// first `Restart` with `into` `InstalledOs` in program order. Every run
+    /// starts in WinPE, and only that restart leaves it, so the run reaches the
+    /// node in WinPE, where the condition fails to evaluate on every run. The
+    /// run evaluates the restart's own condition before it restarts, so the
+    /// same holds for the restart. Conditions do not count, so a `Restart`
+    /// with a condition, or in a group with one, still counts. The program
+    /// drops disabled nodes, so they do not count.
     FullOsConditionBeforeInstalledOs { condition: &'static str },
     /// The step is a `Restart` with `run_in` `WinPe`, and no `PartitionDisk`
     /// step comes before it in program order. Until that step, the state is

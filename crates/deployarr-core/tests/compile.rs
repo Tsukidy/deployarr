@@ -973,6 +973,32 @@ fn an_either_step_with_a_wmi_condition_fails_only_before_the_first_restart_into_
 }
 
 #[test]
+fn the_first_either_restart_into_the_os_with_a_wmi_condition_fails() {
+    // The run evaluates the first restart's condition in WinPE. A later
+    // restart with the same condition passes.
+    let document = root(vec![
+        step(0x02, "win_pe", partition()),
+        group(
+            0x03,
+            vec![
+                when(step(0x04, "either", restart()), wmi()),
+                when(step(0x05, "either", restart()), wmi()),
+            ],
+        ),
+    ]);
+    assert_eq!(
+        compile_err(&document),
+        [error(0x04, vec![1, 0], before_installed_os("wmi"))]
+    );
+
+    compile_ok(&root(vec![
+        step(0x02, "win_pe", partition()),
+        step(0x03, "win_pe", restart()),
+        when(step(0x04, "either", restart()), wmi()),
+    ]));
+}
+
+#[test]
 fn full_os_conditions_before_the_first_restart_into_the_os_are_reported_in_document_order() {
     let document = when(
         root(vec![

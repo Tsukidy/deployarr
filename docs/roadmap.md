@@ -47,7 +47,7 @@ Check:
 - A test rebuilds the group, condition, and phase structure of MDT's `Client.xml` in the deployarr model and compiles it. This proves the model can express everything MDT's standard sequence uses.
 - Table tests cover the condition rules listed in [MDT 8450 binaries reference](research/mdt-8450-binaries.md#conditions): integer versus string comparison, `Like` wildcards, `Exists` on an empty value, and missing files and registry values. Each place where deployarr differs from MDT on purpose has its own test.
 - The parser rejects an empty success list and an empty `All` or `Any`.
-- The compiler rejects a `run_in` the action cannot honor, a WinPE step with an `InstalledMsi` or `Wmi` condition, a group or an `Either` step with one before the first `Restart` into the installed OS, a WinPE `Restart` before the state moves to disk, an `ApplyDrivers` or `ApplyUnattend` step before the first `ApplyOsImage` step, and a duplicate `NodeId`.
+- The compiler rejects a `run_in` the action cannot honor, a WinPE step with an `InstalledMsi` or `Wmi` condition, a group or an `Either` step with one at or before the first `Restart` into the installed OS, a WinPE `Restart` before the state moves to disk, an `ApplyDrivers` or `ApplyUnattend` step before the first `ApplyOsImage` step, and a duplicate `NodeId`.
 
 Check of the add-on shapes:
 - A task sequence with a step from an add-on that no catalog knows round-trips through JSON byte for byte, and `validate` returns a warning, not an error. The step's config holds keys out of order and the integer `12345678901234567890123`, and both come back unchanged (item 6).
