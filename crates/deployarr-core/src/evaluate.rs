@@ -18,8 +18,8 @@ use core::fmt;
 use time::OffsetDateTime;
 
 use crate::condition::{
-    CompareOp, Comparison, Condition, FileVersion, MsiProduct, NonEmptyTemplate, RegData, Test,
-    Timestamp,
+    CompareOp, Comparison, Condition, FileVersion, MsiProduct, NonEmptyTemplate, RegData,
+    RegValueName, RegistryCondition, Test, Timestamp,
 };
 use crate::store::{Value, Vars};
 use crate::substitution::SubstituteError;
@@ -218,12 +218,6 @@ pub enum ConditionError {
     List { name: VarName },
     /// A `registry` key does not start with a full hive name and a `\`.
     RegistryHive { key: Template },
-    /// A `registry` comparison names no value. A key has no data to compare,
-    /// and MDT makes this an error (`TsCore!0x1801a6bec`).
-    RegistryNoValue { key: Template },
-    /// A `registry` comparison has empty text as its data. MDT makes this an
-    /// error (`TsCore!0x1801a6bec`).
-    RegistryEmptyData { key: Template },
     /// A `registry` comparison found a value of a type it does not read, such
     /// as `REG_BINARY`. `reg_type` is the type's number.
     RegistryType {
@@ -256,16 +250,6 @@ impl fmt::Display for ConditionError {
             Self::RegistryHive { key } => write!(
                 f,
                 "the registry key `{}` must start with `HKEY_LOCAL_MACHINE\\`, `HKEY_CURRENT_USER\\`, `HKEY_CURRENT_CONFIG\\`, or `HKEY_USERS\\`",
-                key.as_str()
-            ),
-            Self::RegistryNoValue { key } => write!(
-                f,
-                "a `registry` comparison under `{}` must name a value, because a key has no data",
-                key.as_str()
-            ),
-            Self::RegistryEmptyData { key } => write!(
-                f,
-                "a `registry` comparison under `{}` has empty data to compare against",
                 key.as_str()
             ),
             Self::RegistryType {
@@ -344,7 +328,7 @@ impl Evaluator<'_> {
             }
             Condition::Not(child) => Ok(!self.condition(child)?),
             Condition::Var { name, test } => self.var(name, test),
-            Condition::Registry { key, value, test } => self.registry(key, value.as_deref(), test),
+            Condition::Registry(registry) => self.registry(registry),
             Condition::File {
                 path,
                 version,
@@ -415,16 +399,12 @@ impl Evaluator<'_> {
         })
     }
 
-    fn registry(
-        &self,
-        key: &Template,
-        value: Option<&str>,
-        test: &Test<RegData>,
-    ) -> Result<bool, ConditionError> {
+    fn registry(&self, registry: &RegistryCondition) -> Result<bool, ConditionError> {
+        let key = registry.key();
         let reg_key = RegKey::parse(&self.substitute(key)?)
             .ok_or_else(|| ConditionError::RegistryHive { key: key.clone() })?;
-        // MDT reads an empty value name as no value (`TsCore!0x1801a6bec`).
-        let name = value.filter(|name| !name.is_empty());
+        let name = registry.value().map(RegValueName::as_str);
+        let test = registry.test();
         let Some((op, data)) = Op::split(test) else {
             let exists = match name {
                 None => self.probe.registry_key_exists(&reg_key),
@@ -436,12 +416,9 @@ impl Evaluator<'_> {
             .map_err(failed(ProbeKind::Registry))?;
             return Ok(exists == matches!(test, Test::Exists));
         };
-        let Some(name) = name else {
-            return Err(ConditionError::RegistryNoValue { key: key.clone() });
-        };
-        if matches!((op, data), (Op::Compare(_), RegData::String(text)) if text.is_empty()) {
-            return Err(ConditionError::RegistryEmptyData { key: key.clone() });
-        }
+        // `RegistryCondition::new` and the parser reject a test that takes
+        // data without a value name.
+        let name = name.expect("a registry test that takes data names a value");
         let Some(found) = self
             .probe
             .registry_value(&reg_key, name)

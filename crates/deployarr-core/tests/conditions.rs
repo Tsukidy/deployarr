@@ -1032,35 +1032,67 @@ fn mdt_registry_keys_start_with_a_full_hive_name() {
     }
 }
 
-/// A key with no value name tests whether the key exists. A comparison must
-/// name a value, because a key has no data, and an empty name counts as none
-/// (`TsCore!0x1801a6bec`).
+/// A key with no value name tests whether the key exists
+/// (`TsCore!0x1801a6bec`). A `value` that is left out or `null` names none.
 #[test]
 fn mdt_registry_exists_without_a_value_tests_the_key() {
     let machine = Machine::new().key(HKLM_CONTOSO);
-    for value in [None, Some("")] {
-        assert!(check(
-            registry(HKLM_CONTOSO, value, json!("exists")),
-            &Vars::new(),
-            &machine
-        ));
-        assert!(!check(
-            registry(HKLM_CONTOSO, value, json!("not_exists")),
-            &Vars::new(),
-            &machine
-        ));
+    let left_out = |test: Value| json!({ "registry": { "key": HKLM_CONTOSO, "test": test } });
+    let null = |test: Value| registry(HKLM_CONTOSO, None, test);
+    for json in [left_out(json!("exists")), null(json!("exists"))] {
+        let text = json.to_string();
+        assert!(check(json, &Vars::new(), &machine), "{text}");
+    }
+    for json in [left_out(json!("not_exists")), null(json!("not_exists"))] {
+        let text = json.to_string();
+        assert!(!check(json, &Vars::new(), &machine), "{text}");
+    }
+}
 
-        let error = run(
-            registry(HKLM_CONTOSO, value, json!({ "equals": 1 })),
-            &Vars::new(),
-            &machine,
-        )
-        .unwrap_err();
-        assert_eq!(
-            error,
-            ConditionError::RegistryNoValue {
-                key: Template::new(HKLM_CONTOSO)
-            }
+/// The message of the error that a condition fails to parse with.
+fn parse_error(json: Value) -> String {
+    let text = json.to_string();
+    match serde_json::from_value::<Condition>(json) {
+        Ok(condition) => panic!("{text} parsed as {condition:?}"),
+        Err(error) => error.to_string(),
+    }
+}
+
+/// A comparison must name a value, because a key has no data. MDT fails a
+/// comparison without a value name when it runs (`TsCore!0x1801a6bec`).
+/// deployarr's parser rejects it, and `like` without one too, so the
+/// evaluator never meets one.
+#[test]
+fn mdt_registry_a_comparison_without_a_value_name_fails_to_parse() {
+    for test in [json!({ "equals": 1 }), json!({ "like": "*" })] {
+        let left_out = json!({ "registry": { "key": HKLM_CONTOSO, "test": test } });
+        let null = registry(HKLM_CONTOSO, None, test);
+        for json in [left_out, null] {
+            let text = json.to_string();
+            let error = parse_error(json);
+            assert!(error.contains("needs a value name"), "{text}: {error}");
+        }
+    }
+}
+
+/// MDT reads an empty value name as no value name, so `exists` tests the key
+/// and a comparison fails (`TsCore!0x1801a6bec`). deployarr's parser rejects
+/// an empty value name for every test, so a test of the key leaves out
+/// `value` or sets it to `null` (owner decision on #183).
+#[test]
+fn difference_registry_an_empty_value_name_fails_to_parse() {
+    for test in [
+        json!("exists"),
+        json!("not_exists"),
+        json!({ "equals": 1 }),
+        json!({ "like": "*" }),
+    ] {
+        let json = registry(HKLM_CONTOSO, Some(""), test);
+        let text = json.to_string();
+        let error = parse_error(json);
+        assert!(
+            error.contains("value name must not be empty"),
+            "{text}: {error}"
         );
     }
 }
@@ -1144,23 +1176,33 @@ fn mdt_registry_compares_string_values_without_regard_to_case() {
     }
 }
 
-/// MDT fails a comparison against empty registry data (`TsCore!0x1801a6bec`).
+/// MDT fails one of the six comparisons against empty registry data when it
+/// runs (`TsCore!0x1801a6bec`). deployarr's parser rejects the empty data, so
+/// the evaluator never meets it.
 #[test]
-fn mdt_registry_comparing_against_empty_data_is_an_error() {
-    let machine = Machine::new().value(HKLM_CONTOSO, "Stage", RegValue::Sz(String::new()));
-    let error = run(
-        registry(HKLM_CONTOSO, Some("Stage"), json!({ "equals": "" })),
-        &Vars::new(),
-        &machine,
-    )
-    .unwrap_err();
+fn mdt_registry_comparing_against_empty_data_fails_to_parse() {
+    for op in [
+        "equals",
+        "not_equals",
+        "less",
+        "less_equal",
+        "greater",
+        "greater_equal",
+    ] {
+        let error = parse_error(registry(HKLM_CONTOSO, Some("Stage"), json!({ op: "" })));
+        assert!(error.contains("must not be empty"), "{op}: {error}");
+    }
+}
 
-    assert_eq!(
-        error,
-        ConditionError::RegistryEmptyData {
-            key: Template::new(HKLM_CONTOSO)
-        }
-    );
+/// MDT checks for empty registry data only before the six comparisons
+/// (`TsCore!0x1801a6bec`). Its `like` ignores the data, so `like` with empty
+/// data is true for any `REG_DWORD`, `REG_SZ`, or `REG_EXPAND_SZ` value that
+/// exists, as with any other pattern (`TsCore!0x1801ab054`). deployarr's
+/// parser rejects empty data for `like` too (owner decision on #183).
+#[test]
+fn difference_registry_empty_like_data_fails_to_parse() {
+    let error = parse_error(registry(HKLM_CONTOSO, Some("Stage"), json!({ "like": "" })));
+    assert!(error.contains("must not be empty"), "{error}");
 }
 
 /// "Registry conditions accept only ... `REG_DWORD`, `REG_SZ`, and

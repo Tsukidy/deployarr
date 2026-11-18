@@ -405,7 +405,7 @@
 						{
 							"step": {
 								"meta": {
-									"id": "6f1d2c3a-0000-4000-8000-000000000012",
+									"id": "6f1d2c3a-0000-4000-8000-000000000013",
 									"name": "Turn on BitLocker",
 									"enabled": true,
 									"continue_on_error": false,
@@ -425,7 +425,7 @@
 						{
 							"step": {
 								"meta": {
-									"id": "6f1d2c3a-0000-4000-8000-000000000013",
+									"id": "6f1d2c3a-0000-4000-8000-000000000014",
 									"name": "Suspend BitLocker for two restarts",
 									"enabled": true,
 									"continue_on_error": false,
@@ -471,6 +471,40 @@
 											"rerun_if_interrupted": false
 										},
 										"files": []
+									}
+								}
+							}
+						},
+						{
+							"step": {
+								"meta": {
+									"id": "6f1d2c3a-0000-4000-8000-000000000012",
+									"name": "Install updates from the site's WSUS server",
+									"enabled": true,
+									"continue_on_error": false,
+									"condition": null
+								},
+								"run_in": "full_os",
+								"action": {
+									"install_updates": {
+										"source": {
+											"wsus": "https://wsus.example.com:8531"
+										},
+										"missing": "fail",
+										"max_passes": 5,
+										"exclude": [
+											{
+												"kb": 5034441
+											},
+											{
+												"update_id": "e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f21"
+											}
+										],
+										"timeouts": {
+											"search_secs": 1800,
+											"download_secs": 7200,
+											"install_secs": 7200
+										}
 									}
 								}
 							}

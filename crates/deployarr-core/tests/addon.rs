@@ -560,6 +560,7 @@ fn an_add_on_may_return_six_built_in_actions() {
             json!({ "install_applications": { "apps": { "one": "a" } } }),
             false,
         ),
+        (json!({ "install_updates": {} }), false),
         (json!({ "verify_drivers": { "policy": "warn" } }), false),
         (json!({ "enable_bitlocker": {} }), false),
         (json!({ "suspend_bitlocker": { "restarts": 1 } }), false),

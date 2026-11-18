@@ -346,6 +346,7 @@ pub(crate) fn action_name(action: &BuiltinAction) -> &'static str {
         BuiltinAction::ApplyDrivers { .. } => "apply_drivers",
         BuiltinAction::ApplyUnattend { .. } => "apply_unattend",
         BuiltinAction::InstallApplications { .. } => "install_applications",
+        BuiltinAction::InstallUpdates { .. } => "install_updates",
         BuiltinAction::VerifyDrivers { .. } => "verify_drivers",
         BuiltinAction::EnableBitLocker { .. } => "enable_bitlocker",
         BuiltinAction::SuspendBitLocker { .. } => "suspend_bitlocker",
@@ -569,7 +570,7 @@ mod tests {
             seen.insert(action_name(action));
         }
         // Every action was checked.
-        assert_eq!(seen.len(), 16);
+        assert_eq!(seen.len(), 17);
     }
 
     #[test]

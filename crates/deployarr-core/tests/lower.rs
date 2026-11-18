@@ -261,6 +261,31 @@ fn lower_rejects_an_action_outside_the_allowed_six() {
 }
 
 #[test]
+fn lower_rejects_an_install_updates_step_in_an_expansion() {
+    let (sequence, mut expansions) = planned();
+    expansions.insert(
+        id(2),
+        vec![child(
+            0x100,
+            "full_os",
+            json!({ "install_updates": { "source": "windows_update" } }),
+        )],
+    );
+
+    assert_rejects(
+        &sequence,
+        &expansions,
+        &[error(
+            2,
+            LowerRule::NotAllowed {
+                child: 0,
+                action: "install_updates",
+            },
+        )],
+    );
+}
+
+#[test]
 fn lower_rejects_an_expansion_that_holds_a_bitlocker_action() {
     let cases = [
         (json!({ "enable_bitlocker": {} }), "enable_bitlocker"),
