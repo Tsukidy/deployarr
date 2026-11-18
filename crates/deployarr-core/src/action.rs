@@ -373,6 +373,32 @@ impl BuiltinAction {
             | Self::ActivateWindows { .. } => false,
         }
     }
+
+    /// Whether only an add-on's expansion may hold this action. A task
+    /// sequence may not hold it as a step of its own, so
+    /// [`crate::validate::validate`] and [`crate::lower::lower`] reject it
+    /// there. Two actions are like this: `ServerCall` and
+    /// `AddProvisioningPackage`. Both stay allowed inside an expansion.
+    ///
+    /// The match is exhaustive, so a new action does not compile until someone
+    /// decides whether a task sequence may hold it outside an expansion.
+    pub fn only_from_addon(&self) -> bool {
+        match self {
+            Self::ServerCall { .. } | Self::AddProvisioningPackage { .. } => true,
+            Self::RunCommand { .. }
+            | Self::RunPowerShell { .. }
+            | Self::SetVariable { .. }
+            | Self::Restart { .. }
+            | Self::PartitionDisk { .. }
+            | Self::ApplyOsImage { .. }
+            | Self::ApplyDrivers { .. }
+            | Self::ApplyUnattend { .. }
+            | Self::InstallApplications { .. }
+            | Self::VerifyDrivers { .. }
+            | Self::CheckReadiness { .. }
+            | Self::ActivateWindows { .. } => false,
+        }
+    }
 }
 
 /// A file that the agent writes to the step's private folder before the step
