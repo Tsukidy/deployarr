@@ -3,14 +3,17 @@
 //! `docs/research/addon-design-attacks-wasmtime-50.0.1.md`: Force for the same
 //! change takes it over, `cancel` abandons it, and any other change is refused
 //! with the waiting operation named.
+//!
+//! The host does not compute permissions digests yet, so the tests make them
+//! up. `apply` and `apply_with` approve the package's own digest.
 
 use std::ops::RangeInclusive;
 
 use deployarr_core::addon::AddOnId;
 use deployarr_core::lifecycle::{
     Approval, Change, Commit, Effect, Facts, Installed, OpKind, OpPhase, OpenOperation, Package,
-    PackageHash, Plan, PublicKey, Publisher, Refusal, Refusals, Registry, SequenceVersion, Signer,
-    Step, Trust, Usage, WhenBusy, plan,
+    PackageHash, PermissionsDigest, Plan, PublicKey, Publisher, Refusal, Refusals, Registry,
+    SequenceVersion, Signer, Step, Trust, Usage, WhenBusy, plan,
 };
 use deployarr_core::non_empty::NonEmpty;
 use semver::Version;
@@ -24,6 +27,11 @@ fn hash(n: u8) -> PackageHash {
     PackageHash([n; 32])
 }
 
+/// A made-up permissions digest.
+fn permissions(n: u8) -> PermissionsDigest {
+    PermissionsDigest([n; 32])
+}
+
 fn id() -> AddOnId {
     "acme.orders".parse().unwrap()
 }
@@ -33,7 +41,7 @@ fn version(text: &str) -> Version {
 }
 
 /// Package `n` of `acme.orders`, signed by Acme, at API level 1 and data
-/// version 1.
+/// version 1, with permissions digest `n`.
 fn package(n: u8, text: &str) -> Package {
     Package {
         hash: hash(n),
@@ -42,6 +50,7 @@ fn package(n: u8, text: &str) -> Package {
         api_level: 1,
         data_version: 1,
         signer: Signer::Key(ACME),
+        permissions: permissions(n),
     }
 }
 
@@ -119,15 +128,34 @@ impl World {
     }
 }
 
+/// Applies the package with its own permissions digest approved.
 fn apply(package: Package) -> Change {
+    apply_with(package, Approval::default())
+}
+
+/// Applies the package with `approval`, which approves the package's own
+/// permissions digest.
+fn apply_with(package: Package, approval: Approval) -> Change {
+    let approval = Approval {
+        permissions: Some(package.permissions),
+        ..approval
+    };
     Change::Apply {
-        package,
-        approval: Approval::default(),
+        package: Box::new(package),
+        approval,
     }
 }
 
-fn apply_with(package: Package, approval: Approval) -> Change {
-    Change::Apply { package, approval }
+/// Applies the package with `approved` as the permissions digest that the
+/// admin approved.
+fn apply_approving(package: Package, approved: Option<PermissionsDigest>) -> Change {
+    Change::Apply {
+        package: Box::new(package),
+        approval: Approval {
+            permissions: approved,
+            ..Approval::default()
+        },
+    }
 }
 
 fn forced() -> Approval {
@@ -238,10 +266,131 @@ fn every_refusal_that_the_roadmap_names() {
             apply(package(2, "1.1.0")),
             vec![Refusal::Busy { open }],
         ),
+        (
+            "an approved permissions digest that differs from the package's",
+            World::with(installed()),
+            apply_approving(package(2, "1.1.0"), Some(permissions(9))),
+            vec![Refusal::PermissionsNotApproved {
+                package: permissions(2),
+                approved: Some(permissions(9)),
+            }],
+        ),
+        (
+            "an approval with no permissions digest",
+            World::new(),
+            apply_approving(package(1, "1.0.0"), None),
+            vec![Refusal::PermissionsNotApproved {
+                package: permissions(1),
+                approved: None,
+            }],
+        ),
     ];
     for (name, world, change, want) in rows {
         assert_eq!(world.refusals(&change), want, "{name}");
     }
+}
+
+// ------------------------------------------- the approved permissions
+
+#[test]
+fn a_permissions_refusal_names_both_digests_or_says_none_was_approved() {
+    let different = Refusal::PermissionsNotApproved {
+        package: permissions(2),
+        approved: Some(permissions(9)),
+    }
+    .to_string();
+    assert!(
+        different.contains(&permissions(2).to_string())
+            && different.contains(&permissions(9).to_string()),
+        "{different}"
+    );
+    let missing = Refusal::PermissionsNotApproved {
+        package: permissions(1),
+        approved: None,
+    }
+    .to_string();
+    assert!(
+        missing.contains(&permissions(1).to_string())
+            && missing.contains("no permissions digest was approved"),
+        "{missing}"
+    );
+}
+
+#[test]
+fn a_downgrade_without_confirmation_and_with_other_permissions_is_refused_for_both() {
+    let change = apply_approving(package(2, "0.9.0"), Some(permissions(9)));
+    assert_eq!(
+        World::with(installed()).refusals(&change),
+        [
+            Refusal::PermissionsNotApproved {
+                package: permissions(2),
+                approved: Some(permissions(9)),
+            },
+            Refusal::Downgrade {
+                from: version("1.0.0"),
+                to: version("0.9.0"),
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_take_over_with_other_permissions_is_refused() {
+    let world = with_open(waiting());
+    let change = Change::Apply {
+        package: Box::new(package(2, "1.1.0")),
+        approval: Approval {
+            permissions: Some(permissions(9)),
+            ..forced()
+        },
+    };
+    assert_eq!(
+        world.refusals(&change),
+        [Refusal::PermissionsNotApproved {
+            package: permissions(2),
+            approved: Some(permissions(9)),
+        }]
+    );
+}
+
+/// The admin approved the previous package's permissions when it was
+/// installed, so a roll back checks no digest (owner input on #213, issue
+/// comment 6981673817).
+#[test]
+fn a_roll_back_checks_no_permissions_digest() {
+    // Package 2 is active and package 1 is the previous one. Their digests
+    // differ from each other, and no change carries an approval.
+    let installed = Installed {
+        active: package(2, "1.1.0"),
+        previous: Some(Package {
+            permissions: permissions(7),
+            ..package(1, "1.0.0")
+        }),
+        ..installed()
+    };
+    let plan = World::with(installed.clone())
+        .plan(&Change::RollBack {
+            addon: id(),
+            when_busy: WhenBusy::Wait,
+        })
+        .expect("a roll back reads no permissions digest");
+    assert_eq!(plan.kind, Some(OpKind::RollBack { to: hash(1) }));
+
+    let mut world = World::with(Installed {
+        open: Some(OpenOperation {
+            kind: OpKind::RollBack { to: hash(1) },
+            phase: OpPhase::Approved,
+        }),
+        ..installed
+    });
+    world.usage.running_deployments = 2;
+    let plan = world
+        .plan(&Change::RollBack {
+            addon: id(),
+            when_busy: WhenBusy::Force,
+        })
+        .expect("a forced roll back reads no permissions digest");
+    assert_eq!(plan.steps[0], Step::TakeOver);
 }
 
 // --------------------------------------------------- a waiting operation
@@ -520,6 +669,16 @@ fn an_upgrade_keeps_the_old_package_as_previous() {
                 publisher: Some("Acme".into()),
                 enabled: true,
             }),
+        ]
+    );
+    assert_eq!(
+        plan.effects,
+        [
+            Effect::Upgrades {
+                from: version("1.0.0"),
+                to: version("1.1.0"),
+            },
+            Effect::MigratesData { from: 1, to: 2 },
         ]
     );
 }
