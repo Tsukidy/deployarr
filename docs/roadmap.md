@@ -306,7 +306,7 @@ Check:
 - Upgrade `deployarr.autopilot` from a version with step config version 1 to one with version 2 while a deployment runs. The running deployment finishes on its frozen program. The next one deploys with the migrated config. The saved task sequence version is byte for byte the same before and after.
 - Roll the upgrade back. The add-on's store matches its snapshot.
 - The server refuses to uninstall the add-on, and the refusal lists the sequence, the join profile, and the chain entry that use it.
-- The MDT importer turns the 8456 `Client.xml` into a draft that passes `validate`, with a note for each step that it could not convert.
+- The MDT importer turns the 8456 `Client.xml` into a draft that passes `validate`, with a note for each step that it could not convert and for each `<defaultVarList>` entry that a converted step drops, such as Restart computer's `MessageTimeout`. No note holds a value. See [Core data shapes](architecture.md#core-data-shapes).
 
 ### M9. Hardening and release
 
