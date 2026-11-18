@@ -318,6 +318,29 @@ pub enum BuiltinAction {
 }
 
 impl BuiltinAction {
+    /// The action's kind, without its fields.
+    pub fn kind(&self) -> ActionKind {
+        match self {
+            Self::RunCommand { .. } => ActionKind::RunCommand,
+            Self::RunPowerShell { .. } => ActionKind::RunPowerShell,
+            Self::SetVariable { .. } => ActionKind::SetVariable,
+            Self::Restart { .. } => ActionKind::Restart,
+            Self::PartitionDisk { .. } => ActionKind::PartitionDisk,
+            Self::ApplyOsImage { .. } => ActionKind::ApplyOsImage,
+            Self::ApplyDrivers { .. } => ActionKind::ApplyDrivers,
+            Self::ApplyUnattend { .. } => ActionKind::ApplyUnattend,
+            Self::InstallApplications { .. } => ActionKind::InstallApplications,
+            Self::InstallUpdates { .. } => ActionKind::InstallUpdates,
+            Self::VerifyDrivers { .. } => ActionKind::VerifyDrivers,
+            Self::EnableBitLocker { .. } => ActionKind::EnableBitLocker,
+            Self::SuspendBitLocker { .. } => ActionKind::SuspendBitLocker,
+            Self::CheckReadiness { .. } => ActionKind::CheckReadiness,
+            Self::ActivateWindows { .. } => ActionKind::ActivateWindows,
+            Self::ServerCall { .. } => ActionKind::ServerCall,
+            Self::AddProvisioningPackage { .. } => ActionKind::AddProvisioningPackage,
+        }
+    }
+
     /// The `run_in` values that a step with this action may have. The
     /// compiler rejects a step with any other.
     ///
@@ -347,32 +370,10 @@ impl BuiltinAction {
         }
     }
 
-    /// Whether an add-on's expansion may hold this action. Six may:
-    /// `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart`, `ServerCall`,
-    /// and `AddProvisioningPackage`.
-    ///
-    /// The match is exhaustive, so a new action does not compile until someone
-    /// decides whether add-ons may use it.
+    /// Whether an add-on's expansion may hold this action. Its kind answers.
+    /// See [`ActionKind::allowed_from_addon`].
     pub fn allowed_from_addon(&self) -> bool {
-        match self {
-            Self::RunCommand { .. }
-            | Self::RunPowerShell { .. }
-            | Self::SetVariable { .. }
-            | Self::Restart { .. }
-            | Self::ServerCall { .. }
-            | Self::AddProvisioningPackage { .. } => true,
-            Self::PartitionDisk { .. }
-            | Self::ApplyOsImage { .. }
-            | Self::ApplyDrivers { .. }
-            | Self::ApplyUnattend { .. }
-            | Self::InstallApplications { .. }
-            | Self::InstallUpdates { .. }
-            | Self::VerifyDrivers { .. }
-            | Self::EnableBitLocker { .. }
-            | Self::SuspendBitLocker { .. }
-            | Self::CheckReadiness { .. }
-            | Self::ActivateWindows { .. } => false,
-        }
+        self.kind().allowed_from_addon()
     }
 
     /// Whether only an add-on's expansion may hold this action. A task
@@ -401,6 +402,81 @@ impl BuiltinAction {
             | Self::SuspendBitLocker { .. }
             | Self::CheckReadiness { .. }
             | Self::ActivateWindows { .. } => false,
+        }
+    }
+}
+
+/// Declares `ActionKind` and `ActionKind::ALL` from one list of variants, so
+/// the constant lists every kind exactly once.
+macro_rules! action_kinds {
+    (
+        $(#[$meta:meta])*
+        pub enum $name:ident { $($kind:ident,)* }
+    ) => {
+        $(#[$meta])*
+        pub enum $name { $($kind,)* }
+
+        impl $name {
+            /// Every kind, once each, in the order of declaration.
+            pub const ALL: &'static [Self] = &[$(Self::$kind,)*];
+        }
+    };
+}
+
+action_kinds! {
+    /// What a [`BuiltinAction`] is, without its fields. There is one kind for
+    /// each action, and [`BuiltinAction::kind`] maps an action to it.
+    ///
+    /// Planning asks which actions an unexpanded deferred step might hold, and
+    /// it has no value of each action at hand. A kind answers such questions.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum ActionKind {
+        RunCommand,
+        RunPowerShell,
+        SetVariable,
+        Restart,
+        PartitionDisk,
+        ApplyOsImage,
+        ApplyDrivers,
+        ApplyUnattend,
+        InstallApplications,
+        InstallUpdates,
+        VerifyDrivers,
+        EnableBitLocker,
+        SuspendBitLocker,
+        CheckReadiness,
+        ActivateWindows,
+        ServerCall,
+        AddProvisioningPackage,
+    }
+}
+
+impl ActionKind {
+    /// Whether an add-on's expansion may hold an action of this kind. Six
+    /// may: `RunCommand`, `RunPowerShell`, `SetVariable`, `Restart`,
+    /// `ServerCall`, and `AddProvisioningPackage`.
+    ///
+    /// The match is exhaustive, so a new action does not compile until someone
+    /// decides whether add-ons may use it.
+    pub fn allowed_from_addon(self) -> bool {
+        match self {
+            Self::RunCommand
+            | Self::RunPowerShell
+            | Self::SetVariable
+            | Self::Restart
+            | Self::ServerCall
+            | Self::AddProvisioningPackage => true,
+            Self::PartitionDisk
+            | Self::ApplyOsImage
+            | Self::ApplyDrivers
+            | Self::ApplyUnattend
+            | Self::InstallApplications
+            | Self::InstallUpdates
+            | Self::VerifyDrivers
+            | Self::EnableBitLocker
+            | Self::SuspendBitLocker
+            | Self::CheckReadiness
+            | Self::ActivateWindows => false,
         }
     }
 }
@@ -1525,6 +1601,17 @@ impl core::error::Error for EmptyIdError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn there_is_one_kind_for_each_built_in_action() {
+        // `BuiltinAction`'s derived `Deserialize` lists every action's key
+        // when the key is unknown.
+        let key: StrDeserializer<'_, KeyError> = "".into_deserializer();
+        let Err(KeyError::Unknown { builtins }) = BuiltinAction::deserialize(key) else {
+            panic!("an empty key must be unknown");
+        };
+        assert_eq!(ActionKind::ALL.len(), builtins.len());
+    }
 
     #[test]
     fn source_names_are_the_json_values() {

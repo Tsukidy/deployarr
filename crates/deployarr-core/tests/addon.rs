@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 
 use deployarr_core::action::{
-    Action, BuiltinAction, FileName, SecretSource, StepFile, StepFiles, StepLimits,
+    Action, ActionKind, BuiltinAction, FileName, SecretSource, StepFile, StepFiles, StepLimits,
 };
 use deployarr_core::addon::{AddOnId, AddOnRef, KindId};
 use deployarr_core::join::{JoinProfile, JoinStage};
@@ -679,11 +679,23 @@ fn an_add_on_may_return_six_built_in_actions() {
         (json!({ "activate_windows": { "online": true } }), false),
     ];
 
+    let mut kinds = Vec::new();
     for (action, allowed) in cases {
         let parsed: BuiltinAction =
             serde_json::from_value(action.clone()).expect("the action parses");
         assert_eq!(parsed.allowed_from_addon(), allowed, "{action}");
+        assert_eq!(parsed.kind().allowed_from_addon(), allowed, "{action}");
+        kinds.push(parsed.kind());
     }
+
+    // The cases hold one action of each kind, so every kind gave its answer.
+    // `ActionKind::ALL` has as many kinds as there are actions, so this also
+    // shows that no two actions share a kind.
+    for kind in ActionKind::ALL {
+        let count = kinds.iter().filter(|seen| *seen == kind).count();
+        assert_eq!(count, 1, "{kind:?}");
+    }
+    assert_eq!(kinds.len(), ActionKind::ALL.len());
 }
 
 #[test]
