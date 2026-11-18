@@ -15,6 +15,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, forward_to_deseria
 use uuid::Uuid;
 
 use crate::addon::AddOnStep;
+use crate::form::FieldKey;
 use crate::join::JoinStage;
 use crate::non_empty::{NonEmpty, NonEmptySeed};
 use crate::sequence::RunIn;
@@ -1382,12 +1383,47 @@ non_empty_id!(OsImageRef);
 non_empty_id!(UnattendTemplateId);
 non_empty_id!(ContentRef);
 non_empty_id!(AppId);
-non_empty_id!(
-    /// Names a secret that the server holds, such as a provisioning package.
-    /// It never holds the secret's value. Only an action that the base defines
-    /// to take a secret has a field of this type.
-    SecretRef
-);
+
+/// Names a secret file field of the add-on that expanded the step, such as
+/// `{"source": "step_config", "field": "package"}`. The server holds the
+/// secret, and the reference never holds its value. Only an action that the
+/// base defines to take a secret has a field of this type.
+///
+/// It holds no add-on ID. The server finds the add-on and its config from the
+/// deployment and the node, as it does for a `ServerCall`, so a reference
+/// cannot name another add-on's field. [`crate::lower::lower`] checks that
+/// the source fits the step that the expansion replaces.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecretRef {
+    pub source: SecretSource,
+    /// The key of the field in the source's form.
+    pub field: FieldKey,
+}
+
+/// The document that holds the field a [`SecretRef`] names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretSource {
+    /// The config of the add-on step that the expansion replaces.
+    StepConfig,
+    /// The deployment's join profile, in the expansion of a join slot.
+    JoinProfile,
+    /// The settings of the add-on that expanded the step. Written as
+    /// `addon_settings`, because the snake case rule alone gives
+    /// `add_on_settings`.
+    #[serde(rename = "addon_settings")]
+    AddOnSettings,
+}
+
+/// The source as the JSON format writes it.
+pub(crate) fn source_name(source: SecretSource) -> &'static str {
+    match source {
+        SecretSource::StepConfig => "step_config",
+        SecretSource::JoinProfile => "join_profile",
+        SecretSource::AddOnSettings => "addon_settings",
+    }
+}
 
 /// The longest [`FileName`].
 pub const FILE_NAME_MAX_LEN: usize = 255;
@@ -1467,7 +1503,7 @@ impl fmt::Display for FileNameError {
 
 impl core::error::Error for FileNameError {}
 
-fn check_not_empty(text: &str) -> Result<(), EmptyIdError> {
+pub(crate) fn check_not_empty(text: &str) -> Result<(), EmptyIdError> {
     if text.is_empty() {
         Err(EmptyIdError)
     } else {
@@ -1485,3 +1521,20 @@ impl fmt::Display for EmptyIdError {
 }
 
 impl core::error::Error for EmptyIdError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_names_are_the_json_values() {
+        for source in [
+            SecretSource::StepConfig,
+            SecretSource::JoinProfile,
+            SecretSource::AddOnSettings,
+        ] {
+            let json = serde_json::to_value(source).expect("a source serializes");
+            assert_eq!(json.as_str(), Some(source_name(source)));
+        }
+    }
+}

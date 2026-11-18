@@ -113,7 +113,11 @@ fn server_call() -> Value {
 }
 
 fn provisioning_package() -> Value {
-    json!({ "add_provisioning_package": { "package": "enrollment_package" } })
+    json!({
+        "add_provisioning_package": {
+            "package": { "source": "step_config", "field": "enrollment_package" },
+        },
+    })
 }
 
 fn wmi() -> Value {

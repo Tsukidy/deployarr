@@ -3,7 +3,9 @@
 
 use std::collections::BTreeSet;
 
-use deployarr_core::action::{Action, BuiltinAction, FileName, StepFile, StepFiles, StepLimits};
+use deployarr_core::action::{
+    Action, BuiltinAction, FileName, SecretSource, StepFile, StepFiles, StepLimits,
+};
 use deployarr_core::addon::{AddOnId, AddOnRef, KindId};
 use deployarr_core::join::{JoinProfile, JoinStage};
 use deployarr_core::sequence::{AuthoredSequence, LoweredSequence, Node, ParseError, Step};
@@ -343,6 +345,50 @@ fn a_bad_field_fails_with_its_full_path() {
     }
 }
 
+/// The document with an `AddProvisioningPackage` in place of the built-in
+/// step. The parser reads one outside an expansion, and `validate` and
+/// `lower` reject it.
+fn document_with_package(package: Value) -> Value {
+    let mut document = document();
+    *document.pointer_mut(SET).expect("the step") =
+        json!({ "add_provisioning_package": { "package": package } });
+    document
+}
+
+#[test]
+fn a_bad_secret_reference_fails_with_its_full_path() {
+    let good = json!({ "source": "step_config", "field": "package" });
+    parse(&document_with_package(good)).unwrap_or_else(|error| panic!("{error}"));
+
+    let at = "root.children[1].step.action.add_provisioning_package.package";
+    let cases = [
+        (
+            json!("enrollment_package"),
+            at.to_owned(),
+            "invalid type: string",
+        ),
+        (
+            json!({ "source": "settings", "field": "package" }),
+            format!("{at}.source"),
+            "unknown variant `settings`",
+        ),
+        (
+            json!({ "source": "step_config", "field": "package", "addon": "acme.autopilot" }),
+            format!("{at}.addon"),
+            "unknown field `addon`",
+        ),
+        (
+            json!({ "source": "step_config", "field": "" }),
+            format!("{at}.field"),
+            "a field key must not be empty",
+        ),
+    ];
+
+    for (package, path, message) in cases {
+        assert_fails(&document_with_package(package), &path, message);
+    }
+}
+
 #[test]
 fn a_lowered_sequence_holds_no_add_on_step() {
     let error = LoweredSequence::from_json(&document_with_unknown_add_on())
@@ -505,7 +551,9 @@ fn the_new_built_in_actions_have_their_json_keys() {
     }))
     .expect("the action parses");
     let package: BuiltinAction = serde_json::from_value(json!({
-        "add_provisioning_package": { "package": "enrollment_package" },
+        "add_provisioning_package": {
+            "package": { "source": "addon_settings", "field": "enrollment_package" },
+        },
     }))
     .expect("the action parses");
 
@@ -521,13 +569,72 @@ fn the_new_built_in_actions_have_their_json_keys() {
     let BuiltinAction::AddProvisioningPackage { package, limits } = package else {
         panic!("expected AddProvisioningPackage, found {package:?}");
     };
-    assert_eq!(package.as_str(), "enrollment_package");
+    assert_eq!(package.source, SecretSource::AddOnSettings);
+    assert_eq!(package.field.as_str(), "enrollment_package");
     assert_eq!(limits, StepLimits::default());
+    let empty = serde_json::from_value::<BuiltinAction>(json!({
+        "add_provisioning_package": {
+            "package": { "source": "step_config", "field": "" },
+        },
+    }))
+    .expect_err("an empty field key must not parse");
     assert!(
-        serde_json::from_value::<BuiltinAction>(json!({
-            "add_provisioning_package": { "package": "" },
-        }))
-        .is_err()
+        empty.to_string().contains("a field key must not be empty"),
+        "{empty}"
+    );
+}
+
+/// An `add_provisioning_package` action with this package and the default
+/// limits, in the form that the serializer writes.
+fn package_action(package: &str) -> String {
+    format!(
+        r#"{{"add_provisioning_package":{{"package":{package},"limits":{{"max_runtime_secs":null,"rerun_if_interrupted":false}}}}}}"#
+    )
+}
+
+#[test]
+fn a_provisioning_package_from_each_source_round_trips() {
+    let cases = [
+        ("step_config", SecretSource::StepConfig),
+        ("join_profile", SecretSource::JoinProfile),
+        ("addon_settings", SecretSource::AddOnSettings),
+    ];
+
+    for (name, source) in cases {
+        let text = package_action(&format!(r#"{{"source":"{name}","field":"package"}}"#));
+
+        let built_in: BuiltinAction =
+            serde_json::from_str(&text).unwrap_or_else(|error| panic!("{text}: {error}"));
+        let authored: Action =
+            serde_json::from_str(&text).unwrap_or_else(|error| panic!("{text}: {error}"));
+
+        let BuiltinAction::AddProvisioningPackage { package, .. } = &built_in else {
+            panic!("expected AddProvisioningPackage, found {built_in:?}");
+        };
+        assert_eq!(package.source, source);
+        assert_eq!(package.field.as_str(), "package");
+        assert_eq!(authored, Action::Builtin(built_in.clone()));
+        for written in [
+            serde_json::to_string(&built_in).expect("an action serializes"),
+            serde_json::to_string(&authored).expect("an action serializes"),
+        ] {
+            assert_eq!(written, text);
+        }
+    }
+}
+
+#[test]
+fn add_on_settings_is_an_unknown_secret_source() {
+    let text = package_action(r#"{"source":"add_on_settings","field":"package"}"#);
+
+    let error =
+        serde_json::from_str::<BuiltinAction>(&text).expect_err("`add_on_settings` must not parse");
+
+    assert!(
+        error.to_string().contains(
+            "unknown variant `add_on_settings`, expected one of `step_config`, `join_profile`, `addon_settings`"
+        ),
+        "{error}"
     );
 }
 
@@ -549,7 +656,11 @@ fn an_add_on_may_return_six_built_in_actions() {
         (json!({ "restart": { "into": "installed_os" } }), true),
         (json!({ "server_call": { "send": [] } }), true),
         (
-            json!({ "add_provisioning_package": { "package": "p" } }),
+            json!({
+                "add_provisioning_package": {
+                    "package": { "source": "step_config", "field": "p" },
+                },
+            }),
             true,
         ),
         (json!({ "partition_disk": { "layout": "uefi-gpt" } }), false),
@@ -580,7 +691,11 @@ fn only_server_call_and_add_provisioning_package_come_only_from_an_add_on() {
     let cases = [
         (json!({ "server_call": { "send": [] } }), true),
         (
-            json!({ "add_provisioning_package": { "package": "p" } }),
+            json!({
+                "add_provisioning_package": {
+                    "package": { "source": "step_config", "field": "p" },
+                },
+            }),
             true,
         ),
         (
@@ -698,4 +813,27 @@ fn an_add_on_join_profile_keeps_its_config_bytes() {
         },
     });
     assert!(serde_json::from_value::<JoinProfile>(domain).is_err());
+}
+
+#[test]
+fn a_domain_profiles_password_stays_a_non_empty_string() {
+    let text = r#"{"domain":{"domain":"corp.example","ou":"OU=PCs,DC=corp,DC=example","account":"join","password":"domain-join-password"}}"#;
+
+    let profile: JoinProfile = serde_json::from_str(text).expect("the profile parses");
+
+    let JoinProfile::Domain { password, .. } = &profile else {
+        panic!("expected a domain profile, found {profile:?}");
+    };
+    assert_eq!(password.as_str(), "domain-join-password");
+    assert_eq!(
+        serde_json::to_string(&profile).expect("a profile serializes"),
+        text
+    );
+    for bad in [r#""""#, r#"{"source":"join_profile","field":"password"}"#] {
+        let text = text.replace(r#""domain-join-password""#, bad);
+        assert!(
+            serde_json::from_str::<JoinProfile>(&text).is_err(),
+            "{text} must not parse"
+        );
+    }
 }

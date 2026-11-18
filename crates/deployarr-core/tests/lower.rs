@@ -1,7 +1,7 @@
 //! `deferred` and `lower`, which put the built-in steps that add-ons return in
 //! place of add-on steps and join slots.
 
-use deployarr_core::action::{Action, BuiltinAction};
+use deployarr_core::action::{Action, BuiltinAction, SecretSource};
 use deployarr_core::compile::compile;
 use deployarr_core::join::JoinStage;
 use deployarr_core::lower::{DeferredKind, Expansions, LowerError, LowerRule, deferred, lower};
@@ -89,7 +89,17 @@ fn server_call() -> Value {
 }
 
 fn provisioning_package() -> Value {
-    json!({ "add_provisioning_package": { "package": "enrollment_package" } })
+    package_from("step_config")
+}
+
+/// An `AddProvisioningPackage` whose package is the `package` field of
+/// `source`.
+fn package_from(source: &str) -> Value {
+    json!({
+        "add_provisioning_package": {
+            "package": { "source": source, "field": "package" },
+        },
+    })
 }
 
 /// The root holds a built-in step, the add-on step 2, and the join slot 3.
@@ -636,4 +646,91 @@ fn an_expansion_may_hold_a_server_call_and_a_provisioning_package() {
         BuiltinAction::AddProvisioningPackage { .. }
     ));
     compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+}
+
+#[test]
+fn an_add_on_steps_expansion_may_name_its_step_config_or_its_add_on_settings() {
+    let sequence = sequence(vec![step(2, "win_pe", add_on())]);
+    let expansions = Expansions::from([(
+        id(2),
+        vec![
+            child(0x100, "win_pe", package_from("step_config")),
+            child(0x101, "win_pe", package_from("addon_settings")),
+        ],
+    )]);
+
+    let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
+
+    compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+}
+
+#[test]
+fn lower_rejects_a_join_profile_secret_in_an_add_on_steps_expansion() {
+    let sequence = sequence(vec![step(2, "win_pe", add_on())]);
+    let expansions = Expansions::from([(
+        id(2),
+        vec![
+            child(0x100, "win_pe", package_from("step_config")),
+            child(0x101, "win_pe", package_from("join_profile")),
+        ],
+    )]);
+
+    assert_rejects(
+        &sequence,
+        &expansions,
+        &[error(
+            2,
+            LowerRule::SecretSource {
+                child: 1,
+                source: SecretSource::JoinProfile,
+            },
+        )],
+    );
+    let errors = lower(&sequence, &expansions).expect_err("the expansion must not lower");
+    assert!(
+        errors
+            .to_string()
+            .contains("child 1 names a secret in `join_profile`"),
+        "{errors}"
+    );
+}
+
+#[test]
+fn a_join_slots_expansion_may_name_the_join_profile_or_its_add_on_settings() {
+    let sequence = sequence(vec![step(3, "win_pe", join_slot("offline_image"))]);
+    let expansions = Expansions::from([(
+        id(3),
+        vec![
+            child(0x100, "win_pe", package_from("join_profile")),
+            child(0x101, "win_pe", package_from("addon_settings")),
+        ],
+    )]);
+
+    let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
+
+    compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+}
+
+#[test]
+fn lower_rejects_a_step_config_secret_in_a_join_slots_expansion() {
+    let sequence = sequence(vec![step(3, "full_os", join_slot("full_os"))]);
+    let expansions = Expansions::from([(
+        id(3),
+        vec![
+            child(0x100, "full_os", package_from("step_config")),
+            child(0x101, "full_os", package_from("join_profile")),
+        ],
+    )]);
+
+    assert_rejects(
+        &sequence,
+        &expansions,
+        &[error(
+            3,
+            LowerRule::SecretSource {
+                child: 0,
+                source: SecretSource::StepConfig,
+            },
+        )],
+    );
 }
