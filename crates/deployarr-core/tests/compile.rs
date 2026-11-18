@@ -104,6 +104,18 @@ fn unattend() -> Value {
     json!({ "apply_unattend": { "template": "standard" } })
 }
 
+fn restart_into_win_pe() -> Value {
+    json!({ "restart": { "into": "win_pe" } })
+}
+
+fn enable_bitlocker() -> Value {
+    json!({ "enable_bitlocker": {} })
+}
+
+fn suspend_bitlocker() -> Value {
+    json!({ "suspend_bitlocker": { "restarts": 2 } })
+}
+
 fn installed_msi() -> Value {
     json!({ "installed_msi": { "product_code": "23170f69-40c1-2702-2408-000001000000" } })
 }
@@ -284,11 +296,11 @@ fn the_sample_compiles_to_a_flat_program() {
     assert_eq!(program.source().0.as_str(), "W11-PRO-STD");
     assert_eq!(program.source().1, 7);
     // The root, then "Install Windows" with its 8 steps, then "Finish in
-    // Windows" with 6 of its 7 steps. Its sixth step, 0x10, is disabled.
+    // Windows" with 8 of its 9 steps. Its eighth step, 0x10, is disabled.
     assert_eq!(
         shapes(&program),
         [
-            Enter(0x01, 17),
+            Enter(0x01, 19),
             Enter(0x0a, 10),
             Exec(0x02, FailDeployment),
             Exec(0x03, FailDeployment),
@@ -298,16 +310,18 @@ fn the_sample_compiles_to_a_flat_program() {
             Exec(0x07, FailDeployment),
             Exec(0x08, Continue),
             Exec(0x09, FailDeployment),
-            Enter(0x11, 17),
+            Enter(0x11, 19),
             Exec(0x0b, FailDeployment),
             Exec(0x0c, FailDeployment),
             Exec(0x0d, FailDeployment),
             Exec(0x0e, FailDeployment),
             Exec(0x0f, FailDeployment),
+            Exec(0x13, FailDeployment),
+            Exec(0x14, FailDeployment),
             Exec(0x12, FailDeployment),
         ]
     );
-    assert_eq!(program.end(), Pc(17));
+    assert_eq!(program.end(), Pc(19));
 
     // Each instruction carries its node's condition, and each step its
     // `run_in` and action.
@@ -597,7 +611,7 @@ fn a_disabled_root_compiles_to_an_empty_program() {
 
 #[test]
 fn each_action_allows_only_the_run_in_values_in_its_table() {
-    let table: [(&str, Value, &[&str]); 13] = [
+    let table: [(&str, Value, &[&str]); 15] = [
         ("partition_disk", partition(), &["win_pe"]),
         ("apply_os_image", apply_image(), &["win_pe"]),
         (
@@ -635,6 +649,8 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
             json!({ "activate_windows": { "online": true } }),
             &["full_os"],
         ),
+        ("enable_bitlocker", enable_bitlocker(), &["full_os"]),
+        ("suspend_bitlocker", suspend_bitlocker(), &["full_os"]),
         ("run_command", command(), &["win_pe", "full_os", "either"]),
         (
             "run_powershell",
@@ -1080,6 +1096,148 @@ fn a_sequence_with_no_apply_os_image_fails_for_each_apply_drivers_and_apply_unat
             ),
         ]
     );
+}
+
+#[test]
+fn a_restart_into_win_pe_after_enable_bitlocker_fails() {
+    let cases = [
+        // Directly after the BitLocker step.
+        (
+            root(vec![
+                step(0x02, "full_os", enable_bitlocker()),
+                step(0x03, "full_os", restart_into_win_pe()),
+            ]),
+            0x03,
+            vec![1],
+        ),
+        // Whatever the restart's `run_in`.
+        (
+            root(vec![
+                step(0x02, "win_pe", partition()),
+                step(0x03, "full_os", enable_bitlocker()),
+                step(0x04, "either", restart_into_win_pe()),
+            ]),
+            0x04,
+            vec![2],
+        ),
+        (
+            root(vec![
+                step(0x02, "win_pe", partition()),
+                step(0x03, "full_os", enable_bitlocker()),
+                step(0x04, "win_pe", restart_into_win_pe()),
+            ]),
+            0x04,
+            vec![2],
+        ),
+        // In a later group, after a step that suspends BitLocker.
+        (
+            root(vec![
+                group(0x02, vec![step(0x03, "full_os", enable_bitlocker())]),
+                group(
+                    0x04,
+                    vec![
+                        step(0x05, "full_os", suspend_bitlocker()),
+                        step(0x06, "full_os", restart_into_win_pe()),
+                    ],
+                ),
+            ]),
+            0x06,
+            vec![1, 1],
+        ),
+        // After a disabled BitLocker step and an enabled one.
+        (
+            root(vec![
+                disabled(step(0x02, "full_os", enable_bitlocker())),
+                step(0x03, "full_os", enable_bitlocker()),
+                step(0x04, "full_os", restart_into_win_pe()),
+            ]),
+            0x04,
+            vec![2],
+        ),
+    ];
+
+    for (document, node, path) in cases {
+        assert_eq!(
+            compile_err(&document),
+            [error(node, path, Rule::RestartIntoWinPeAfterBitLocker)],
+            "{document}"
+        );
+    }
+}
+
+#[test]
+fn every_restart_into_win_pe_after_enable_bitlocker_fails() {
+    let document = root(vec![
+        step(0x02, "full_os", enable_bitlocker()),
+        step(0x03, "full_os", restart_into_win_pe()),
+        step(0x04, "full_os", restart()),
+        step(0x05, "full_os", restart_into_win_pe()),
+    ]);
+
+    let errors = compile_err(&document);
+
+    assert_eq!(
+        errors,
+        [
+            error(0x03, vec![1], Rule::RestartIntoWinPeAfterBitLocker),
+            error(0x05, vec![3], Rule::RestartIntoWinPeAfterBitLocker),
+        ]
+    );
+    assert_eq!(
+        errors[0].to_string(),
+        format!(
+            "root.children[1], node {}: a `restart` with `into` `win_pe` must not come after an `enable_bitlocker` step. The state is on the Windows volume, and the agent in WinPE cannot read it once BitLocker protects that volume",
+            id_text(0x03)
+        )
+    );
+}
+
+#[test]
+fn a_restart_into_win_pe_after_a_disabled_enable_bitlocker_compiles() {
+    let documents = [
+        root(vec![
+            disabled(step(0x02, "full_os", enable_bitlocker())),
+            step(0x03, "full_os", restart_into_win_pe()),
+        ]),
+        root(vec![
+            disabled(group(0x02, vec![step(0x03, "full_os", enable_bitlocker())])),
+            step(0x04, "full_os", restart_into_win_pe()),
+        ]),
+    ];
+
+    for document in documents {
+        compile_ok(&document);
+    }
+}
+
+#[test]
+fn other_restarts_around_enable_bitlocker_compile() {
+    let documents = [
+        // A restart into the installed OS after the BitLocker step.
+        root(vec![
+            step(0x02, "full_os", enable_bitlocker()),
+            step(0x03, "full_os", restart()),
+        ]),
+        // A restart into WinPE before the BitLocker step.
+        root(vec![
+            step(0x02, "full_os", restart_into_win_pe()),
+            step(0x03, "full_os", enable_bitlocker()),
+        ]),
+        // A disabled restart into WinPE after the BitLocker step.
+        root(vec![
+            step(0x02, "full_os", enable_bitlocker()),
+            disabled(step(0x03, "full_os", restart_into_win_pe())),
+        ]),
+        // A restart into WinPE after a step that only suspends BitLocker.
+        root(vec![
+            step(0x02, "full_os", suspend_bitlocker()),
+            step(0x03, "full_os", restart_into_win_pe()),
+        ]),
+    ];
+
+    for document in documents {
+        compile_ok(&document);
+    }
 }
 
 #[test]

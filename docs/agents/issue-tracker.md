@@ -141,6 +141,7 @@ Do not delete the gone session's claim comment. A deletion can hand the ticket t
 Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone.
 
 - If your prompt names an issue for you to work on, work on that issue, whatever its labels, and keep its state label. A prompt that asks you to triage an issue or break an epic into tickets is not a request to work on it, and you do not claim it.
+- Never work on an issue in `needs-triage` without the owner's direct approval of that issue. This holds for issues that you or your subagents filed. Direct approval means the owner names the issue in your prompt, or approves that issue by number in the session. An answer about the same work that the owner gave before you saw the issue does not count. Treat an issue that the owner approves in the session like an issue your prompt names. Never relabel a `needs-triage` issue so that you can take it. Only triage that the owner asked for changes its state.
 - If the prompt gives input, such as a decision or lab results, first post it on the issue as a comment that starts with `Owner input:`, so a later session can find it.
 - Claim a named issue with the steps in [Claim](#claim). If another branch holds it and the prompt names that branch as gone, release that branch's claim as described under [Stale claims](#stale-claims) first.
 - Otherwise, take the first ticket on the [frontier](#frontier). Never take an issue in any other state.
@@ -160,7 +161,7 @@ A session works on a fixed list of issues, set when it starts.
 - At the start, list the issues you will work on, and tell the owner. For a named issue or one ticket, the list is that issue. For a run over the frontier or over `needs-triage`, it is the issues there when you start. Claim comments mark the tickets on it.
 - Finish the issues on your list. Review fixes and merge conflicts on your own pull requests are part of that work. A triage run also triages the issues it files itself.
 - Do not move on to an issue that another session opens while you work, or to a ticket that becomes unblocked after you start, without the owner's permission. You may ask.
-- When your list is done, report and stop. Do not list the frontier again. A triage run first lists `needs-triage` once more and changes nothing there. Its report names the issues that entered `needs-triage` during the run and tells the owner to start a new session for them.
+- When your list is done, report and stop. A run over the frontier or over `needs-triage` first lists it once more and changes nothing there. Its report names the issues that joined it during the run and tells the owner to start a new session for them.
 
 ## Branches in a cloud session
 

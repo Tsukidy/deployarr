@@ -11,7 +11,7 @@ use alloc::collections::btree_map::Entry;
 use alloc::vec::Vec;
 use core::fmt;
 
-use crate::action::BuiltinAction;
+use crate::action::{BuiltinAction, RestartTarget};
 use crate::condition::Condition;
 use crate::non_empty::NonEmpty;
 use crate::sequence::{
@@ -130,6 +130,8 @@ struct Compiler {
     partitioned: bool,
     /// Whether the program holds an `ApplyOsImage` step so far.
     imaged: bool,
+    /// Whether the program holds an `EnableBitLocker` step so far.
+    bitlocker_enabled: bool,
 }
 
 /// Whether the program keeps a node.
@@ -254,8 +256,14 @@ impl Compiler {
         match step.action {
             BuiltinAction::PartitionDisk { .. } => self.partitioned = true,
             BuiltinAction::ApplyOsImage { .. } => self.imaged = true,
-            BuiltinAction::Restart { .. } if step.run_in == RunIn::WinPe && !self.partitioned => {
-                self.fail(step.meta.id, Rule::RestartBeforePartition);
+            BuiltinAction::EnableBitLocker { .. } => self.bitlocker_enabled = true,
+            BuiltinAction::Restart { into } => {
+                if step.run_in == RunIn::WinPe && !self.partitioned {
+                    self.fail(step.meta.id, Rule::RestartBeforePartition);
+                }
+                if into == RestartTarget::WinPe && self.bitlocker_enabled {
+                    self.fail(step.meta.id, Rule::RestartIntoWinPeAfterBitLocker);
+                }
             }
             BuiltinAction::ApplyDrivers { .. } | BuiltinAction::ApplyUnattend { .. }
                 if !self.imaged =>
@@ -340,6 +348,8 @@ pub(crate) fn action_name(action: &BuiltinAction) -> &'static str {
         BuiltinAction::InstallApplications { .. } => "install_applications",
         BuiltinAction::InstallUpdates { .. } => "install_updates",
         BuiltinAction::VerifyDrivers { .. } => "verify_drivers",
+        BuiltinAction::EnableBitLocker { .. } => "enable_bitlocker",
+        BuiltinAction::SuspendBitLocker { .. } => "suspend_bitlocker",
         BuiltinAction::CheckReadiness { .. } => "check_readiness",
         BuiltinAction::ActivateWindows { .. } => "activate_windows",
         BuiltinAction::ServerCall { .. } => "server_call",
@@ -433,6 +443,13 @@ pub enum Rule {
     /// `ApplyOsImage` step in a group with a condition still comes before.
     /// The program drops disabled nodes, so they do not count.
     BeforeOsImage { action: &'static str },
+    /// The step is a `Restart` with `into` `WinPe`, and an `EnableBitLocker`
+    /// step comes before it in program order. After the partition step, the
+    /// state is on the Windows volume. Once BitLocker protects that volume,
+    /// the agent in WinPE cannot read the state there. The architecture labels
+    /// that last point inferred. The program drops disabled nodes, so they do
+    /// not count.
+    RestartIntoWinPeAfterBitLocker,
     /// An earlier node in the tree, at `first`, has the same ID. Disabled
     /// nodes count.
     DuplicateNodeId { first: NodePath },
@@ -452,6 +469,7 @@ impl Rule {
             Self::FullOsCondition { .. } => true,
             Self::RunIn { .. }
             | Self::RestartBeforePartition
+            | Self::RestartIntoWinPeAfterBitLocker
             | Self::BeforeOsImage { .. }
             | Self::DuplicateNodeId { .. } => false,
         }
@@ -485,6 +503,9 @@ impl fmt::Display for Rule {
             Self::BeforeOsImage { action } => write!(
                 f,
                 "`{action}` acts on the applied image, so it must come after the first `apply_os_image` step"
+            ),
+            Self::RestartIntoWinPeAfterBitLocker => f.write_str(
+                "a `restart` with `into` `win_pe` must not come after an `enable_bitlocker` step. The state is on the Windows volume, and the agent in WinPE cannot read it once BitLocker protects that volume",
             ),
             Self::DuplicateNodeId { first } => {
                 write!(f, "the node at `{first}` has the same ID")
@@ -573,7 +594,7 @@ mod tests {
             seen.insert(action_name(action));
         }
         // Every action was checked.
-        assert_eq!(seen.len(), 15);
+        assert_eq!(seen.len(), 17);
     }
 
     #[test]
