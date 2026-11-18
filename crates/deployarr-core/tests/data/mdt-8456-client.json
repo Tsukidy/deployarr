@@ -911,11 +911,9 @@
 									"enabled": false,
 									"continue_on_error": true
 								},
-								"run_in": "either",
+								"run_in": "full_os",
 								"action": {
-									"run_command": {
-										"command": "placeholder: Windows Update before the applications (MDT runs ZTIWindowsUpdate.wsf)"
-									}
+									"install_updates": {}
 								}
 							}
 						},
@@ -945,11 +943,9 @@
 									"enabled": false,
 									"continue_on_error": true
 								},
-								"run_in": "either",
+								"run_in": "full_os",
 								"action": {
-									"run_command": {
-										"command": "placeholder: Windows Update after the applications (MDT runs ZTIWindowsUpdate.wsf)"
-									}
+									"install_updates": {}
 								}
 							}
 						},

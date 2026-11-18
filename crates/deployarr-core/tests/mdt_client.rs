@@ -18,8 +18,9 @@
 //!   a `var` condition. The `or` around the Validation group's one condition
 //!   becomes an `any` with one child.
 //! - A step becomes the action for its feature, with a `run_in` that the
-//!   compiler's table allows. MDT marks most steps `WinPEandFullOS`, which is
-//!   `either` for the actions that allow it.
+//!   compiler's table allows, when the compiler accepts the step and the
+//!   action does what MDT's step does. MDT marks most steps `WinPEandFullOS`,
+//!   which is `either` for the actions that allow it.
 //! - "Next Phase" runs `ZTINextPhase.wsf`, which moves `PHASE` to the next
 //!   phase (`scripts/ZTINextPhase.wsf:74-91`). Each one becomes a
 //!   `set_variable` of `PHASE` to the next phase. After Preinstall that is
@@ -57,11 +58,24 @@
 //!   `placeholder: tattoo (MDT runs ZTITatoo.wsf)`, and no two are the same.
 //!   It never holds MDT's command line, because this repository holds no
 //!   Microsoft files. A comment in [`OUTLINE`] also names each placeholder's
-//!   feature. User state migration, BitLocker, and Windows Update
-//!   are in the architecture's "Not in the first release". The comment
-//!   `refresh` marks a step that only a refresh runs. A refresh starts in the
-//!   old Windows (`scripts/LiteTouch.wsf:380-389`), and its State Capture phase
-//!   saves the user state (`Templates/Client.xml:61-70`).
+//!   feature. User state migration is in the architecture's "Not in the first
+//!   release". The comment `refresh` marks a step that only a refresh runs. A
+//!   refresh starts in the old Windows (`scripts/LiteTouch.wsf:380-389`), and
+//!   its State Capture phase saves the user state
+//!   (`Templates/Client.xml:61-70`).
+//! - The three BitLocker steps stay placeholders. The compiler rejects a
+//!   `restart` into WinPE after an `enable_bitlocker` step in program order
+//!   ([Compile the tree into a flat program](../../../docs/architecture.md#compile-the-tree-into-a-flat-program)).
+//!   The Capture Image group's restart into WinPE, at line 480, comes after
+//!   "Enable BitLocker", at line 398, so that step cannot become
+//!   `enable_bitlocker`. "Enable BitLocker (Offline)" pre-provisions BitLocker
+//!   in WinPE, which deployarr does not do
+//!   ([No pre-provisioning in WinPE](../../../docs/architecture.md#no-pre-provisioning-in-winpe)).
+//!   "Disable BDE Protectors" suspends the key protectors with a count of 0.
+//!   That count keeps them off until "Enable BitLocker" turns them back on
+//!   ([MDT 8456 reference](../../../docs/research/mdt-8456.md#suspending-before-a-refresh)).
+//!   `suspend_bitlocker` leaves 0 out
+//!   ([Suspend BitLocker](../../../docs/architecture.md#suspend-bitlocker)).
 //! - `LiteTouch.wsf` sets `PHASE` and `DeploymentType` when a deployment
 //!   starts (`scripts/LiteTouch.wsf:371-391`). deployarr has no such script,
 //!   so the port sets both as sequence defaults, to the values for a start in
@@ -153,9 +167,9 @@ const OUTLINE: &[&str] = &[
     "372     step Recover From Domain: run_command, run_in=either", // checks the join that the answer file made, no deployarr feature
     "378     step Tattoo: run_command, run_in=either, continue on error", // no deployarr feature
     "381     step Opt In to CEIP and WER: run_command, run_in=either, continue on error, disabled", // no deployarr feature
-    "384     step Windows Update (Pre-Application Installation): run_command, run_in=either, continue on error, disabled", // Windows Update
+    "384     step Windows Update (Pre-Application Installation): install_updates, run_in=full_os, continue on error, disabled",
     "387     step Install Applications: install_applications apps={\"from_list\":\"Applications\"}, run_in=full_os",
-    "394     step Windows Update (Post-Application Installation): run_command, run_in=either, continue on error, disabled", // Windows Update
+    "394     step Windows Update (Post-Application Installation): install_updates, run_in=full_os, continue on error, disabled",
     "397     group Custom Tasks",
     "398     step Enable BitLocker: run_command, run_in=either, if BdeInstallSuppress not_equals YES, continue on error", // BitLocker
     "415     step Restore User State: run_command, run_in=either", // user state migration
@@ -372,7 +386,7 @@ fn each_placeholder_names_its_feature_and_the_mdt_script() {
 
     commands(&fixture["root"], &mut all);
 
-    assert_eq!(all.len(), 40);
+    assert_eq!(all.len(), 38);
     for command in &all {
         let (feature, script) = command
             .strip_prefix("placeholder: ")
