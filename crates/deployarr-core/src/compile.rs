@@ -469,6 +469,7 @@ impl Rule {
             Self::FullOsCondition { .. } => true,
             Self::RunIn { .. }
             | Self::RestartBeforePartition
+            | Self::RestartIntoWinPeAfterBitLocker
             | Self::BeforeOsImage { .. }
             | Self::DuplicateNodeId { .. } => false,
         }

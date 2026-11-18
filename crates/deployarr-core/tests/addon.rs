@@ -606,6 +606,8 @@ fn only_server_call_and_add_provisioning_package_come_only_from_an_add_on() {
         ),
         (json!({ "install_updates": {} }), false),
         (json!({ "verify_drivers": { "policy": "warn" } }), false),
+        (json!({ "enable_bitlocker": {} }), false),
+        (json!({ "suspend_bitlocker": { "restarts": 1 } }), false),
         (json!({ "check_readiness": {} }), false),
         (json!({ "activate_windows": { "online": true } }), false),
     ];

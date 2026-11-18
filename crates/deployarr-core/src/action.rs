@@ -396,6 +396,8 @@ impl BuiltinAction {
             | Self::InstallApplications { .. }
             | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
+            | Self::EnableBitLocker { .. }
+            | Self::SuspendBitLocker { .. }
             | Self::CheckReadiness { .. }
             | Self::ActivateWindows { .. } => false,
         }
