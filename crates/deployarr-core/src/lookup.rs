@@ -195,7 +195,10 @@ impl fmt::Debug for PromptAnswers {
 }
 
 /// What an add-on resolver declares that it reads.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// It is written as `"identity"`, or as `{"prompt": "order-number"}`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ResolverInput {
     /// The PC's usable identity facts.
     Identity,

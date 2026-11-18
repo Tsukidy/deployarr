@@ -9,6 +9,15 @@ publish.workspace = true
 # the crate for `x86_64-unknown-none`, which ships no `std`, to check this. Turn
 # off a dependency's default features when they pull in `std`.
 [dependencies]
+# `form::Pattern` checks text values. The meta engine with the PikeVM matches
+# in time linear in the text, and needs only `alloc`. `unicode` gives the
+# Perl classes and case folding that `regex` patterns expect.
+regex-automata = { version = "0.4", default-features = false, features = ["alloc", "meta", "nfa-pikevm", "syntax", "unicode"] }
+# `form::Pattern` anchors the parsed pattern to the whole value.
+regex-syntax = { version = "0.8", default-features = false }
+# `lifecycle` compares add-on versions by SemVer precedence, which ignores
+# build metadata. `Version::cmp_precedence` first shipped in 1.0.20.
+semver = { version = "1.0.20", default-features = false }
 serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
 # `raw_value` keeps an add-on step's config as the JSON text that was saved.
 serde_json = { version = "1", default-features = false, features = ["alloc", "raw_value"] }
@@ -27,3 +36,6 @@ uuid = { version = "1", default-features = false, features = ["serde", "v5"] }
 time = { version = "0.3", features = ["serde-well-known"] }
 # `tests/compile_types.rs` shows that `compile` rejects an authored sequence.
 trybuild = "1"
+# `tests/form.rs` and `tests/prompt.rs` parse form fields and prompts from
+# TOML, as a schema file and a manifest hold them.
+toml = "1"
