@@ -3,7 +3,8 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
-use core::num::NonZeroU32;
+use core::net::Ipv6Addr;
+use core::num::{NonZeroU8, NonZeroU32};
 
 use serde::de::value::StrDeserializer;
 use serde::de::{
@@ -11,6 +12,7 @@ use serde::de::{
     Visitor,
 };
 use serde::{Deserialize, Deserializer, Serialize, Serializer, forward_to_deserialize_any};
+use uuid::Uuid;
 
 use crate::addon::AddOnStep;
 use crate::join::JoinStage;
@@ -242,6 +244,25 @@ pub enum BuiltinAction {
     InstallApplications {
         apps: AppSelection,
     },
+    /// Installs software updates from Windows Update or from a WSUS server,
+    /// in passes. Every field has a default, so `{"install_updates": {}}` is a
+    /// whole step.
+    InstallUpdates {
+        #[serde(default)]
+        source: UpdateSource,
+        /// What the step does when updates are still missing after
+        /// `max_passes` passes.
+        #[serde(default)]
+        missing: MissingUpdatePolicy,
+        /// How many passes may install updates. The default is 7.
+        #[serde(default = "default_max_passes")]
+        max_passes: NonZeroU8,
+        /// Updates that the step never installs. The default is none.
+        #[serde(default)]
+        exclude: Vec<UpdateExclusion>,
+        #[serde(default)]
+        timeouts: UpdateTimeouts,
+    },
     VerifyDrivers {
         policy: MissingDriverPolicy,
     },
@@ -288,6 +309,7 @@ impl BuiltinAction {
             | Self::ApplyUnattend { .. }
             | Self::CheckReadiness { .. } => &[RunIn::WinPe],
             Self::InstallApplications { .. }
+            | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
             | Self::ActivateWindows { .. } => &[RunIn::FullOs],
             Self::RunCommand { .. }
@@ -318,6 +340,7 @@ impl BuiltinAction {
             | Self::ApplyDrivers { .. }
             | Self::ApplyUnattend { .. }
             | Self::InstallApplications { .. }
+            | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
             | Self::CheckReadiness { .. }
             | Self::ActivateWindows { .. } => false,
@@ -777,6 +800,327 @@ pub enum MissingDriverPolicy {
     Warn,
     Ignore,
 }
+
+/// What `InstallUpdates` does when its last search, after `max_passes`
+/// passes, still finds updates to install.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MissingUpdatePolicy {
+    /// The step fails.
+    Fail,
+    /// The step succeeds with a warning.
+    #[default]
+    Warn,
+    /// The step succeeds.
+    Ignore,
+}
+
+/// Where `InstallUpdates` gets updates.
+///
+/// `Deserialize` is written by hand, so that no error repeats a string that
+/// the author wrote in `source`. serde's error for an unknown variant repeats
+/// it, and an author can write the URL itself as the source, such as
+/// `"source": "https://admin:pass@wsus.example.com"`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateSource {
+    /// Microsoft's Windows Update service over the internet.
+    #[default]
+    WindowsUpdate,
+    /// The WSUS server at this URL.
+    Wsus(WsusUrl),
+}
+
+const WINDOWS_UPDATE: &str = "windows_update";
+const WSUS: &str = "wsus";
+
+impl<'de> Deserialize<'de> for UpdateSource {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_enum("UpdateSource", &[WINDOWS_UPDATE, WSUS], UpdateSourceVisitor)
+    }
+}
+
+struct UpdateSourceVisitor;
+
+impl<'de> Visitor<'de> for UpdateSourceVisitor {
+    type Value = UpdateSource;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("an update source")
+    }
+
+    fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> Result<UpdateSource, A::Error> {
+        let (kind, variant) = data.variant()?;
+        match kind {
+            UpdateSourceKind::WindowsUpdate => {
+                // serde's error for `{"windows_update": "..."}` repeats the
+                // string.
+                variant
+                    .unit_variant()
+                    .map_err(|_| de::Error::custom("the `windows_update` source takes no value"))?;
+                Ok(UpdateSource::WindowsUpdate)
+            }
+            UpdateSourceKind::Wsus => variant.newtype_variant().map(UpdateSource::Wsus),
+        }
+    }
+}
+
+/// The key of an [`UpdateSource`].
+enum UpdateSourceKind {
+    WindowsUpdate,
+    Wsus,
+}
+
+impl<'de> Deserialize<'de> for UpdateSourceKind {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_identifier(UpdateSourceKindVisitor)
+    }
+}
+
+struct UpdateSourceKindVisitor;
+
+impl Visitor<'_> for UpdateSourceKindVisitor {
+    type Value = UpdateSourceKind;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("`windows_update` or `wsus`")
+    }
+
+    fn visit_str<E: de::Error>(self, key: &str) -> Result<UpdateSourceKind, E> {
+        match key {
+            WINDOWS_UPDATE => Ok(UpdateSourceKind::WindowsUpdate),
+            WSUS => Ok(UpdateSourceKind::Wsus),
+            // Unlike serde's error, this one does not repeat the key.
+            _ => Err(E::custom(
+                "unknown update source, expected `windows_update` or `wsus`",
+            )),
+        }
+    }
+}
+
+/// An update that `InstallUpdates` never installs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateExclusion {
+    /// A KB article number without the `KB` prefix, such as `5034441`.
+    Kb(NonZeroU32),
+    /// An update ID. It is written as a GUID in lower case without braces.
+    UpdateId(Uuid),
+}
+
+fn default_max_passes() -> NonZeroU8 {
+    const DEFAULT: NonZeroU8 = NonZeroU8::new(7).unwrap();
+    DEFAULT
+}
+
+/// How long one phase of one pass of `InstallUpdates` may take, in whole
+/// seconds. No limit is zero, because a zero limit fails every pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdateTimeouts {
+    /// The default is 3600.
+    pub search_secs: NonZeroU32,
+    /// The default is 7200.
+    pub download_secs: NonZeroU32,
+    /// The default is 7200.
+    pub install_secs: NonZeroU32,
+}
+
+impl Default for UpdateTimeouts {
+    fn default() -> Self {
+        const DEFAULT: UpdateTimeouts = UpdateTimeouts {
+            search_secs: NonZeroU32::new(3600).unwrap(),
+            download_secs: NonZeroU32::new(7200).unwrap(),
+            install_secs: NonZeroU32::new(7200).unwrap(),
+        };
+        DEFAULT
+    }
+}
+
+validated_string! {
+    /// The URL of a WSUS server, such as `https://wsus.example.com:8531`.
+    ///
+    /// It starts with `http://` or `https://` and names a host. A host in
+    /// brackets is an IPv6 address, and no other bracket appears. A port after
+    /// the host is empty or a number from 0 to 65535. At most one `#`
+    /// appears, the one that starts the fragment. It holds only ASCII
+    /// letters, digits, and the symbols `-._~:/?#[]@!$&'()*+,;=%`, which are
+    /// the characters that RFC 3986 allows in a URI. Each `%` starts a
+    /// percent-encoded byte such as `%20`. The parser rejects an `@`
+    /// anywhere in the URL, not only the one that ends user information such
+    /// as `user:pass@`, to keep a credential out of the registry and the logs.
+    /// No error message repeats the text.
+    ///
+    /// The parser accepts the scheme in any case and writes it in lower case,
+    /// its canonical form. It keeps the rest of the URL as written.
+    #[derive(PartialEq, Eq, Hash)]
+    WsusUrl, WsusUrlError, check_wsus_url, lower_case_scheme
+}
+
+/// The schemes of a [`WsusUrl`], each with the `://` that starts its
+/// authority.
+const WSUS_SCHEMES: [&str; 2] = ["http://", "https://"];
+
+/// The symbols that a URI may hold: the unreserved symbols, the reserved
+/// symbols, and the `%` of a percent-encoded byte (RFC 3986, sections 2.1 to
+/// 2.3).
+const URI_SYMBOLS: &str = "-._~:/?#[]@!$&'()*+,;=%";
+
+fn check_wsus_url(text: &str) -> Result<(), WsusUrlError> {
+    if text.is_empty() {
+        return Err(WsusUrlError::Empty);
+    }
+    // A URI holds only letters, digits, and a few graphic symbols (RFC 3986,
+    // section 2). Sections 2.2 and 2.3 list the symbols.
+    if !text
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || URI_SYMBOLS.contains(c))
+    {
+        return Err(WsusUrlError::InvalidChar);
+    }
+    // A `%` starts a percent-encoded byte, a `%` and two hex digits (RFC
+    // 3986, section 2.1).
+    let encoded = |after: &str| {
+        after
+            .get(..2)
+            .is_some_and(|hex| hex.bytes().all(|b| b.is_ascii_hexdigit()))
+    };
+    if !text.split('%').skip(1).all(encoded) {
+        return Err(WsusUrlError::InvalidChar);
+    }
+    // A scheme is case-insensitive, and a parser should accept upper case
+    // (RFC 3986, section 3.1).
+    let rest = WSUS_SCHEMES
+        .iter()
+        .find_map(|scheme| {
+            let (prefix, rest) = text.split_at_checked(scheme.len())?;
+            prefix.eq_ignore_ascii_case(scheme).then_some(rest)
+        })
+        .ok_or(WsusUrlError::Scheme)?;
+    // An `@` in the authority ends the user information (RFC 3986, section
+    // 3.2.1). The owner chose to reject an `@` anywhere, so that a password
+    // whose unencoded `#`, `/`, or `?` ends the authority early still fails.
+    if rest.contains('@') {
+        return Err(WsusUrlError::UserInfo);
+    }
+    // The first `#` starts the fragment (RFC 3986, section 3.5). A fragment
+    // holds path characters, `/`, and `?`, and a path character is never a
+    // `#` (section 3.3).
+    if rest
+        .split_once('#')
+        .is_some_and(|(_, fragment)| fragment.contains('#'))
+    {
+        return Err(WsusUrlError::Fragment);
+    }
+    // The authority ends at the first `/`, `?`, or `#` (RFC 3986, section
+    // 3.2).
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or(rest);
+    // A host in brackets is an IP literal. A bracket appears nowhere else in
+    // a URI (RFC 3986, section 3.2.2).
+    if rest[authority.len()..].contains(['[', ']']) {
+        return Err(WsusUrlError::IpLiteral);
+    }
+    let (host, after_host) = match authority.strip_prefix('[') {
+        Some(literal) => {
+            let (address, after) = literal.split_once(']').ok_or(WsusUrlError::IpLiteral)?;
+            // An IP literal is an IPv6 address or a future format that starts
+            // with a version flag, a `v` and a hex number. An application that
+            // does not know the version flag should return an error (RFC 3986,
+            // section 3.2.2), and deployarr knows none.
+            if address.parse::<Ipv6Addr>().is_err() {
+                return Err(WsusUrlError::IpLiteral);
+            }
+            (address, after)
+        }
+        None => authority.split_at(authority.find(':').unwrap_or(authority.len())),
+    };
+    // An `http` or `https` URI with an empty host is invalid (RFC 9110,
+    // sections 4.2.1 and 4.2.2).
+    if host.is_empty() {
+        return Err(WsusUrlError::NoHost);
+    }
+    // A bracket also fails in a host that is not an IP literal and in the
+    // port.
+    if host.contains(['[', ']']) || after_host.contains(['[', ']']) {
+        return Err(WsusUrlError::IpLiteral);
+    }
+    // A `:` and a port may follow the host. The port is decimal digits (RFC
+    // 3986, section 3.2.3), and an empty port means the default port (RFC
+    // 9110, section 4.2.1).
+    if !after_host.is_empty() {
+        let port = after_host
+            .strip_prefix(':')
+            .ok_or(WsusUrlError::IpLiteral)?;
+        // An `http` or `https` port is a TCP port, which is 16 bits (RFC 9110,
+        // section 4.2.1, and RFC 9293, section 3.1). `u16::from_str` also
+        // takes a leading `+`, which a port never has.
+        let digits = port.bytes().all(|b| b.is_ascii_digit());
+        if !(port.is_empty() || (digits && port.parse::<u16>().is_ok())) {
+            return Err(WsusUrlError::Port);
+        }
+    }
+    Ok(())
+}
+
+/// Writes the scheme of a checked [`WsusUrl`] in lower case.
+fn lower_case_scheme(mut text: String) -> String {
+    if let Some(end) = text.find(':') {
+        text[..end].make_ascii_lowercase();
+    }
+    text
+}
+
+/// Why a [`WsusUrl`] fails to parse. No variant holds the text, so an error
+/// never repeats a credential that the text holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsusUrlError {
+    Empty,
+    /// A character that RFC 3986 allows in no URI, such as a space or a `\`,
+    /// or a `%` without two hex digits after it.
+    InvalidChar,
+    Scheme,
+    /// An `@` anywhere in the URL, which can end user information.
+    UserInfo,
+    NoHost,
+    /// A `[` without its `]`, text between the brackets that is not an IPv6
+    /// address, a bracket elsewhere in the URL, or text other than a `:` and a
+    /// port after the `]`.
+    IpLiteral,
+    /// A port that is not a number from 0 to 65535.
+    Port,
+    /// A second `#`. The first `#` starts the fragment, and a fragment holds
+    /// no `#`.
+    Fragment,
+}
+
+impl fmt::Display for WsusUrlError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "a WSUS URL must not be empty",
+            Self::InvalidChar => {
+                "a WSUS URL holds only ASCII letters, digits, and the symbols `-._~:/?#[]@!$&'()*+,;=%`, and each `%` starts a percent-encoded byte such as `%20`"
+            }
+            Self::Scheme => "a WSUS URL starts with `http://` or `https://`",
+            Self::UserInfo => {
+                "a WSUS URL must not hold an `@`, so that no user information, such as `user:pass@`, reaches the registry or a log"
+            }
+            Self::NoHost => {
+                "a WSUS URL names a host after `//`, such as `https://wsus.example.com:8531`"
+            }
+            Self::IpLiteral => {
+                "a WSUS URL writes an IPv6 address in brackets, such as `https://[fd00::5]:8531`, and has no other bracket"
+            }
+            Self::Port => {
+                "a WSUS URL's port, after the host and a `:`, is a number from 0 to 65535, such as `8531`"
+            }
+            Self::Fragment => {
+                "a WSUS URL holds at most one `#`, the one that starts its fragment"
+            }
+        })
+    }
+}
+
+impl core::error::Error for WsusUrlError {}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

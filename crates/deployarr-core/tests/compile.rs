@@ -250,11 +250,11 @@ fn the_sample_compiles_to_a_flat_program() {
     assert_eq!(program.source().0.as_str(), "W11-PRO-STD");
     assert_eq!(program.source().1, 7);
     // The root, then "Install Windows" with its 8 steps, then "Finish in
-    // Windows" with 5 of its 6 steps. The last step, 0x10, is disabled.
+    // Windows" with 6 of its 7 steps. Its sixth step, 0x10, is disabled.
     assert_eq!(
         shapes(&program),
         [
-            Enter(0x01, 16),
+            Enter(0x01, 17),
             Enter(0x0a, 10),
             Exec(0x02, FailDeployment),
             Exec(0x03, FailDeployment),
@@ -264,15 +264,16 @@ fn the_sample_compiles_to_a_flat_program() {
             Exec(0x07, FailDeployment),
             Exec(0x08, Continue),
             Exec(0x09, FailDeployment),
-            Enter(0x11, 16),
+            Enter(0x11, 17),
             Exec(0x0b, FailDeployment),
             Exec(0x0c, FailDeployment),
             Exec(0x0d, FailDeployment),
             Exec(0x0e, FailDeployment),
             Exec(0x0f, FailDeployment),
+            Exec(0x12, FailDeployment),
         ]
     );
-    assert_eq!(program.end(), Pc(16));
+    assert_eq!(program.end(), Pc(17));
 
     // Each instruction carries its node's condition, and each step its
     // `run_in` and action.
@@ -562,7 +563,7 @@ fn a_disabled_root_compiles_to_an_empty_program() {
 
 #[test]
 fn each_action_allows_only_the_run_in_values_in_its_table() {
-    let table: [(&str, Value, &[&str]); 12] = [
+    let table: [(&str, Value, &[&str]); 13] = [
         ("partition_disk", partition(), &["win_pe"]),
         ("apply_os_image", apply_image(), &["win_pe"]),
         (
@@ -583,6 +584,11 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
         (
             "install_applications",
             json!({ "install_applications": { "apps": { "one": "7zip-24.08" } } }),
+            &["full_os"],
+        ),
+        (
+            "install_updates",
+            json!({ "install_updates": {} }),
             &["full_os"],
         ),
         (
@@ -649,6 +655,39 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
             }
         }
     }
+}
+
+#[test]
+fn an_install_updates_step_in_win_pe_fails_and_the_error_names_the_node() {
+    let document = root(vec![group(
+        0x02,
+        vec![
+            step(0x03, "win_pe", partition()),
+            step(0x04, "win_pe", json!({ "install_updates": {} })),
+        ],
+    )]);
+
+    let errors = compile_err(&document);
+
+    assert_eq!(
+        errors,
+        [error(
+            0x04,
+            vec![0, 1],
+            Rule::RunIn {
+                action: "install_updates",
+                run_in: RunIn::WinPe,
+                allowed: &[RunIn::FullOs],
+            },
+        )]
+    );
+    assert_eq!(
+        errors[0].to_string(),
+        format!(
+            "root.children[0].group.children[1], node {}: `install_updates` runs only with `run_in` `full_os`, and this step has `win_pe`",
+            id_text(0x04)
+        )
+    );
 }
 
 #[test]
