@@ -12,6 +12,8 @@ The lab has three VMs on an isolated bridge:
 
 The scripts in [`tools/lab/`](../tools/lab/) hold these settings in `lab.conf`.
 
+The lab host has a full GitHub login, so the cloud session limits in [GitHub from a cloud session](../CLAUDE.md#github-from-a-cloud-session), such as `gh` for search only, do not apply to its session. [Tools](agents/issue-tracker.md#tools) gives the `gh` form of each issue operation, and the rules in [`AGENTS.md`](../AGENTS.md) still apply, such as draft pull requests, claims, no commits to `main`, and no deleted branches.
+
 ## What you need
 
 - An x86-64 PC or server with hardware virtualization (Intel VT-x or AMD-V) turned on in its firmware settings.
