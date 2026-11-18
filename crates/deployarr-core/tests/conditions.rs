@@ -1670,6 +1670,30 @@ fn difference_wmi_runs_the_substituted_query_as_written() {
     assert_eq!(machine.asked(), [format!(r"wmi root\cimv2 {substituted}")]);
 }
 
+/// MDT expands a WMI condition's namespace when the condition runs, before it
+/// opens it. `TsCore!0x1801aa380` calls the expander `TsCore!0x1801de158` on
+/// the namespace at `TsCore!0x1801aa655`. deployarr does not substitute the
+/// namespace, so a namespace that holds `%Name%` reaches the probe as
+/// written, as `docs/architecture.md#conditions` says.
+#[test]
+fn difference_wmi_namespace_is_not_substituted() {
+    let machine = Machine::new().wmi("SELECT * FROM Win32_Battery", Ok(true));
+    let vars = vars_of(&[("Ns", "cimv2")]);
+    let json = wmi(r"root\%Ns%", "SELECT * FROM Win32_Battery", false);
+
+    assert_eq!(
+        run(json, &vars, &machine),
+        Err(ConditionError::Probe {
+            kind: ProbeKind::WmiNamespace,
+            error: ProbeError::new(INVALID_NAMESPACE),
+        })
+    );
+    assert_eq!(
+        machine.asked(),
+        [r"wmi root\%Ns% SELECT * FROM Win32_Battery"]
+    );
+}
+
 // Errors.
 
 /// "A condition that fails to evaluate is not false" (`TsCore!0x1801a96c0`
