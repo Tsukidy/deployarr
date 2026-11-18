@@ -592,6 +592,14 @@ fn an_unknown_field_fails_and_the_error_names_it() {
             "/root/children/0/group/children/6/step/meta/condition/file/version",
             "than",
         ),
+        (
+            "/root/children/1/group/children/5/step/action/enable_bitlocker",
+            "drive",
+        ),
+        (
+            "/root/children/1/group/children/6/step/action/suspend_bitlocker",
+            "count",
+        ),
     ];
 
     for (pointer, field) in cases {
