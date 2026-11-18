@@ -31,5 +31,6 @@ pub mod template;
 pub mod validate;
 pub mod variable;
 
+mod guid;
 mod rfc3339;
 mod validated_string;

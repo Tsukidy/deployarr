@@ -415,7 +415,7 @@ impl core::error::Error for TaskSequenceIdError {}
 /// A node's stable ID. It survives a rename or a move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct NodeId(pub Uuid);
+pub struct NodeId(#[serde(deserialize_with = "crate::guid::deserialize")] pub Uuid);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
