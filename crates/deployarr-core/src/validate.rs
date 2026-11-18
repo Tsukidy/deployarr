@@ -80,7 +80,7 @@ fn compiler_findings(own: &[Finding], errors: &[CompileError]) -> Vec<Finding> {
         .collect();
     errors
         .iter()
-        .filter(|error| error.rule.full_os_condition().is_none() || !reported.contains(&error.path))
+        .filter(|error| !error.rule.is_full_os_condition() || !reported.contains(&error.path))
         .map(|error| Finding {
             node: error.node,
             path: error.path.clone(),

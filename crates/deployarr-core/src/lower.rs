@@ -170,8 +170,7 @@ impl Lowerer<'_> {
 
     fn step(&mut self, step: &Step<Action>, kept: bool) -> Node<BuiltinAction> {
         let Action::Builtin(action) = &step.action else {
-            // Disabled steps count for every rule here, as they do in the
-            // compiler.
+            // Disabled join slots count.
             if let Action::ApplyJoinProfile { stage } = step.action
                 && step.run_in != stage.run_in()
             {
@@ -184,7 +183,7 @@ impl Lowerer<'_> {
                 );
             }
             // The compiler checks this rule on steps, and this step becomes a
-            // group.
+            // group. Disabled steps count, as they do in the compiler.
             if let Some(condition) = win_pe_full_os_condition(step.run_in, &step.meta) {
                 self.fail(step.meta.id, LowerRule::FullOsCondition { condition });
             }

@@ -406,20 +406,19 @@ pub enum Rule {
 }
 
 impl Rule {
-    /// The JSON name of the full-OS-only condition that the rule is about, if
-    /// it is about one.
+    /// Whether the rule is about a full-OS-only condition.
     ///
     /// [`crate::validate::validate`] reports a full-OS-only condition on an
     /// add-on step or a join slot itself. It leaves out a compiler error that
-    /// this returns `Some` for at the same node, so that the empty group that
+    /// this returns `true` for at the same node, so that the empty group that
     /// stands in for the step does not get a second finding. The match is
     /// exhaustive, so a new rule does not compile until someone decides
     /// whether it is about such a condition.
-    pub(crate) fn full_os_condition(&self) -> Option<&'static str> {
+    pub(crate) fn is_full_os_condition(&self) -> bool {
         match self {
-            Self::FullOsCondition { condition } => Some(condition),
+            Self::FullOsCondition { .. } => true,
             Self::RunIn { .. } | Self::RestartBeforePartition | Self::DuplicateNodeId { .. } => {
-                None
+                false
             }
         }
     }
