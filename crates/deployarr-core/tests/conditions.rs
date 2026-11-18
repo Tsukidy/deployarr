@@ -1671,10 +1671,11 @@ fn difference_wmi_runs_the_substituted_query_as_written() {
 }
 
 /// MDT expands a WMI condition's namespace when the condition runs, before it
-/// opens it. `TsCore!0x1801aa380` calls the expander `TsCore!0x1801de158` on
-/// the namespace at `TsCore!0x1801aa655`. deployarr does not substitute the
-/// namespace, so a namespace that holds `%Name%` reaches the probe as
-/// written, as `docs/architecture.md#conditions` says.
+/// opens it. `TsCore!0x1801aa380` calls `TsCore!0x1801de158` on the namespace
+/// at `TsCore!0x1801aa655`. That function leads to the expander
+/// `TsCore!0x18012cc00`. deployarr does not substitute the namespace, so a
+/// namespace that holds `%Name%` reaches the probe as written, as
+/// `docs/architecture.md#conditions` says.
 #[test]
 fn difference_wmi_namespace_is_not_substituted() {
     let machine = Machine::new().wmi("SELECT * FROM Win32_Battery", Ok(true));
