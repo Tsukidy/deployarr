@@ -144,33 +144,51 @@ impl fmt::Display for EmptyTemplateError {
 
 impl core::error::Error for EmptyTemplateError {}
 
-/// A `Registry` condition: a key, the name of a value under it, and a test.
+/// A `Registry` condition: a key, the name of a value under it, the type that
+/// the value must have, and a test.
 ///
 /// With no value name, `exists` and `not_exists` test the key. Every other
 /// test compares the value's data, and a key has no data, so it needs a value
-/// name. [`RegistryCondition::new`] and the parser reject such a test without
-/// one. MDT fails a comparison without one when it runs (`TsCore!0x1801a6bec`).
+/// name. A key has no type either, so a value type needs a value name too.
+/// [`RegistryCondition::new`] and the parser reject a test that takes data,
+/// and a value type, without one. MDT fails a comparison without one when it
+/// runs, and ignores its `Type` parameter on a test of the key
+/// (`TsCore!0x1801a6bec`).
 ///
-/// The JSON is an object with `key`, `value`, and `test`. A `value` that is
-/// left out or `null` names no value.
+/// The JSON is an object with `key`, `value`, `value_type`, and `test`. A
+/// `value` that is left out or `null` names no value, and a `value_type` that
+/// is left out or `null` names no type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RegistryCondition {
     key: Template,
     value: Option<RegValueName>,
+    value_type: Option<RegType>,
     test: Test<RegData>,
 }
 
 impl RegistryCondition {
-    /// Fails when `test` takes data and `value` names no value.
+    /// Fails when `value` names no value and `test` takes data or
+    /// `value_type` names a type.
     pub fn new(
         key: Template,
         value: Option<RegValueName>,
+        value_type: Option<RegType>,
         test: Test<RegData>,
     ) -> Result<Self, RegistryConditionError> {
-        if value.is_none() && test.takes_operand() {
-            return Err(RegistryConditionError);
+        if value.is_none() {
+            if test.takes_operand() {
+                return Err(RegistryConditionError::Comparison);
+            }
+            if value_type.is_some() {
+                return Err(RegistryConditionError::ValueType);
+            }
         }
-        Ok(Self { key, value, test })
+        Ok(Self {
+            key,
+            value,
+            value_type,
+            test,
+        })
     }
 
     /// The key, such as `HKEY_LOCAL_MACHINE\SOFTWARE\Contoso`. It is a
@@ -184,21 +202,38 @@ impl RegistryCondition {
         self.value.as_ref()
     }
 
+    /// The type that the value must have, or `None` for a value of any type.
+    /// It is `None` when [`Self::value`] is `None`. A value of another type
+    /// counts as missing, as in MDT (`TsCore!0x1801a6bec`).
+    pub fn value_type(&self) -> Option<RegType> {
+        self.value_type
+    }
+
     /// The test. It is `Exists` or `NotExists` when [`Self::value`] is `None`.
     pub fn test(&self) -> &Test<RegData> {
         &self.test
     }
 }
 
-/// A `Registry` test that takes data names no value.
+/// A `Registry` condition that names no value has a part that needs one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RegistryConditionError;
+pub enum RegistryConditionError {
+    /// A test that takes data names no value.
+    Comparison,
+    /// A value type names no value.
+    ValueType,
+}
 
 impl fmt::Display for RegistryConditionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            "a registry comparison needs a value name, because a key has no data to compare. `exists` without `value` tests the key",
-        )
+        f.write_str(match self {
+            Self::Comparison => {
+                "a registry comparison needs a value name, because a key has no data to compare. `exists` without `value` tests the key"
+            }
+            Self::ValueType => {
+                "a registry value type needs a value name, because a key has no type. Leave out `value_type` to test the key"
+            }
+        })
     }
 }
 
@@ -208,21 +243,23 @@ impl core::error::Error for RegistryConditionError {}
 ///
 /// A test that takes data and a `value` of `null` fail at the one that the
 /// document holds second: at `value`, or at the operator under `test`, such
-/// as `test.equals`. A test that takes data with `value` left out fails at the
-/// condition itself.
+/// as `test.equals`. A value type and a `value` of `null` do the same: they
+/// fail at `value` or at `value_type`. A test that takes data, or a value
+/// type, with `value` left out fails at the condition itself.
 impl<'de> Deserialize<'de> for RegistryCondition {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         deserializer.deserialize_struct("RegistryCondition", REGISTRY_FIELDS, RegistryVisitor)
     }
 }
 
-const REGISTRY_FIELDS: &[&str] = &["key", "value", "test"];
+const REGISTRY_FIELDS: &[&str] = &["key", "value", "value_type", "test"];
 
 #[derive(Deserialize)]
 #[serde(field_identifier, rename_all = "snake_case")]
 enum RegistryField {
     Key,
     Value,
+    ValueType,
     Test,
 }
 
@@ -232,13 +269,14 @@ impl<'de> Visitor<'de> for RegistryVisitor {
     type Value = RegistryCondition;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("a registry condition, an object with `key`, `value`, and `test`")
+        f.write_str("a registry condition, an object with `key`, `value`, `value_type`, and `test`")
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<RegistryCondition, A::Error> {
         let mut key: Option<Template> = None;
-        // `Some(None)` is a `value` of `null`.
+        // `Some(None)` is a `value` or a `value_type` of `null`.
         let mut value: Option<Option<RegValueName>> = None;
+        let mut value_type: Option<Option<RegType>> = None;
         let mut test: Option<Test<RegData>> = None;
         while let Some(field) = map.next_key()? {
             match field {
@@ -252,8 +290,21 @@ impl<'de> Visitor<'de> for RegistryVisitor {
                     if value.is_some() {
                         return Err(de::Error::duplicate_field("value"));
                     }
-                    let needs_name = test.as_ref().is_some_and(Test::takes_operand);
+                    let needs_name = if test.as_ref().is_some_and(Test::takes_operand) {
+                        Some(RegistryConditionError::Comparison)
+                    } else if matches!(value_type, Some(Some(_))) {
+                        Some(RegistryConditionError::ValueType)
+                    } else {
+                        None
+                    };
                     value = Some(map.next_value_seed(ValueNameSeed { needs_name })?);
+                }
+                RegistryField::ValueType => {
+                    if value_type.is_some() {
+                        return Err(de::Error::duplicate_field("value_type"));
+                    }
+                    let unnamed = matches!(value, Some(None));
+                    value_type = Some(map.next_value_seed(ValueTypeSeed { unnamed })?);
                 }
                 RegistryField::Test => {
                     if test.is_some() {
@@ -266,13 +317,16 @@ impl<'de> Visitor<'de> for RegistryVisitor {
         }
         let key = key.ok_or_else(|| de::Error::missing_field("key"))?;
         let test = test.ok_or_else(|| de::Error::missing_field("test"))?;
-        RegistryCondition::new(key, value.flatten(), test).map_err(de::Error::custom)
+        RegistryCondition::new(key, value.flatten(), value_type.flatten(), test)
+            .map_err(de::Error::custom)
     }
 }
 
-/// Reads `value`. `needs_name` says that the `test` read before it takes data.
+/// Reads `value`. `needs_name` is the error that a `null` gives, when the
+/// `test` read before it takes data or the `value_type` read before it names
+/// a type.
 struct ValueNameSeed {
-    needs_name: bool,
+    needs_name: Option<RegistryConditionError>,
 }
 
 impl<'de> DeserializeSeed<'de> for ValueNameSeed {
@@ -280,10 +334,28 @@ impl<'de> DeserializeSeed<'de> for ValueNameSeed {
 
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
         let name = Option::<RegValueName>::deserialize(deserializer)?;
-        if name.is_none() && self.needs_name {
-            return Err(de::Error::custom(RegistryConditionError));
+        match (&name, self.needs_name) {
+            (None, Some(error)) => Err(de::Error::custom(error)),
+            _ => Ok(name),
         }
-        Ok(name)
+    }
+}
+
+/// Reads `value_type`. `unnamed` says that the `value` read before it is
+/// `null`, so a type fails.
+struct ValueTypeSeed {
+    unnamed: bool,
+}
+
+impl<'de> DeserializeSeed<'de> for ValueTypeSeed {
+    type Value = Option<RegType>;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<Self::Value, D::Error> {
+        let value_type = Option::<RegType>::deserialize(deserializer)?;
+        if value_type.is_some() && self.unnamed {
+            return Err(de::Error::custom(RegistryConditionError::ValueType));
+        }
+        Ok(value_type)
     }
 }
 
@@ -373,9 +445,47 @@ impl<'de> DeserializeSeed<'de> for RegDataSeed {
     fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<RegData, D::Error> {
         let data = RegData::deserialize(deserializer)?;
         if self.unnamed {
-            return Err(de::Error::custom(RegistryConditionError));
+            return Err(de::Error::custom(RegistryConditionError::Comparison));
         }
         Ok(data)
+    }
+}
+
+/// A registry value type that a `Registry` condition can require. These are
+/// the seven names that MDT maps a condition's `Type` to (`TsCore!0x1801ab134`).
+///
+/// The JSON is the Windows name in snake case, such as `"reg_expand_sz"` for
+/// `REG_EXPAND_SZ`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RegType {
+    #[serde(rename = "reg_none")]
+    None,
+    #[serde(rename = "reg_sz")]
+    Sz,
+    #[serde(rename = "reg_expand_sz")]
+    ExpandSz,
+    #[serde(rename = "reg_binary")]
+    Binary,
+    #[serde(rename = "reg_dword")]
+    Dword,
+    #[serde(rename = "reg_multi_sz")]
+    MultiSz,
+    #[serde(rename = "reg_qword")]
+    Qword,
+}
+
+impl RegType {
+    /// The type's number in the Windows API, such as 4 for `REG_DWORD`.
+    pub fn number(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::Sz => 1,
+            Self::ExpandSz => 2,
+            Self::Binary => 3,
+            Self::Dword => 4,
+            Self::MultiSz => 7,
+            Self::Qword => 11,
+        }
     }
 }
 

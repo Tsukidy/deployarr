@@ -18,7 +18,7 @@ use core::fmt;
 use time::OffsetDateTime;
 
 use crate::condition::{
-    CompareOp, Comparison, Condition, FileVersion, MsiProduct, NonEmptyTemplate, RegData,
+    CompareOp, Comparison, Condition, FileVersion, MsiProduct, NonEmptyTemplate, RegData, RegType,
     RegValueName, RegistryCondition, Test, Timestamp,
 };
 use crate::store::{Value, Vars};
@@ -81,6 +81,19 @@ pub enum RegValue {
     ExpandSz(String),
     /// A value of any other type, such as `REG_BINARY`, with its type number.
     Other(u32),
+}
+
+impl RegValue {
+    /// Whether the value has type `reg_type`. `Other` matches by its number.
+    fn has_type(&self, reg_type: RegType) -> bool {
+        match self {
+            Self::Dword(_) => reg_type == RegType::Dword,
+            Self::Qword(_) => reg_type == RegType::Qword,
+            Self::Sz(_) => reg_type == RegType::Sz,
+            Self::ExpandSz(_) => reg_type == RegType::ExpandSz,
+            Self::Other(number) => *number == reg_type.number(),
+        }
+    }
 }
 
 /// A root key that a `registry` condition can name.
@@ -407,23 +420,18 @@ impl Evaluator<'_> {
         let test = registry.test();
         let Some((op, data)) = Op::split(test) else {
             let exists = match name {
-                None => self.probe.registry_key_exists(&reg_key),
-                Some(name) => self
+                None => self
                     .probe
-                    .registry_value(&reg_key, name)
-                    .map(|found| found.is_some()),
-            }
-            .map_err(failed(ProbeKind::Registry))?;
+                    .registry_key_exists(&reg_key)
+                    .map_err(failed(ProbeKind::Registry))?,
+                Some(name) => self.registry_value(registry, &reg_key, name)?.is_some(),
+            };
             return Ok(exists == matches!(test, Test::Exists));
         };
         // `RegistryCondition::new` and the parser reject a test that takes
         // data without a value name.
         let name = name.expect("a registry test that takes data names a value");
-        let Some(found) = self
-            .probe
-            .registry_value(&reg_key, name)
-            .map_err(failed(ProbeKind::Registry))?
-        else {
+        let Some(found) = self.registry_value(registry, &reg_key, name)? else {
             return Ok(false);
         };
         // Both sides compare by the `var` rules, whatever the value's type. A
@@ -448,6 +456,26 @@ impl Evaluator<'_> {
             Op::Compare(op) => compare(op, compare_text(&text, &data)),
             Op::Like => like(&text, &data),
         })
+    }
+
+    /// Reads the value `name` that `registry` tests, or `None` when it is
+    /// missing. With a value type, a value of another type counts as missing
+    /// for every test, as in MDT (`TsCore!0x1801a6bec`, `TsCore!0x1801a7c48`).
+    fn registry_value(
+        &self,
+        registry: &RegistryCondition,
+        key: &RegKey,
+        name: &str,
+    ) -> Result<Option<RegValue>, ConditionError> {
+        let found = self
+            .probe
+            .registry_value(key, name)
+            .map_err(failed(ProbeKind::Registry))?;
+        Ok(found.filter(|found| {
+            registry
+                .value_type()
+                .is_none_or(|value_type| found.has_type(value_type))
+        }))
     }
 
     fn file(

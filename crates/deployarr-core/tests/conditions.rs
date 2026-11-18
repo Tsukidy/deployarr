@@ -247,6 +247,11 @@ fn registry(key: &str, value: Option<&str>, test: Value) -> Value {
     json!({ "registry": { "key": key, "value": value, "test": test } })
 }
 
+/// A `registry` condition with a value type, such as `"reg_sz"`.
+fn typed_registry(key: &str, value: &str, value_type: &str, test: Value) -> Value {
+    json!({ "registry": { "key": key, "value": value, "value_type": value_type, "test": test } })
+}
+
 fn file(path: &str, version: Option<(&str, &str)>, modified: Option<(&str, &str)>) -> Value {
     let comparison =
         |pair: Option<(&str, &str)>| pair.map(|(op, value)| json!({ "op": op, "value": value }));
@@ -1098,7 +1103,7 @@ fn difference_registry_an_empty_value_name_fails_to_parse() {
 }
 
 /// With a value name, `exists` tests the value. MDT finds a value of any type
-/// when the condition names no type, and deployarr's names none
+/// when the condition names no type, and these conditions name none
 /// (`TsCore!0x1801a6bec`).
 #[test]
 fn mdt_registry_exists_with_a_value_tests_the_value() {
@@ -1372,6 +1377,194 @@ fn difference_registry_like_matches_wildcards() {
             check(json, &Vars::new(), &machine),
             expected,
             "{value} {pattern}"
+        );
+    }
+}
+
+// Registry value types.
+
+/// "On a mismatch the engine ... treats the value as missing, for every
+/// operator. Exists is then false, NotExists is true, and every other
+/// operator is false" (`TsCore!0x1801a6bec`, `TsCore!0x1801a7c48`). Each test
+/// here holds for the `REG_DWORD` value when the condition names no type.
+#[test]
+fn mdt_registry_a_value_of_another_type_counts_as_missing() {
+    let machine = Machine::new().value(HKLM_CONTOSO, "Count", RegValue::Dword(5));
+    let cases = [
+        (json!("exists"), false),
+        (json!("not_exists"), true),
+        (json!({ "equals": 5 }), false),
+        (json!({ "not_equals": 6 }), false),
+        (json!({ "less": 6 }), false),
+        (json!({ "less_equal": 5 }), false),
+        (json!({ "greater": 4 }), false),
+        (json!({ "greater_equal": 5 }), false),
+        (json!({ "like": "5" }), false),
+    ];
+    for (test, expected) in cases {
+        let text = test.to_string();
+        let any_type = registry(HKLM_CONTOSO, Some("Count"), test.clone());
+        let typed = typed_registry(HKLM_CONTOSO, "Count", "reg_sz", test);
+        assert_eq!(check(any_type, &Vars::new(), &machine), !expected, "{text}");
+        assert_eq!(check(typed, &Vars::new(), &machine), expected, "{text}");
+    }
+}
+
+/// MDT checks the value type before the type limit of a comparison. A value
+/// of another type than the condition names counts as missing even when no
+/// comparison can read it, such as a `REG_BINARY` value
+/// (`TsCore!0x1801a6bec`, `TsCore!0x1801a7c48`). So the comparison is false,
+/// not an error.
+#[test]
+fn mdt_registry_a_type_mismatch_is_false_even_for_a_type_no_comparison_reads() {
+    let machine = Machine::new().value(HKLM_CONTOSO, "Blob", RegValue::Other(3));
+    for test in [
+        json!({ "equals": 1 }),
+        json!({ "not_equals": "1" }),
+        json!({ "like": "*" }),
+    ] {
+        let text = test.to_string();
+        let typed = typed_registry(HKLM_CONTOSO, "Blob", "reg_sz", test);
+        assert_eq!(run(typed, &Vars::new(), &machine), Ok(false), "{text}");
+    }
+}
+
+/// A value of the type that the condition names passes MDT's type check and
+/// meets the usual rules (`TsCore!0x1801a6bec`, `TsCore!0x1801a7c48`).
+/// `exists` finds a `REG_BINARY` value, and a comparison on it fails to
+/// evaluate.
+#[test]
+fn mdt_registry_a_value_of_the_named_type_follows_the_usual_rules() {
+    let machine = Machine::new().value(HKLM_CONTOSO, "Blob", RegValue::Other(3));
+    let typed = |test| typed_registry(HKLM_CONTOSO, "Blob", "reg_binary", test);
+    assert!(check(typed(json!("exists")), &Vars::new(), &machine));
+    assert!(!check(typed(json!("not_exists")), &Vars::new(), &machine));
+    assert_eq!(
+        run(typed(json!({ "equals": 1 })), &Vars::new(), &machine),
+        Err(ConditionError::RegistryType {
+            key: Template::new(HKLM_CONTOSO),
+            value: "Blob".into(),
+            reg_type: 3,
+        })
+    );
+}
+
+/// A value type that matches the value's type changes no result, for each
+/// type that a comparison reads.
+#[test]
+fn registry_a_value_type_that_matches_changes_nothing() {
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Count", RegValue::Dword(5))
+        .value(HKLM_CONTOSO, "Big", RegValue::Qword(u64::MAX))
+        .value(HKLM_CONTOSO, "Edition", RegValue::Sz("Professional".into()))
+        .value(
+            HKLM_CONTOSO,
+            "Path",
+            RegValue::ExpandSz(r"C:\Windows\System32".into()),
+        );
+    let values = [
+        ("Count", "reg_dword"),
+        ("Big", "reg_qword"),
+        ("Edition", "reg_sz"),
+        ("Path", "reg_expand_sz"),
+    ];
+    let tests = [
+        json!("exists"),
+        json!("not_exists"),
+        json!({ "equals": 5 }),
+        json!({ "not_equals": "Professional" }),
+        json!({ "less": "Q" }),
+        json!({ "greater_equal": u64::MAX }),
+        json!({ "like": "*" }),
+        json!({ "like": "Pro*" }),
+    ];
+    for (value, value_type) in values {
+        for test in &tests {
+            let any_type = check(
+                registry(HKLM_CONTOSO, Some(value), test.clone()),
+                &Vars::new(),
+                &machine,
+            );
+            let typed = check(
+                typed_registry(HKLM_CONTOSO, value, value_type, test.clone()),
+                &Vars::new(),
+                &machine,
+            );
+            assert_eq!(typed, any_type, "{value} {value_type} {test}");
+        }
+    }
+}
+
+/// A missing value, a missing key, and a probe that cannot answer give the
+/// same result with a value type as without one.
+#[test]
+fn registry_a_value_type_keeps_the_result_for_a_missing_value_or_key_or_a_failed_probe() {
+    let machine = Machine::new().key(HKLM_CONTOSO);
+    let missing_key = r"HKEY_LOCAL_MACHINE\SOFTWARE\Missing";
+    let cases = [
+        (HKLM_CONTOSO, json!("exists"), false),
+        (HKLM_CONTOSO, json!("not_exists"), true),
+        (HKLM_CONTOSO, json!({ "equals": 1 }), false),
+        (HKLM_CONTOSO, json!({ "not_equals": 1 }), false),
+        (HKLM_CONTOSO, json!({ "like": "*" }), false),
+        (missing_key, json!("exists"), false),
+        (missing_key, json!("not_exists"), true),
+        (missing_key, json!({ "not_equals": 1 }), false),
+    ];
+    for (key, test, expected) in cases {
+        let text = format!("{key} {test}");
+        let any_type = registry(key, Some("Missing"), test.clone());
+        let typed = typed_registry(key, "Missing", "reg_dword", test);
+        assert_eq!(check(any_type, &Vars::new(), &machine), expected, "{text}");
+        assert_eq!(check(typed, &Vars::new(), &machine), expected, "{text}");
+    }
+
+    let broken = Machine::broken(ACCESS_DENIED);
+    for test in [json!("exists"), json!({ "equals": 1 })] {
+        let text = test.to_string();
+        let error = Err(ConditionError::Probe {
+            kind: ProbeKind::Registry,
+            error: ProbeError::new(ACCESS_DENIED),
+        });
+        let any_type = registry(HKLM_CONTOSO, Some("Stage"), test.clone());
+        let typed = typed_registry(HKLM_CONTOSO, "Stage", "reg_sz", test);
+        assert_eq!(run(any_type, &Vars::new(), &broken), error, "{text}");
+        assert_eq!(run(typed, &Vars::new(), &broken), error, "{text}");
+    }
+}
+
+/// A `registry` condition that leaves out `value_type` or sets it to `null`
+/// reads a value of any type, as it did before the field existed.
+#[test]
+fn registry_a_value_type_left_out_or_null_takes_any_type() {
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Blob", RegValue::Other(3))
+        .value(HKLM_CONTOSO, "Count", RegValue::Dword(5));
+    let null = |value: &str, test: &Value| json!({ "registry": { "key": HKLM_CONTOSO, "value": value, "value_type": null, "test": test } });
+    let cases = [
+        ("Blob", json!("exists"), Ok(true)),
+        ("Blob", json!("not_exists"), Ok(false)),
+        (
+            "Blob",
+            json!({ "equals": 1 }),
+            Err(ConditionError::RegistryType {
+                key: Template::new(HKLM_CONTOSO),
+                value: "Blob".into(),
+                reg_type: 3,
+            }),
+        ),
+        ("Count", json!("exists"), Ok(true)),
+        ("Count", json!({ "equals": 5 }), Ok(true)),
+        ("Count", json!({ "less": 5 }), Ok(false)),
+    ];
+    for (value, test, expected) in cases {
+        let text = format!("{value} {test}");
+        let left_out = registry(HKLM_CONTOSO, Some(value), test.clone());
+        assert_eq!(run(left_out, &Vars::new(), &machine), expected, "{text}");
+        assert_eq!(
+            run(null(value, &test), &Vars::new(), &machine),
+            expected,
+            "{text}"
         );
     }
 }

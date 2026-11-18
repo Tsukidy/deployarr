@@ -241,6 +241,7 @@
 											"registry": {
 												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
 												"value": "CurrentBuildNumber",
+												"value_type": null,
 												"test": {
 													"greater_equal": 26100
 												}
@@ -250,6 +251,7 @@
 											"registry": {
 												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
 												"value": "EditionID",
+												"value_type": "reg_sz",
 												"test": {
 													"like": "Pro*"
 												}
@@ -259,6 +261,7 @@
 											"registry": {
 												"key": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Deployarr",
 												"value": null,
+												"value_type": null,
 												"test": "exists"
 											}
 										}
