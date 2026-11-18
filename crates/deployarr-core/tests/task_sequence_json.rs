@@ -519,6 +519,70 @@ fn a_bad_value_fails_and_the_error_names_its_field() {
     }
 }
 
+/// One of each kind of GUID field in the sample: a node ID, the two kinds of
+/// MSI code, and an update ID.
+const GUID_FIELDS: [&str; 5] = [
+    "/root/meta/id",
+    "/root/children/0/group/children/0/step/meta/id",
+    "/root/children/1/group/children/2/step/meta/condition/not/installed_msi/product_code",
+    "/root/children/1/group/children/7/step/meta/condition/installed_msi/upgrade_code",
+    "/root/children/1/group/children/8/step/action/install_updates/exclude/1/update_id",
+];
+
+const GUID: &str = "e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f21";
+
+#[test]
+fn a_guid_field_reads_the_hyphenated_form_and_writes_it_in_lower_case_without_braces() {
+    for pointer in GUID_FIELDS {
+        for text in [
+            "e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f21",
+            "E2B6A5F1-4C3D-4B2A-9F8E-7D6C5B4A3F21",
+            "{e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f21}",
+            "{E2B6A5F1-4C3D-4B2A-9F8E-7D6C5B4A3F21}",
+        ] {
+            let mut document = sample();
+            *document
+                .pointer_mut(pointer)
+                .expect("the sample has the field") = json!(text);
+
+            let sequence =
+                parse(&document).unwrap_or_else(|error| panic!("{pointer} = {text}: {error}"));
+
+            let written = serde_json::to_value(&sequence).expect("a task sequence serializes");
+            assert_eq!(
+                written.pointer(pointer),
+                Some(&json!(GUID)),
+                "{pointer} = {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_guid_field_rejects_the_urn_and_32_hex_forms_and_the_error_names_it() {
+    for pointer in GUID_FIELDS {
+        for text in [
+            "urn:uuid:e2b6a5f1-4c3d-4b2a-9f8e-7d6c5b4a3f21",
+            "URN:UUID:E2B6A5F1-4C3D-4B2A-9F8E-7D6C5B4A3F21",
+            "e2b6a5f14c3d4b2a9f8e7d6c5b4a3f21",
+            "{e2b6a5f14c3d4b2a9f8e7d6c5b4a3f21}",
+        ] {
+            let mut document = sample();
+            *document
+                .pointer_mut(pointer)
+                .expect("the sample has the field") = json!(text);
+
+            let error = parse(&document).expect_err(&format!("{pointer} = {text} must not parse"));
+
+            assert_eq!(
+                error.path(),
+                field_path(pointer),
+                "{pointer} = {text}: {error}"
+            );
+        }
+    }
+}
+
 fn object_at<'a>(document: &'a mut Value, pointer: &str) -> &'a mut serde_json::Map<String, Value> {
     document
         .pointer_mut(pointer)

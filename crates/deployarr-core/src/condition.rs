@@ -564,6 +564,6 @@ impl<'de> Deserialize<'de> for Timestamp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MsiProduct {
-    ProductCode(Uuid),
-    UpgradeCode(Uuid),
+    ProductCode(#[serde(deserialize_with = "crate::guid::deserialize")] Uuid),
+    UpgradeCode(#[serde(deserialize_with = "crate::guid::deserialize")] Uuid),
 }

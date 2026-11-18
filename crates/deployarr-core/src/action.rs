@@ -962,7 +962,7 @@ pub enum UpdateExclusion {
     /// A KB article number without the `KB` prefix, such as `5034441`.
     Kb(NonZeroU32),
     /// An update ID. It is written as a GUID in lower case without braces.
-    UpdateId(Uuid),
+    UpdateId(#[serde(deserialize_with = "crate::guid::deserialize")] Uuid),
 }
 
 fn default_max_passes() -> NonZeroU8 {
