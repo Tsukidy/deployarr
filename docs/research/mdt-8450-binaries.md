@@ -248,18 +248,18 @@ winpe     yes
 - Every step added in the editor gets `runIn="WinPEandFullOS"`, whatever it does (`Workbench/TaskSequenceEditor.cs:1713-1722`).
 - Run Command Line can run as another user. The editor stores that user's name and password in plain text as `SMSTSRunCommandLineUserName` and `SMSTSRunCommandLineUserPassword` (`Workbench/TaskSequenceEditor.cs:317-331`).
 - Install Application has two modes, chosen by whether `ApplicationGUID` is empty. A GUID installs one application. An empty GUID installs the `MandatoryApplications` and `Applications` lists (`Actions/ActionInstallApplication.cs:45-111`).
-- The condition editor writes these types and operators (`Workbench/TaskSequenceUtility.cs:43-96`):
+- The condition editor writes these types and operators:
 
 | Condition | Parameters | Operators |
 | --- | --- | --- |
-| Variable | Variable, Operator, Value | exists, equals, notEquals, greater, greaterEqual, less, lessEqual |
+| Variable | Variable, Operator, Value (`Workbench/TaskSequenceVariable.cs:111-119`) | exists, equals, notEquals, greater, greaterEqual, less, lessEqual (`tsCondition.Items` to `tsCondition.Items6` in `Workbench/Microsoft.BDD.Workbench.TaskSequenceVariable.resx`, `Workbench/TaskSequenceVariable.cs:35, 118, 171-180`, `Workbench/TaskSequenceUtility.cs:43-96`) |
 | Registry | KeyPath, Value, Type (`REG_SZ`, `REG_EXPAND_SZ`, or `REG_DWORD`), Operator, Data (`Workbench/TaskSequenceRegistryCondition.cs:72-75, 86-90`) | exists, notExists, equals, notEquals, greater, greaterEqual, less, lessEqual (`Workbench/TaskSequenceRegistryCondition.cs:63-71, 128-192`) |
-| WMI | Namespace, Query | true if the query returns rows |
-| File | Path, optional Version with VersionOperator, optional DateTime with DateTimeOperator | equals, notEquals, greater, greaterEqual, less, lessEqual |
-| Folder | Path, optional DateTime with DateTimeOperator | the same set |
-| Installed software | ProductCode, UpgradeCode, ProductName, Version, Operator | ThisVersion, AnyVersion |
-| OS version | Version, Architecture | from a fixed list in `Bin\OSList.xml` |
-| If statement | `<operator type="and\|or\|not">` | all, any, none |
+| WMI | Namespace, Query (`Workbench/TaskSequenceWMICondition.cs:55-61`) | true if the query returns rows ([Conditions](#conditions)) |
+| File | Path, optional Version with VersionOperator, optional DateTime with DateTimeOperator (`Workbench/TaskSequenceFilePropertiesCondition.cs:253-345`) | equals, notEquals, greater, greaterEqual, less, lessEqual (`Workbench/TaskSequenceFilePropertiesCondition.cs:61-76, 79-104`) |
+| Folder | Path, optional DateTime with DateTimeOperator (`Workbench/TaskSequenceFolderPropertiesCondition.cs:182-232`) | the same set (`Workbench/TaskSequenceFolderPropertiesCondition.cs:52-59, 107-132`) |
+| Installed software | ProductCode, UpgradeCode, ProductName, Version, Operator (`Workbench/TaskSequenceInstalledSoftwareCondition.cs:171-202`) | ThisVersion, AnyVersion (`Workbench/TaskSequenceInstalledSoftwareCondition.cs:176-185`) |
+| OS version | Architecture, Version, Operator (`Workbench/TaskSequenceOSCondition.cs:109-117`). The Architecture and Version choices come from the fixed list in `Bin\OSList.xml`. Version holds the ID that the file gives the chosen operating system (`Workbench/TaskSequenceUtility.cs:12-41, 109-130`, `Workbench/TaskSequenceOSCondition.cs:30-33, 115-116, 119-126`) | equals, notEquals, greater, greaterEqual, less, lessEqual (`tsCondition.Items` to `tsCondition.Items5` in `Workbench/Microsoft.BDD.Workbench.TaskSequenceOSCondition.resx`, `Workbench/TaskSequenceOSCondition.cs:65, 114, 181-189`, `Workbench/TaskSequenceUtility.cs:43-96`) |
+| If statement | `<operator type="and\|or\|not">` (`Workbench/TaskSequenceEditor.cs:976-979`, `Workbench/TaskSequenceIf.cs:37-53`) | all, any, none (`radioAnd.Text`, `radioOr.Text`, and `radioNot.Text` in `Workbench/Microsoft.BDD.Workbench.TaskSequenceIf.resx`, `Workbench/TaskSequenceIf.cs:37-53`) |
 
 - The Variable condition dialog maps operators only from lower-case names. Opening a template Variable condition stored as `Equals` or `notExists` and clicking OK saves it as `exists` with an empty value (`Workbench/TaskSequenceVariable.cs:35-49`).
 - The Registry condition dialog maps operators with two methods of its own, `FindEquivalentCMBValue` and `FindEquivalentCMBText`. It writes "not exists" as `notExists` and reads `notExists` back as "not exists" (`Workbench/TaskSequenceRegistryCondition.cs:128-192`).
@@ -303,6 +303,7 @@ winpe     yes
 | `efisys.bin` waits for a key press | The deployarr boot ISO uses the no-prompt EFI boot image |
 | Saved MDT steps have no ID | deployarr's stable `NodeId` is new, and an MDT importer must create IDs |
 | MDT conditions include file version, file and folder dates, installed MSI products, and a WMI failure flag | deployarr's `Condition` gets these types. `Var` and `Registry` tests take all nine `Test` operators, and file version and date comparisons take only the six equality and order operators of `CompareOp` (#62). See [Core data shapes](../architecture.md#core-data-shapes). Make, model, location, and computer checks become variable conditions on gathered facts, with exact matching instead of MDT's substring tests |
+| MDT's editor writes an OS version condition with Architecture, Version, and Operator ([Task sequence editor model](#task-sequence-editor-model)) | deployarr's `Condition` has no OS version type, and `docs/architecture.md` has no rule for this yet ([#291](https://github.com/Tsukidy/deployarr/issues/291)). See [Core data shapes](../architecture.md#core-data-shapes) |
 | MDT's integer test passes empty text, so an empty variable compares with an integer as an integer, read as 0 (inferred) | An integer has at least one digit, so empty text compares as text |
 | MDT reports a Variable comparison against an empty Value as an error when the condition runs, and accepts Like against an empty Value | A `Var` test compares against a `NonEmptyTemplate`, so the parser rejects an empty Value for every operator, `Like` included, and the sequence fails when it is saved. A Value that expands to empty text follows MDT's rule when the condition runs. See [Parameter types](../architecture.md#parameter-types) |
 | MDT's registry comparisons fail on every value type but `REG_DWORD`, `REG_SZ`, and `REG_EXPAND_SZ` | A `Registry` condition reads `REG_DWORD`, `REG_QWORD`, `REG_SZ`, and `REG_EXPAND_SZ` values, so it also compares a `REG_QWORD` value. See [Parameter types](../architecture.md#parameter-types) |
