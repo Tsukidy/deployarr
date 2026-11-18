@@ -23,7 +23,7 @@ The lab host has a full GitHub login, so the cloud session limits in [GitHub fro
 - An account that can run `sudo`.
 - About 10 GB of downloads. The Windows ISO is 9 GB of it.
 
-The lab bridge has no uplink. The VMs reach only the host, and nothing on your network reaches the VMs.
+By default the lab bridge has no uplink. The VMs reach only the host, and nothing on your network reaches the VMs. Only the [M7 check](roadmap.md#m7-applications) of the `InstallUpdates` step turns on the uplink. [Turn on the uplink](#turn-on-the-uplink) says how.
 
 ## 1. Install the packages
 
@@ -103,11 +103,11 @@ It prints four certificates: `Microsoft Corporation KEK CA 2011`, `Microsoft Cor
 sudo tools/lab/network.sh up
 ```
 
-The script creates the bridge `br-lab` with the address `10.41.0.1/24`, and one tap device for each VM. It starts a dnsmasq that hands out `10.41.0.100` to `10.41.0.199` and does nothing else. It has no DNS and no PXE. It gives each VM `10.41.0.1` as its gateway.
+The script creates the bridge `br-lab` with the address `10.41.0.1/24`, and one tap device for each VM. It starts a dnsmasq that hands out `10.41.0.100` to `10.41.0.199` and does nothing else. It has no DNS and no PXE. It gives each VM `10.41.0.1` as its gateway. It hands out no DNS server unless the uplink is on.
 
 dnsmasq runs in its own network namespace, `deployarr-lab-dhcp`. A veth pair joins the namespace to `br-lab`. Its end on the bridge is `veth-lab-dhcp`, and its end in the namespace is `dhcp0`, with the address `10.41.0.2`. So dnsmasq holds UDP port 67 only in that namespace, and any program on the lab host, such as the PXE prototype or deployarr, can bind port 67 on `br-lab`. [DHCP](architecture.md#dhcp) says why deployarr needs that.
 
-The last lines show `dnsmasq is running in namespace deployarr-lab-dhcp` and `0.0.0.0%dhcp0:67`. dnsmasq writes its log to `/run/deployarr-lab/dnsmasq.log` and its leases to `/run/deployarr-lab/dnsmasq.leases`. Only root can read the log:
+The last lines show `dnsmasq is running in namespace deployarr-lab-dhcp`, `dnsmasq options: option:router,10.41.0.1`, `0.0.0.0%dhcp0:67`, and a line that starts with `The uplink is off`. dnsmasq writes its log to `/run/deployarr-lab/dnsmasq.log` and its leases to `/run/deployarr-lab/dnsmasq.leases`. Only root can read the log:
 
 ```bash
 sudo tail /run/deployarr-lab/dnsmasq.log
@@ -119,7 +119,7 @@ Any user can read the leases:
 cat /run/deployarr-lab/dnsmasq.leases
 ```
 
-The network does not survive a reboot. Run the command again after each reboot. Running it again also moves a dnsmasq that an earlier version of the script started on the lab host into the namespace. To remove the network, run `sudo tools/lab/network.sh down`. It removes the namespace and the veth pair too.
+The network does not survive a reboot. Run the command again after each reboot. Running it again also moves a dnsmasq that an earlier version of the script started on the lab host into the namespace. To remove the network, run `sudo tools/lab/network.sh down`. It removes the namespace and the veth pair too. If the uplink is on, `down` also turns it off.
 
 ## 5. Check the lab
 
@@ -282,6 +282,60 @@ The script then starts no `swtpm` and gives QEMU no TPM device, and it prints a 
 
 To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. That removes its disk, its firmware variables, and its TPM state. The next start creates them again.
 
+## Turn on the uplink
+
+The lab bridge has no uplink by default. The uplink lets the VMs reach the internet through the lab host. Only the [M7 check](roadmap.md#m7-applications) of the `InstallUpdates` step uses it, because a failed Windows Update search fails that step. Run every other check and experiment with the uplink off.
+
+The uplink needs `nft`, from the `nftables` package. If `up` says `The uplink needs nft. Install the nftables package.`, install it:
+
+```bash
+sudo apt-get install -y nftables
+```
+
+Turn on the uplink:
+
+```bash
+sudo env LAB_UPLINK=1 tools/lab/network.sh up
+```
+
+`sudo` resets the environment, so the variable goes after `sudo env`. With `LAB_UPLINK=1 sudo tools/lab/network.sh up`, the script never sees the variable and leaves the uplink off. With any value other than `0` or `1`, `up` stops with `LAB_UPLINK must be 0 or 1.` before it changes anything.
+
+With the variable, `up` builds the lab network as in [step 4](#4-start-the-lab-network), and then it does four more things:
+
+1. It saves `net.ipv4.ip_forward` and `net.ipv4.conf.all.accept_redirects` in `/run/deployarr-lab/uplink-sysctl.conf`, unless an earlier `up` saved them already. So a second `up` keeps the values that the host had before the first.
+2. It replaces the nftables table `ip deployarr_lab` in one transaction. So a second `up` adds no duplicate rule.
+3. It turns on `net.ipv4.ip_forward`. The kernel then sets `net.ipv4.conf.all.accept_redirects` to `0`.
+4. It starts dnsmasq again with DHCP option 6, unless dnsmasq already runs with it. The option names the DNS servers in `UPLINK_DNS` in `tools/lab/lab.conf`, which are `1.1.1.1` and `9.9.9.9`. The router option stays `10.41.0.1`.
+
+The output shows `dnsmasq options: option:router,10.41.0.1 option:dns-server,1.1.1.1,9.9.9.9`. It ends with a line that starts with `The uplink is on`, and then the table's rules with their counters. `sudo tools/lab/network.sh status` shows the same lines.
+
+With the uplink on:
+
+- A VM reaches whatever the lab host reaches through the interface of its IPv4 default route. That is the internet and also the host's own network. The host masquerades the traffic, so it leaves with the host's address.
+- Only replies come back in. The table drops every other packet that the host forwards into `br-lab`. So no connection that starts outside the lab host reaches a VM.
+- Programs on the lab host itself still reach the VMs, as they do with the uplink off.
+- The table never drops traffic between the ports of `br-lab`.
+- The uplink is IPv4 only. Its table is an `ip` table, and `up` changes no IPv6 setting.
+
+Turn on the uplink before you start a VM. A VM that already holds a lease gets the DNS server only from its next DHCP exchange, so restart it.
+
+To turn off the uplink and keep the lab network, run `up` without the variable:
+
+```bash
+sudo tools/lab/network.sh up
+```
+
+`up` without the variable and `down` both put back the two settings that the first `up` saved, and both delete the table. `up` also restarts dnsmasq without option 6, and its last line starts with `The uplink is off`.
+
+The uplink loads the kernel's connection tracking and NAT modules, such as `nf_conntrack`, `nf_nat`, `nft_ct`, and `nft_masq`. They stay loaded after the uplink is off, until the host restarts.
+
+A host firewall can drop the forwarded traffic, and the lab's table cannot override that drop. nftables runs every base chain on the forward hook, and a drop in any of them ends the packet. The section `OVERALL EVALUATION OF THE RULESET` in `man nft` of nftables 1.1.6 says so. These two settings drop the traffic:
+
+- ufw, when it is active. On Ubuntu 26.04, `/etc/default/ufw` sets `DEFAULT_FORWARD_POLICY="DROP"`. `sudo ufw status verbose` shows it as `deny (routed)` while forwarding is on, and as `disabled (routed)` while forwarding is off. Allow the lab's traffic with `sudo ufw route allow in on br-lab out on <interface>`. `<interface>` is the device that `ip -4 route show default` names. ufw's default rules already accept the replies.
+- Docker, when it turns on IP forwarding itself. It then sets the policy of the iptables `FORWARD` chain to `DROP`, as [Docker with iptables](https://docs.docker.com/engine/network/firewall-iptables/#docker-and-iptables-chains) says. Accept the lab's traffic out and its replies back with rules in Docker's `DOCKER-USER` chain, as [Allow forwarding between host interfaces](https://docs.docker.com/engine/network/firewall-iptables/#allow-forwarding-between-host-interfaces) shows.
+
+To look for another firewall that drops forwarded traffic, look for a `hook forward` chain with `policy drop` in `sudo nft list ruleset`, or for `:FORWARD DROP` in `sudo iptables-save`.
+
 ## Troubleshooting
 
 | Symptom | Cause and fix |
@@ -298,3 +352,5 @@ To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. Th
 | The check fails on option 97 for `bios` | The VM did not get the SMBIOS setting. Check that `tools/lab/vm.sh` is unchanged. |
 | The check fails on `Access Denied` | Secure Boot is off in that VM. Delete `~/deployarr-lab/uefi/vars.fd` or `~/deployarr-lab/uefi2023/vars.fd`, and redo step 3 for `uefi2023`. |
 | `media.sh` says the ISO has no `sources/boot.wim` | The file is not a Windows installation ISO. Download it again. |
+| `network.sh up` says `The host has no IPv4 default route, so the lab has no uplink.` | The uplink forwards out of the interface of the host's IPv4 default route. `ip -4 route show default` names no interface, or it names `br-lab`. Connect the host to a network that gives it a default route, then run the command again. Or run `up` without `LAB_UPLINK=1`. |
+| With the uplink on, a VM gets no answer from the internet | Check first that the lab host itself reaches the internet. If it does, a host firewall may drop the forwarded traffic. Allow it as [Turn on the uplink](#turn-on-the-uplink) says. Or the VM took its lease before the uplink was on, so it has no DNS server. Restart the VM. |
