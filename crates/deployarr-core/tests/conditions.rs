@@ -1457,6 +1457,26 @@ fn mdt_wmi_a_namespace_that_cannot_open_is_an_error_even_when_ignored() {
     }
 }
 
+/// MDT calls `CCM::Utility::String::toUpper` on the expanded WMI query before
+/// it runs it (`TsCore!0x1801aa380`). That this upper-cases the query is
+/// inferred, because the function is in `CcmCore.dll`. deployarr runs the
+/// query exactly as substitution leaves it, with its case and the spaces at
+/// either end kept, as `docs/architecture.md#conditions` says.
+#[test]
+fn difference_wmi_runs_the_substituted_query_as_written() {
+    let substituted = " select * from win32_battery where status = 'ok' ";
+    let machine = Machine::new().wmi(substituted, Ok(true));
+    let vars = vars_of(&[("Class", "win32_battery")]);
+    let json = wmi(
+        r"root\cimv2",
+        " select * from %Class% where status = 'ok' ",
+        false,
+    );
+
+    assert!(check(json, &vars, &machine));
+    assert_eq!(machine.asked(), [format!(r"wmi root\cimv2 {substituted}")]);
+}
+
 // Errors.
 
 /// "A condition that fails to evaluate is not false" (`TsCore!0x1801a96c0`
