@@ -21,7 +21,7 @@ These notes cover cloud sessions on the `env` environment. `AGENTS.md` above cov
 
 ## GitHub from a cloud session
 
-- Use the `mcp__github__*` tools for issues and pull requests. In cloud sessions the `gh` command is only allowed for search. `docs/agents/issue-tracker.md` maps each issue operation to its MCP call.
+- Use the `mcp__github__*` tools for issues and pull requests. In cloud sessions `gh` may only search, through REST `gh api`. `docs/agents/issue-tracker.md` maps each issue operation to its MCP call.
 - The MCP tools cannot delete comments, create labels or milestones, or change repository settings.
 - Open a pull request with `create_pull_request` and `draft: true`. Mark it ready for review with `update_pull_request` and `draft: false`, and convert it back to a draft with `draft: true`.
 - A push that deletes a branch is refused with HTTP 403, and auto mode blocks force-pushes.

@@ -8,6 +8,15 @@ File issues only into `Tsukidy/deployarr`.
 
 Cloud sessions use the GitHub MCP tools, because policy there allows the `gh` command only for search. A local session can use `gh`. Each operation below lists both.
 
+In a cloud session, a `gh` command that uses GraphQL returns HTTP 403. This includes `gh search issues` and `gh issue list`. Search through the REST API with `gh api` instead, as in this command:
+
+```sh
+gh api -X GET search/issues -f q='repo:Tsukidy/deployarr is:issue <words>'
+```
+
+- The query must include `is:issue` or `is:pull-request`. Without either, the endpoint returns HTTP 422.
+- Keep `-X GET`. With `-f` fields and no `-X`, `gh api` sends a POST. The session refuses that POST with HTTP 403.
+
 ## Operations
 
 ### Create an issue
