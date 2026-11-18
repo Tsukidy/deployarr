@@ -154,11 +154,17 @@ pub enum Condition {
 	Any(NonEmpty<Condition>),
 	Not(Box<Condition>),
 	Var { name: VarName, test: Test<NonEmptyTemplate> },
-	Registry { key: Template, value: Option<String>, test: Test<RegData> },   // REG_DWORD, REG_QWORD, REG_SZ, or REG_EXPAND_SZ
+	Registry(RegistryCondition),   // a key, or a REG_DWORD, REG_QWORD, REG_SZ, or REG_EXPAND_SZ value
 	File { path: Template, version: Option<Comparison<FileVersion>>, modified: Option<Comparison<Timestamp>> },
 	Folder { path: Template, modified: Option<Comparison<Timestamp>> },
 	InstalledMsi(MsiProduct),   // ProductCode or UpgradeCode. Full OS only
 	Wmi { namespace: String, query: Template, ignore_failure: bool },   // full OS only
+}
+
+pub struct RegistryCondition {   // read with key(), value(), and test(). A test that takes data names a value
+	key: Template,
+	value: Option<RegValueName>,   // none tests the key
+	test: Test<RegData>,
 }
 
 // An operator with its operand. Exists and NotExists take none, and every other operator takes one
@@ -226,7 +232,9 @@ pub struct Comparison<T> { pub op: CompareOp, pub value: T }
 pub struct FileVersion { pub major: u16, pub minor: u16, pub build: u16, pub revision: u16 }
 pub struct Timestamp(pub OffsetDateTime);
 pub enum MsiProduct { ProductCode(Uuid), UpgradeCode(Uuid) }
-pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rules
+pub struct RegValueName(String);          // a registry value name that is not empty
+pub enum RegData { String(RegText), Integer(u64) }   // compared by the `Var` rules
+pub struct RegText(String);               // registry data as text that is not empty
 ```
 
 - `NodeId` wraps a UUID. The core crate never generates a random ID, so it leaves out the `uuid` crate's `v4` feature. On `wasm32-unknown-unknown`, `uuid` stops a build that has `v4` unless the build also turns on one of its randomness features: `js`, `rng-getrandom`, or `rng-rand`. `lower` derives the IDs of the nodes it adds with the `v5` feature, which needs no randomness. See [Task sequences stay loadable](#task-sequences-stay-loadable).
@@ -248,6 +256,7 @@ pub enum RegData { String(String), Integer(u64) }   // compared by the `Var` rul
 - `ExitCodes` holds `i32` values. Windows returns a process's exit code as a 32-bit `DWORD` ([GetExitCodeProcess](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getexitcodeprocess)), and an `i32` holds those 32 bits. An exit code at or above `0x80000000` is written as its signed value, so `0x80070005` is `-2147024891`. The unsigned spelling fails to parse. An HRESULT is a `LONG`, a 32-bit signed integer ([Windows Data Types](https://learn.microsoft.com/en-us/windows/win32/winprog/windows-data-types)), so the signed value is also the HRESULT's own value.
 - `ExitCodes` keeps its fields private, and `ExitCodes::new` rejects a code that is in both `success` and `reboot`. A code means success, or success and then a reboot, never both.
 - `Test<T>` carries an operator together with its operand. `Exists` and `NotExists` take no operand, and every other operator takes one, so a `Var` or `Registry` condition can neither lack the operand it needs nor carry one that it ignores. A `Var` condition compares against a `NonEmptyTemplate`, because `NotExists` is the test for an empty variable.
+- `RegistryCondition` keeps its fields private, and `RegistryCondition::new` rejects a test other than `Exists` or `NotExists` that names no value, because a key has no data to compare. With no value name, `Exists` and `NotExists` test the key. `RegValueName` and `RegText` reject empty text, so a `Registry` condition never names an empty value and never compares against empty text. Code that builds a sequence therefore cannot write a `registry` condition that the parser would reject.
 - `Comparison<T>` takes only the six operators of `CompareOp`, so a file version or timestamp comparison cannot use `Like`, `Exists`, or `NotExists`.
 - `Comparison<T>` has named `op` and `value` fields. An earlier sketch had the tuple `(CompareOp, T)`. serde writes a tuple as a JSON array, so a parse error would point at `version[1]`. With named fields it points at `version.value`.
 - `FileVersion` is written as `a.b.c.d` and orders by its four fields.
@@ -276,6 +285,9 @@ A task sequence is stored and sent as one JSON document. `TaskSequence::from_jso
   - An operand on `exists` or `not_exists`, a missing operand on any other operator, or an empty `Var` operand, at the operator, such as `test.exists`.
   - `Like`, `Exists`, or `NotExists` in a file version or timestamp comparison, at `op`.
   - A negative registry integer, at the operator that holds it.
+  - A `registry` test other than `exists` or `not_exists` that names no value, because a key has no data to compare. With `value` left out, the error is at `registry`, as a clash with the default of an omitted `reboot` list fails at `exit`. With `"value": null`, it is at `registry.value` or at the operator under `registry.test`, whichever the document holds second, as a code in both exit lists fails at the second one. MDT fails a comparison without a value name when it runs (`TsCore!0x1801a6bec`).
+  - A `value` of `""`, at `registry.value`, for every test. A test of the key leaves out `value` or sets it to `null`. MDT reads an empty value name as no value name, so its `Exists` tests the key and its comparisons fail (`TsCore!0x1801a6bec`).
+  - String registry data of `""`, at the operator that holds it, such as `registry.test.equals`. This covers `like` too, as for a `Var` operand. MDT fails a comparison against empty data when it runs, and checks only the six comparisons (`TsCore!0x1801a6bec`).
   - A `SuspendBitLocker` count outside 1 to 15, at `restarts`.
   - A `SetVariable` step or a `default_vars` entry that names a variable that starts with `_`, at its `name`.
   - Two `default_vars` entries that name the same variable, in any case, at the second entry's name, such as `default_vars[1].name`.
