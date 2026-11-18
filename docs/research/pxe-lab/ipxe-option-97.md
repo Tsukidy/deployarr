@@ -94,7 +94,7 @@ Every version and hash that both pages list is the same. `boot/bios.bcd`, which 
 
 Each run dumped the guest's BIOS segment, `0xF0000` to `0xFFFFF`, with the HMP command `pmemsave 0xf0000 0x10000 "<absolute path>"` on the monitor socket. The run script sent it as soon as the prototype logged the first DISCOVER from `52:54:00:41:00:21`. That DISCOVER already carried option 97. The dump file's modification time came 34 to 119 ms after the captured DISCOVER, and before the lease REQUEST.
 
-A scan lists every `_SM_` and `_SM3_` string in the dump. It counts one as an entry point only when it starts on a 16-byte boundary and its checksum is valid. For `_SM_` it also checks the intermediate anchor `_DMI_` and its checksum. A second, separate piece of code repeated the checksum of each counted anchor. A walk of the structure table from each counted entry point found 11 structures that end with type 127, and covered the table's whole length.
+A scan, `smbios_scan.py`, lists every `_SM_` and `_SM3_` string in the dump. It counts one as an entry point only when it starts on a 16-byte boundary and its checksum is valid. For `_SM_` it also checks the intermediate anchor `_DMI_` and its checksum. A second, separate piece of code, `smbios_checksum.py`, repeated the checksum of each counted anchor. A third, `smbios_walk.py`, walked the structure table from each counted entry point. In each dump the walk found 11 structures that end with type 127, and covered the table's whole length. It also printed the UUID and the version string of each dump's type 1 structure. [Commands](#commands) gives the three commands.
 
 Every dump also holds an unaligned `_DMI_` at `0xf1934` and an unaligned `_SM3_` at `0xf1941`. The scan does not count them, and that `_SM3_` fails its checksum.
 
@@ -200,7 +200,7 @@ qemu-system-x86_64 -accel kvm -cpu host -name deployarr-lab-bios
 ### SMBIOS entry point
 
 - The dump is 65,536 bytes, SHA-256 `f8fb6ca3ee7b91f58ba1fe0a549afb4d2fbb39e02bf42763ce2ea9bc436619ba`. Its modification time is 20:52:35.926, 34 ms after the DISCOVER in frame 1.
-- The scan counts one entry point, `_SM3_` at `0xf5220`, length `0x18`, version 3.0.0, entry point revision 1. Its table is at most 526 bytes, at `0x00000000000f5240`, below 4 GiB. The walk found 11 structures in 526 bytes.
+- The scan counts one entry point, `_SM3_` at `0xf5220`, length `0x18`, version 3.0.0. Its table is at most 526 bytes, at `0x00000000000f5240`, below 4 GiB. The walk read entry point revision 1 and found 11 structures in 526 bytes.
 - The dump holds no `_SM_` string anywhere.
 
 ### DHCP
@@ -274,16 +274,16 @@ boot\x64\pxeboot.n12 : 25238 bytes [PXE-NBP]
 - Wireshark's dissector and `dhcp97.py`, a separate parser of the raw BOOTP payload, read the same option 97 in frames 1, 4, and 6 of each capture.
 - The first set's full captures in that folder have the same names without `-r2`. They are not the source of the committed files.
 
-The raw evidence stays on the lab host in `~/deployarr-lab/runs/217/`. Each run's folder holds the prototype log, its slice of the dnsmasq log, the QEMU command lines, the HMP output, the dump and its scan, the screenshots, and the clock stamps. `tools/` holds the run script and the parsers. The first set's folders have the run names without `-r2`.
+The raw evidence stays on the lab host in `~/deployarr-lab/runs/217/`. Each run's folder holds the prototype log, its slice of the dnsmasq log, the QEMU command lines, the HMP output, the dump, the screenshots, and the clock stamps. It also holds the output of the dump's scan, second checksum, and walk. `tools/` holds the run script and the parsers. The first set's folders have the run names without `-r2`.
 
 ## Commands
 
-`$WT` is the checkout at `3fc0d3f`. `<run>` is `pc`, `q35`, or `pc-ep64`, and `<machine>` is `pc`, `q35`, or `pc,smbios-entry-point-type=64`. The run script, `run-r2.sh <run>-r2 <machine>`, started the prototype, then the capture, then QEMU, in the order that [Run an experiment](../../lab-setup.md#run-an-experiment) gives:
+`$WT` is the checkout at `3fc0d3f`. `<run>` is `pc`, `q35`, or `pc-ep64`, and `<machine>` is `pc`, `q35`, or `pc,smbios-entry-point-type=64`. The run script, `run-r2.sh <run>-r2 <machine>`, created the run's disk first. It then started the prototype, then the capture, then QEMU, in the order that [Run an experiment](../../lab-setup.md#run-an-experiment) gives:
 
 ```bash
+qemu-img create -q -f qcow2 ~/deployarr-lab/runs/217/<run>-r2/vm/disk.qcow2 64G
 sudo python3 -B $WT/tools/pxe-prototype/pxe_prototype.py --server-ip 10.41.0.1 --interface br-lab --root ~/deployarr-lab/tftp/2011 --chain single --answer-without-guid --no-block-log --log-file ~/deployarr-lab/runs/217/<run>-r2/prototype.log &
 sudo dumpcap -i br-lab -f 'udp and udp[8:2] != 3' -w - > ~/deployarr-lab/captures/ipxe-option-97-<run>-r2.pcapng 2> ~/deployarr-lab/captures/ipxe-option-97-<run>-r2-dumpcap.log &
-qemu-img create -q -f qcow2 ~/deployarr-lab/runs/217/<run>-r2/vm/disk.qcow2 64G
 timeout 300 qemu-system-x86_64 <the arguments in the run's section> &
 ```
 
@@ -297,6 +297,15 @@ screendump <file>.png -f png
 The file name in `pmemsave` must be in double quotes. `pmemsave` reads its size as an expression ([`hmp-commands.hx:821-826`](https://github.com/qemu/qemu/blob/v10.2.1/hmp-commands.hx#L821-L826)). The expression parser reads a `/` after a number as division ([`monitor/hmp.c:425-457`](https://github.com/qemu/qemu/blob/v10.2.1/monitor/hmp.c#L425-L457)). So it takes the `/` that starts an unquoted absolute path as part of the size. It then stops at the next letter with `invalid char 'h' in expression` ([`monitor/hmp.c:408-415`](https://github.com/qemu/qemu/blob/v10.2.1/monitor/hmp.c#L408-L415)). The first set's `pmemsave` printed that message and wrote no file. A `"` is not an operator, so the expression ends before a quoted name, and the string parser reads the name ([`monitor/hmp.c:94-96`](https://github.com/qemu/qemu/blob/v10.2.1/monitor/hmp.c#L94-L96)).
 
 When the prototype logged the end of `boot\x64\pxeboot.n12`, the script sent `stop`. While the VM was paused, it sent `qom-get /machine type`, `qom-get /machine smbios-entry-point-type`, `info version`, `info qtree`, and a `screendump`. Then it sent `quit` and stopped the prototype and `dumpcap` by the process IDs it had started.
+
+These commands read each dump, as [How the entry point was read](#how-the-entry-point-was-read) describes:
+
+```bash
+cd ~/deployarr-lab/runs/217
+python3 -I tools/smbios_scan.py <run>-r2/fseg-f0000.bin > <run>-r2/smbios-scan.txt
+python3 -I tools/smbios_checksum.py <run>-r2/fseg-f0000.bin > <run>-r2/smbios-checksum.txt
+python3 -I tools/smbios_walk.py <run>-r2/fseg-f0000.bin > <run>-r2/smbios-walk.txt
+```
 
 These commands make the reduced and the committed files, and check them:
 
@@ -338,7 +347,7 @@ In the [DHCP](../../architecture.md#dhcp) section:
 In the lab's `bios` VM settings:
 
 - On the lab's versions, `smbios-entry-point-type=32` does not decide whether the ROM sends option 97. The ROM sent it without the property, and with only a 64-bit entry point.
-- None of the four SeaBIOS settings measured on the lab's versions makes a request without option 97. They are the three settings on this page and the lab's own `pc,smbios-entry-point-type=32`. So the lab has no SeaBIOS client that tests the reply to such a request.
+- In none of the four SeaBIOS settings measured on the lab's versions did the iPXE ROM send a PXE request without option 97. They are the three settings on this page and the lab's own `pc,smbios-entry-point-type=32`. So the lab has no SeaBIOS client that tests the reply to such a request.
 - The lab guide's sentence in [Run an experiment](../../lab-setup.md#run-an-experiment) says that the SeaBIOS VM runs with `smbios-entry-point-type=32`, "so its iPXE ROM sends option 97". Its option 97 row in [Troubleshooting](../../lab-setup.md#troubleshooting) says that a failed check means "The VM did not get the SMBIOS setting." On the lab's versions, the ROM sends option 97 without that setting.
 - The comment on the `bios` VM's `-machine` line in `tools/lab/vm.sh` says "With a 32-bit SMBIOS entry point, the iPXE ROM sends option 97." Runs 1 and 2 agree with it. Run 3 shows that the ROM also sends option 97 with only a 64-bit entry point.
 - The property still matters for the `fbbdc3926` ROM, which needs a 32-bit entry point, as the [PXE prototype's requirements](../../../tools/pxe-prototype/README.md#requirements) say.
