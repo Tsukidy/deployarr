@@ -88,7 +88,7 @@ table ip $UPLINK_TABLE {
     chain forward {
         type filter hook forward priority filter; policy accept;
         iifname "$BRIDGE" oifname "$BRIDGE" accept
-        iifname "$BRIDGE" oifname "$out" counter accept
+        iifname "$BRIDGE" ip saddr $SUBNET oifname "$out" counter accept
         iifname "$out" oifname "$BRIDGE" ct state established,related counter accept
         iifname "$BRIDGE" counter drop
         oifname "$BRIDGE" counter drop

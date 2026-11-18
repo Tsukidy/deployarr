@@ -312,6 +312,7 @@ The output shows `dnsmasq options: option:router,10.41.0.1 option:dns-server,1.1
 With the uplink on:
 
 - A VM reaches whatever the lab host reaches through the interface of its IPv4 default route. That is the internet and also the host's own network. The host masquerades the traffic, so it leaves with the host's address.
+- The table forwards a packet from `br-lab` out of the uplink only when its source is in `10.41.0.0/24`, the lab's subnet. It drops a packet with any other source.
 - Only replies come back in. The table drops every other packet that the host forwards into `br-lab`. So no connection that starts outside the lab host reaches a VM.
 - Programs on the lab host itself still reach the VMs, as they do with the uplink off.
 - The table never drops traffic between the ports of `br-lab`.
