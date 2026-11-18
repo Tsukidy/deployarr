@@ -1,14 +1,18 @@
-use std::collections::BTreeSet;
+//! The rules that both `validate` and `plan` check, run through both on
+//! sequences with no add-on step and no join slot, and the program that `plan`
+//! builds.
 
 use deployarr_core::action::BuiltinAction;
-use deployarr_core::compile::OnError::{Continue, FailDeployment};
-use deployarr_core::compile::{
-    CompileError, CompileErrors, Instr, NodePath, OnError, Pc, Program, Rule, compile,
+use deployarr_core::catalog::Catalog;
+use deployarr_core::plan::{
+    Expansions, NodePath, PlanCheck, PlanErrors, PlanIssue, Rule, SaveCheck, SaveIssue, plan,
+    validate,
 };
+use deployarr_core::program::OnError::{Continue, FailDeployment};
+use deployarr_core::program::{Instr, OnError, Pc, Program};
 use deployarr_core::sequence::{
     AuthoredSequence, Group, LoweredSequence, Node, NodeId, RunIn, Step,
 };
-use deployarr_core::validate::{Finding, Issue, validate};
 use serde_json::{Value, json};
 
 use self::Shape::{Enter, Exec};
@@ -134,55 +138,63 @@ fn var_exists() -> Value {
     json!({ "var": { "name": "AssetTag", "test": "exists" } })
 }
 
-fn parse(document: &Value) -> LoweredSequence {
-    LoweredSequence::from_json(&document.to_string()).expect("the document parses")
+fn parse(document: &Value) -> AuthoredSequence {
+    AuthoredSequence::from_json(&document.to_string()).expect("the document parses")
 }
 
-/// Compiles the document, and checks that `validate` agrees with `compile`.
-fn compile_and_validate(document: &Value) -> Result<Program, CompileErrors> {
-    let result = compile(&parse(document));
-    let authored = AuthoredSequence::from_json(&document.to_string()).expect("the document parses");
+/// Plans the document, and checks that `validate` agrees with `plan`.
+fn plan_and_validate(document: &Value) -> Result<Program, PlanErrors> {
+    let sequence = parse(document);
+    let result = plan(&sequence, &Expansions::new());
     let errors = match &result {
         Ok(_) => &[][..],
-        Err(errors) => errors.as_slice(),
+        Err(errors) => {
+            assert_eq!(errors.unused_expansions(), []);
+            errors.issues()
+        }
     };
-    assert_validate_agrees(&authored, errors);
+    assert_validate_agrees(&sequence, errors);
     result
 }
 
-/// `validate` reports the same rules at the same nodes as `compile`, as
-/// errors, for a sequence with no add-on step and no join slot.
+/// `validate` reports the same rules at the same nodes as `plan`, as errors,
+/// for a sequence with no add-on step and no join slot.
 #[track_caller]
-fn assert_validate_agrees(sequence: &AuthoredSequence, errors: &[CompileError]) {
-    let expected: Vec<Finding> = errors
+fn assert_validate_agrees(sequence: &AuthoredSequence, errors: &[PlanIssue]) {
+    let expected: Vec<SaveIssue> = errors
         .iter()
-        .map(|error| Finding {
-            node: error.node,
-            path: error.path.clone(),
-            issue: Issue::Compile(error.rule.clone()),
+        .map(|error| {
+            let PlanCheck::Rule(rule) = &error.check else {
+                panic!("expected a rule, found {error}");
+            };
+            SaveIssue {
+                node: error.node,
+                path: error.path.clone(),
+                check: SaveCheck::Rule(rule.clone()),
+            }
         })
         .collect();
-    assert_eq!(validate(sequence, &BTreeSet::new()), expected);
+    assert_eq!(validate(sequence, &Catalog::default()), expected);
 }
 
 fn compile_ok(document: &Value) -> Program {
-    let program = compile_and_validate(document).unwrap_or_else(|errors| panic!("{errors}"));
+    let program = plan_and_validate(document).unwrap_or_else(|errors| panic!("{errors}"));
     assert_jumps_forward(&program);
     program
 }
 
-fn compile_err(document: &Value) -> Vec<CompileError> {
-    match compile_and_validate(document) {
+fn compile_err(document: &Value) -> Vec<PlanIssue> {
+    match plan_and_validate(document) {
         Ok(program) => panic!("expected errors, compiled {program:?}"),
-        Err(errors) => errors.as_slice().to_vec(),
+        Err(errors) => errors.issues().to_vec(),
     }
 }
 
-fn error(n: u32, path: Vec<usize>, rule: Rule) -> CompileError {
-    CompileError {
+fn error(n: u32, path: Vec<usize>, rule: Rule) -> PlanIssue {
+    PlanIssue {
         node: id(n),
         path: NodePath::from(path),
-        rule,
+        check: PlanCheck::Rule(rule),
     }
 }
 
@@ -286,13 +298,12 @@ fn kept_steps<'a>(group: &'a Group<BuiltinAction>, out: &mut Vec<&'a Step<Builti
 
 #[test]
 fn the_sample_compiles_to_a_flat_program() {
-    let sequence = LoweredSequence::from_json(SAMPLE).expect("the sample parses");
+    let sequence = AuthoredSequence::from_json(SAMPLE).expect("the sample parses");
 
-    let program = compile(&sequence).unwrap_or_else(|errors| panic!("{errors}"));
+    let program = plan(&sequence, &Expansions::new()).unwrap_or_else(|errors| panic!("{errors}"));
 
     assert_jumps_forward(&program);
-    let authored = AuthoredSequence::from_json(SAMPLE).expect("the sample parses");
-    assert_validate_agrees(&authored, &[]);
+    assert_validate_agrees(&sequence, &[]);
     assert_eq!(program.source().0.as_str(), "W11-PRO-STD");
     assert_eq!(program.source().1, 7);
     // The root, then "Install Windows" with its 8 steps, then "Finish in
@@ -334,8 +345,11 @@ fn the_sample_compiles_to_a_flat_program() {
     assert_eq!(condition, &finish.meta.condition);
     assert!(condition.is_some());
 
+    // The sample holds no add-on step or join slot, so it parses as a
+    // sequence of built-in steps too.
+    let built_in = LoweredSequence::from_json(SAMPLE).expect("the sample parses");
     let mut steps = Vec::new();
-    kept_steps(&sequence.root, &mut steps);
+    kept_steps(&built_in.root, &mut steps);
     let execs: Vec<_> = program
         .instrs()
         .iter()
@@ -676,24 +690,24 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
                 step(0x03, written, action.clone()),
             ]);
 
-            let result = compile_and_validate(&document);
+            let result = plan_and_validate(&document);
 
             if allowed.contains(&run_in(written)) {
                 assert!(result.is_ok(), "{name} with {written}: {result:?}");
             } else {
                 let errors = result.expect_err(&format!("{name} with {written} must fail"));
                 let [
-                    CompileError {
+                    PlanIssue {
                         node,
                         path,
-                        rule:
-                            Rule::RunIn {
+                        check:
+                            PlanCheck::Rule(Rule::RunIn {
                                 action,
                                 run_in: found,
                                 allowed: listed,
-                            },
+                            }),
                     },
-                ] = errors.as_slice()
+                ] = errors.issues()
                 else {
                     panic!("{name} with {written}: {errors}");
                 };
@@ -1617,10 +1631,10 @@ fn every_error_is_reported_in_document_order() {
         ),
     ]);
 
-    let errors = compile_and_validate(&document).expect_err("the sequence breaks five rules");
+    let errors = plan_and_validate(&document).expect_err("the sequence breaks five rules");
 
     assert_eq!(
-        errors.as_slice(),
+        errors.issues(),
         [
             error(
                 0x02,
@@ -1677,17 +1691,17 @@ fn every_error_is_reported_in_document_order() {
 }
 
 #[test]
-fn compile_errors_iterate_in_order() {
+fn plan_errors_list_their_issues_in_order() {
     let document = root(vec![
         step(0x02, "full_os", apply_image()),
         step(0x02, "full_os", apply_image()),
     ]);
 
-    let errors: CompileErrors =
-        compile_and_validate(&document).expect_err("the sequence breaks rules");
+    let errors: PlanErrors = plan_and_validate(&document).expect_err("the sequence breaks rules");
 
-    let nodes: Vec<_> = (&errors)
-        .into_iter()
+    let nodes: Vec<_> = errors
+        .issues()
+        .iter()
         .map(|error| error.path.to_string())
         .collect();
     assert_eq!(

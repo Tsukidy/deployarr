@@ -17,9 +17,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// A task sequence whose steps hold actions of type `A`.
 ///
-/// An admin edits an [`AuthoredSequence`], and the server stores it. The
-/// compiler and the agent see only a [`LoweredSequence`], which
-/// [`crate::lower::lower`] makes when a deployment is planned.
+/// An admin edits an [`AuthoredSequence`], and the server stores it.
+/// [`crate::plan::plan`] turns it into the program that the agent runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskSequence<A> {
     pub id: TaskSequenceId,
@@ -33,7 +32,9 @@ pub struct TaskSequence<A> {
 /// add-on or a join slot.
 pub type AuthoredSequence = TaskSequence<Action>;
 
-/// What the compiler and the agent see. Every step holds a built-in action.
+/// A task sequence in which every step holds a built-in action, as an
+/// authored sequence is once each add-on step and join slot holds its
+/// expansion. [`crate::plan::plan`] builds the program without making one.
 pub type LoweredSequence = TaskSequence<BuiltinAction>;
 
 impl<A: DeserializeOwned> TaskSequence<A> {

@@ -34,8 +34,6 @@ uuid = { version = "1", default-features = false, features = ["serde", "v5"] }
 # for the library too. Only the `wasm32` and `x86_64-unknown-none` builds catch
 # library code that needs them.
 time = { version = "0.3", features = ["serde-well-known"] }
-# `tests/compile_types.rs` shows that `compile` rejects an authored sequence.
-trybuild = "1"
 # `tests/form.rs` and `tests/prompt.rs` parse form fields and prompts from
 # TOML, as a schema file and a manifest hold them.
 toml = "1"

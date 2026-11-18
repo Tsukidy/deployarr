@@ -30,9 +30,11 @@ use core::num::{NonZeroU32, NonZeroU64};
 use regex_automata::meta::Regex;
 use regex_syntax::hir::{Hir, Look};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::value::RawValue;
 use serde_json::{Map, Value};
 
-use crate::addon::KindId;
+use crate::addon::{AddOnRef, KindId};
+use crate::catalog::ConfigSchemas;
 use crate::non_empty::NonEmpty;
 use crate::sequence::TaskSequenceId;
 use crate::validated_string::validated_string;
@@ -994,4 +996,60 @@ impl fmt::Display for ValueProblem {
             ),
         }
     }
+}
+
+/// What the check of an add-on's config against its kind's schemas finds. The
+/// save check of an add-on step and the check of a join profile share it.
+pub(crate) enum ConfigProblem {
+    NoSchema,
+    Unreadable,
+    Value(ValueError),
+}
+
+/// Checks a config against the schema at `version`. It parses the config's
+/// text into a [`Value`] for the check, and leaves the text unchanged.
+pub(crate) fn check_config(
+    schemas: &ConfigSchemas,
+    version: u32,
+    config: &RawValue,
+) -> Vec<ConfigProblem> {
+    let Some(schema) = schemas.at(version) else {
+        return Vec::from([ConfigProblem::NoSchema]);
+    };
+    // A number out of range is valid JSON text, which a `Value` cannot hold.
+    let Ok(document) = serde_json::from_str::<Value>(config.get()) else {
+        return Vec::from([ConfigProblem::Unreadable]);
+    };
+    match schema.check(&document) {
+        Ok(()) => Vec::new(),
+        Err(errors) => errors
+            .as_slice()
+            .iter()
+            .cloned()
+            .map(ConfigProblem::Value)
+            .collect(),
+    }
+}
+
+pub(crate) const UNREADABLE_CONFIG: &str =
+    "the config holds a value that the schema check cannot read, such as a number out of range";
+
+/// `of` is `step` or `join`. The message does not say that planning fails,
+/// because the add-on may migrate the config when a deployment is planned.
+pub(crate) fn no_config_schema(
+    f: &mut fmt::Formatter<'_>,
+    of: &str,
+    kind: &AddOnRef,
+    config_version: u32,
+) -> fmt::Result {
+    write!(
+        f,
+        "the config could not be checked, because this server holds no schema for config version {config_version} of the {of} kind `{}` of `{}`",
+        kind.kind, kind.addon
+    )
+}
+
+/// The error names no part of the value, so a message cannot leak a secret.
+pub(crate) fn config_error(f: &mut fmt::Formatter<'_>, error: &ValueError) -> fmt::Result {
+    write!(f, "the config does not fit its schema: {error}")
 }

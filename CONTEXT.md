@@ -33,7 +33,7 @@ The checks that run each time an admin saves an authored sequence. It runs no ad
 _Avoid_: validation
 
 **Unexpanded deferred step**:
-A deferred step as the save check sees it, before any add-on has expanded it. Its expansion is unknown, so the save check leaves to planning each rule that the expansion could change. See [Compile the tree into a flat program](docs/architecture.md#compile-the-tree-into-a-flat-program).
+A deferred step as the save check sees it, before any add-on has expanded it. Its expansion may hold any action that an add-on may return, so the save check reports a rule about program order only when every such expansion would break it. See [Compile the tree into a flat program](docs/architecture.md#compile-the-tree-into-a-flat-program).
 _Avoid_: slot, placeholder, stand-in
 
 **Planning**:
