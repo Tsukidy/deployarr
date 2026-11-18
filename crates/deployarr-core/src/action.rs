@@ -367,6 +367,7 @@ impl BuiltinAction {
             | Self::ApplyDrivers { .. }
             | Self::ApplyUnattend { .. }
             | Self::InstallApplications { .. }
+            | Self::InstallUpdates { .. }
             | Self::VerifyDrivers { .. }
             | Self::CheckReadiness { .. }
             | Self::ActivateWindows { .. } => false,
