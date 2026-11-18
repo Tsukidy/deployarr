@@ -55,7 +55,7 @@ GitHub issues hold the project's work. [Roadmap](docs/roadmap.md) sets the order
 
 ### Rules for every session
 
-- Claim a ticket before any other work, and read [Take a ticket](docs/agents/issue-tracker.md#take-a-ticket) before you claim.
+- Claim a ticket before any other work, and read [Take a ticket](docs/agents/issue-tracker.md#take-a-ticket) before you claim. Never work on a `needs-triage` issue without the owner's direct approval.
 - Before you publish tickets, show the owner the numbered breakdown and get approval in the session. With no owner in the session, publish nothing as `ready-for-agent`. See [Write tickets](docs/agents/agent-brief.md#write-tickets).
 - Triage only when the owner asks. See [Triage](docs/agents/triage-labels.md#triage).
 - List your issues at the start. Take no issue that another session opens later without the owner's permission. See [Work list](docs/agents/issue-tracker.md#work-list).
