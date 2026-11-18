@@ -51,6 +51,7 @@ GitHub issues hold the project's work. [Roadmap](docs/roadmap.md) sets the order
 
 - Issue tracker: GitHub Issues on `Tsukidy/deployarr`, through the GitHub MCP tools in cloud sessions. See `docs/agents/issue-tracker.md`.
 - Triage labels: the canonical names, unchanged, plus `epic` and `area:*`. See `docs/agents/triage-labels.md`.
+- Domain docs: one context, with the glossary in `CONTEXT.md` at the root. See `docs/agents/domain.md`.
 - Agent briefs and the ticket layout: see `docs/agents/agent-brief.md`.
 
 ### Rules for every session
