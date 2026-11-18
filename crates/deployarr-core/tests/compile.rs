@@ -1,9 +1,14 @@
+use std::collections::BTreeSet;
+
 use deployarr_core::action::BuiltinAction;
 use deployarr_core::compile::OnError::{Continue, FailDeployment};
 use deployarr_core::compile::{
     CompileError, CompileErrors, Instr, NodePath, OnError, Pc, Program, Rule, compile,
 };
-use deployarr_core::sequence::{Group, LoweredSequence, Node, NodeId, RunIn, Step};
+use deployarr_core::sequence::{
+    AuthoredSequence, Group, LoweredSequence, Node, NodeId, RunIn, Step,
+};
+use deployarr_core::validate::{Finding, Issue, validate};
 use serde_json::{Value, json};
 
 use self::Shape::{Enter, Exec};
@@ -121,14 +126,41 @@ fn parse(document: &Value) -> LoweredSequence {
     LoweredSequence::from_json(&document.to_string()).expect("the document parses")
 }
 
+/// Compiles the document, and checks that `validate` agrees with `compile`.
+fn compile_and_validate(document: &Value) -> Result<Program, CompileErrors> {
+    let result = compile(&parse(document));
+    let authored = AuthoredSequence::from_json(&document.to_string()).expect("the document parses");
+    let errors = match &result {
+        Ok(_) => &[][..],
+        Err(errors) => errors.as_slice(),
+    };
+    assert_validate_agrees(&authored, errors);
+    result
+}
+
+/// `validate` reports the same rules at the same nodes as `compile`, as
+/// errors, for a sequence with no add-on step and no join slot.
+#[track_caller]
+fn assert_validate_agrees(sequence: &AuthoredSequence, errors: &[CompileError]) {
+    let expected: Vec<Finding> = errors
+        .iter()
+        .map(|error| Finding {
+            node: error.node,
+            path: error.path.clone(),
+            issue: Issue::Compile(error.rule.clone()),
+        })
+        .collect();
+    assert_eq!(validate(sequence, &BTreeSet::new()), expected);
+}
+
 fn compile_ok(document: &Value) -> Program {
-    let program = compile(&parse(document)).unwrap_or_else(|errors| panic!("{errors}"));
+    let program = compile_and_validate(document).unwrap_or_else(|errors| panic!("{errors}"));
     assert_jumps_forward(&program);
     program
 }
 
 fn compile_err(document: &Value) -> Vec<CompileError> {
-    match compile(&parse(document)) {
+    match compile_and_validate(document) {
         Ok(program) => panic!("expected errors, compiled {program:?}"),
         Err(errors) => errors.as_slice().to_vec(),
     }
@@ -247,14 +279,16 @@ fn the_sample_compiles_to_a_flat_program() {
     let program = compile(&sequence).unwrap_or_else(|errors| panic!("{errors}"));
 
     assert_jumps_forward(&program);
+    let authored = AuthoredSequence::from_json(SAMPLE).expect("the sample parses");
+    assert_validate_agrees(&authored, &[]);
     assert_eq!(program.source().0.as_str(), "W11-PRO-STD");
     assert_eq!(program.source().1, 7);
     // The root, then "Install Windows" with its 8 steps, then "Finish in
-    // Windows" with 5 of its 6 steps. The last step, 0x10, is disabled.
+    // Windows" with 6 of its 7 steps. Its sixth step, 0x10, is disabled.
     assert_eq!(
         shapes(&program),
         [
-            Enter(0x01, 16),
+            Enter(0x01, 17),
             Enter(0x0a, 10),
             Exec(0x02, FailDeployment),
             Exec(0x03, FailDeployment),
@@ -264,15 +298,16 @@ fn the_sample_compiles_to_a_flat_program() {
             Exec(0x07, FailDeployment),
             Exec(0x08, Continue),
             Exec(0x09, FailDeployment),
-            Enter(0x11, 16),
+            Enter(0x11, 17),
             Exec(0x0b, FailDeployment),
             Exec(0x0c, FailDeployment),
             Exec(0x0d, FailDeployment),
             Exec(0x0e, FailDeployment),
             Exec(0x0f, FailDeployment),
+            Exec(0x12, FailDeployment),
         ]
     );
-    assert_eq!(program.end(), Pc(16));
+    assert_eq!(program.end(), Pc(17));
 
     // Each instruction carries its node's condition, and each step its
     // `run_in` and action.
@@ -562,7 +597,7 @@ fn a_disabled_root_compiles_to_an_empty_program() {
 
 #[test]
 fn each_action_allows_only_the_run_in_values_in_its_table() {
-    let table: [(&str, Value, &[&str]); 12] = [
+    let table: [(&str, Value, &[&str]); 13] = [
         ("partition_disk", partition(), &["win_pe"]),
         ("apply_os_image", apply_image(), &["win_pe"]),
         (
@@ -583,6 +618,11 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
         (
             "install_applications",
             json!({ "install_applications": { "apps": { "one": "7zip-24.08" } } }),
+            &["full_os"],
+        ),
+        (
+            "install_updates",
+            json!({ "install_updates": {} }),
             &["full_os"],
         ),
         (
@@ -620,7 +660,7 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
                 step(0x03, written, action.clone()),
             ]);
 
-            let result = compile(&parse(&document));
+            let result = compile_and_validate(&document);
 
             if allowed.contains(&run_in(written)) {
                 assert!(result.is_ok(), "{name} with {written}: {result:?}");
@@ -649,6 +689,39 @@ fn each_action_allows_only_the_run_in_values_in_its_table() {
             }
         }
     }
+}
+
+#[test]
+fn an_install_updates_step_in_win_pe_fails_and_the_error_names_the_node() {
+    let document = root(vec![group(
+        0x02,
+        vec![
+            step(0x03, "win_pe", partition()),
+            step(0x04, "win_pe", json!({ "install_updates": {} })),
+        ],
+    )]);
+
+    let errors = compile_err(&document);
+
+    assert_eq!(
+        errors,
+        [error(
+            0x04,
+            vec![0, 1],
+            Rule::RunIn {
+                action: "install_updates",
+                run_in: RunIn::WinPe,
+                allowed: &[RunIn::FullOs],
+            },
+        )]
+    );
+    assert_eq!(
+        errors[0].to_string(),
+        format!(
+            "root.children[0].group.children[1], node {}: `install_updates` runs only with `run_in` `full_os`, and this step has `win_pe`",
+            id_text(0x04)
+        )
+    );
 }
 
 #[test]
@@ -1146,7 +1219,7 @@ fn every_error_is_reported_in_document_order() {
         ),
     ]);
 
-    let errors = compile(&parse(&document)).expect_err("the sequence breaks five rules");
+    let errors = compile_and_validate(&document).expect_err("the sequence breaks five rules");
 
     assert_eq!(
         errors.as_slice(),
@@ -1212,7 +1285,8 @@ fn compile_errors_iterate_in_order() {
         step(0x02, "full_os", apply_image()),
     ]);
 
-    let errors: CompileErrors = compile(&parse(&document)).expect_err("the sequence breaks rules");
+    let errors: CompileErrors =
+        compile_and_validate(&document).expect_err("the sequence breaks rules");
 
     let nodes: Vec<_> = (&errors)
         .into_iter()
