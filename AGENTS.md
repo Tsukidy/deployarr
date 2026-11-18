@@ -91,7 +91,7 @@ These rules restate invariants from `docs/architecture.md`.
 
 - Crates live under `crates/`, in-tree add-ons under `addons/`, the add-on API under `wit/`, and build tooling under `xtask/`, as listed in the architecture's crate layout.
 - `deployarr-core` does no I/O. It is `no_std` with `alloc` and forbids unsafe code. Its unit tests get `std` from the crate root's `cfg_attr`. Never add `extern crate std`. Every dependency must build without `std`. The crate must build for Linux, Windows, `wasm32`, and `x86_64-unknown-none`.
-- `deployarr-agent` targets `x86_64-pc-windows-msvc` with the static C runtime. On any other target it builds a stub `main` that exits with code 1. It must run in base WinPE, so it cannot use WMI or any DLL that base WinPE lacks.
+- `deployarr-agent` targets `x86_64-pc-windows-msvc` with the static C runtime. On any other target it builds a stub `main` that exits with code 1. It must run in base WinPE, so it uses no WMI there and imports no DLL that base WinPE lacks.
 - Parse external data into typed values where it enters the system. This covers config files, API requests, SQL rows, INF files, and SMBIOS tables. Code past that point trusts the types.
 - Every step that changes state in the engine or the agent must be safe to run again after a crash.
 - Bind SQL parameters. Never paste values into SQL text.
