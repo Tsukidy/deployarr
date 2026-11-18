@@ -230,7 +230,7 @@ The table lists every DHCP packet in [`two-stage-chain-bios-dhcp.txt`](captures/
 | 11 | 11:03:29.465 | `10.41.0.1:4011` | `10.41.0.192:68` | The first ACK again, `boot\x64\wdsnbp.com` with the same option 250 |
 | 12 | 11:03:30.162 | `10.41.0.192:68` | `10.41.0.1:4011` | `wdsnbp.com`'s request with option 250 |
 | 13 | 11:03:30.162 | `10.41.0.1:4011` | `10.41.0.192:68` | Second ACK, `boot\x64\pxeboot.n12`, options 53, 54, 97, 60, and 252 = `boot\bios.bcd` |
-| 44 to 47 | 11:05:14.941 to 11:05:15.451 | | | WinPE's own DISCOVER, OFFER, REQUEST, and ACK, with option 60 `MSFT 5.0` and no option 93. The prototype logs them as `dhcp-ignored` with `reason=no-option-93`, and dnsmasq gives WinPE `10.41.0.192` again. |
+| 44 to 47 | 11:05:14.941 to 11:05:15.451 | | | WinPE's own DHCP exchange with dnsmasq. WinPE's DISCOVER in frame 44 and REQUEST in frame 46 carry option 60 `MSFT 5.0` and no option 93. The prototype logs those two as `dhcp-ignored` with `reason=no-option-93`. dnsmasq's OFFER in frame 45 and ACK in frame 47 give WinPE `10.41.0.192` again. |
 
 The first ACK's option 250, 30 bytes:
 
