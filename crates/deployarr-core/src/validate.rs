@@ -36,7 +36,12 @@ impl StepKinds for BTreeSet<AddOnRef> {
 /// place and compiles the result. The step's ID therefore takes part in the
 /// duplicate ID rule. A rule that needs the expansion, such as the order of a
 /// `Restart` inside it, runs when a deployment is planned and `compile` gets
-/// the lowered sequence.
+/// the lowered sequence. An expansion might hold the first `Restart` into the
+/// installed OS, so `validate` leaves out an error of
+/// [`Rule::FullOsConditionBeforeInstalledOs`] at a node after the first add-on
+/// step or join slot that the program keeps. Planning checks that node. The
+/// step's own empty group comes before its expansion, so `validate` still
+/// checks it.
 ///
 /// Each finding names the node's ID and its path in the authored sequence. At
 /// one node, the findings about the step itself come first, then the
@@ -51,17 +56,22 @@ pub fn validate<K: StepKinds + ?Sized>(sequence: &AuthoredSequence, kinds: &K) -
         kinds,
         path: Vec::new(),
         findings: Vec::new(),
+        first_deferred: None,
     };
     let stand_in = LoweredSequence {
         id: sequence.id.clone(),
         version: sequence.version,
         name: sequence.name.clone(),
         default_vars: sequence.default_vars.clone(),
-        root: validator.group(&sequence.root),
+        root: validator.group(&sequence.root, true),
     };
-    let mut findings = validator.findings;
+    let Validator {
+        mut findings,
+        first_deferred,
+        ..
+    } = validator;
     if let Err(errors) = compile(&stand_in) {
-        let compiled = compiler_findings(&findings, errors.as_slice());
+        let compiled = compiler_findings(&findings, first_deferred.as_ref(), errors.as_slice());
         findings.extend(compiled);
     }
     // Both lists are in document order, and a node's path sorts in document
@@ -71,16 +81,31 @@ pub fn validate<K: StepKinds + ?Sized>(sequence: &AuthoredSequence, kinds: &K) -
 }
 
 /// The compiler's errors as findings. It leaves out an error about a
-/// full-OS-only condition at a node that `own` already reports one for.
-fn compiler_findings(own: &[Finding], errors: &[CompileError]) -> Vec<Finding> {
+/// full-OS-only condition at a node that `own` already reports one for. It
+/// also leaves out an error of [`Rule::FullOsConditionBeforeInstalledOs`] at a
+/// node after `first_deferred`, the first add-on step or join slot that the
+/// program keeps, because that step's expansion might hold the `Restart`.
+fn compiler_findings(
+    own: &[Finding],
+    first_deferred: Option<&NodePath>,
+    errors: &[CompileError],
+) -> Vec<Finding> {
     let reported: BTreeSet<&NodePath> = own
         .iter()
         .filter(|finding| matches!(finding.issue, Issue::FullOsCondition { .. }))
         .map(|finding| &finding.path)
         .collect();
+    // A path sorts in document order, so a node after the step has a greater
+    // path. The step's own group has the same path, and a group around it has
+    // a smaller one.
+    let after_deferred = |path: &NodePath| first_deferred.is_some_and(|first| path > first);
     errors
         .iter()
         .filter(|error| !error.rule.is_full_os_condition() || !reported.contains(&error.path))
+        .filter(|error| {
+            !matches!(error.rule, Rule::FullOsConditionBeforeInstalledOs { .. })
+                || !after_deferred(&error.path)
+        })
         .map(|error| Finding {
             node: error.node,
             path: error.path.clone(),
@@ -94,18 +119,22 @@ struct Validator<'k, K: ?Sized> {
     /// The child index at each level from the root down to the current node.
     path: Vec<usize>,
     findings: Vec<Finding>,
+    /// The path of the first add-on step or join slot that the program keeps.
+    first_deferred: Option<NodePath>,
 }
 
 impl<K: StepKinds + ?Sized> Validator<'_, K> {
     /// Checks the group's children, and returns the group with an empty group
-    /// in place of each add-on step and join slot.
-    fn group(&mut self, group: &Group<Action>) -> Group<BuiltinAction> {
+    /// in place of each add-on step and join slot. `kept` says whether the
+    /// program keeps the group's parent, or `true` for the root.
+    fn group(&mut self, group: &Group<Action>, kept: bool) -> Group<BuiltinAction> {
+        let kept = kept && group.meta.enabled;
         let mut children = Vec::with_capacity(group.children.len());
         for (index, child) in group.children.iter().enumerate() {
             self.path.push(index);
             children.push(match child {
-                Node::Group(group) => Node::Group(self.group(group)),
-                Node::Step(step) => self.step(step),
+                Node::Group(group) => Node::Group(self.group(group, kept)),
+                Node::Step(step) => self.step(step, kept),
             });
             self.path.pop();
         }
@@ -115,7 +144,8 @@ impl<K: StepKinds + ?Sized> Validator<'_, K> {
         }
     }
 
-    fn step(&mut self, step: &Step<Action>) -> Node<BuiltinAction> {
+    /// `kept` says whether the program keeps the step's parent.
+    fn step(&mut self, step: &Step<Action>, kept: bool) -> Node<BuiltinAction> {
         match &step.action {
             Action::Builtin(action) => {
                 if action.only_from_addon() {
@@ -153,6 +183,9 @@ impl<K: StepKinds + ?Sized> Validator<'_, K> {
             if !self.kinds.declares(&kind) {
                 self.find(step, Issue::UnknownStepKind { kind });
             }
+        }
+        if kept && step.meta.enabled && self.first_deferred.is_none() {
+            self.first_deferred = Some(NodePath::from(self.path.clone()));
         }
         // `lower` makes the same group for a step that the program drops.
         Node::Group(Group {
@@ -294,13 +327,17 @@ mod tests {
 
     #[test]
     fn a_compiler_error_about_a_full_os_condition_at_a_reported_node_is_left_out() {
-        // No compiler rule checks the condition of the empty group that stands
-        // in for an add-on step yet. A rule on group conditions would, so the
-        // test hands such an error to `compiler_findings` directly.
+        // The rule on conditions before the first `Restart` into the installed
+        // OS checks the empty group that stands in for an add-on step. The test
+        // hands its error to `compiler_findings` directly.
         let wmi = Issue::FullOsCondition { condition: "wmi" };
         let own = [finding(2, vec![0], wmi)];
         let errors = [
-            compile_error(2, vec![0], Rule::FullOsCondition { condition: "wmi" }),
+            compile_error(
+                2,
+                vec![0],
+                Rule::FullOsConditionBeforeInstalledOs { condition: "wmi" },
+            ),
             compile_error(
                 2,
                 vec![0],
@@ -311,7 +348,7 @@ mod tests {
             compile_error(3, vec![1], Rule::FullOsCondition { condition: "wmi" }),
         ];
 
-        let found = compiler_findings(&own, &errors);
+        let found = compiler_findings(&own, None, &errors);
 
         assert_eq!(
             found,

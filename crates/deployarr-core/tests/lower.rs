@@ -2,7 +2,7 @@
 //! place of add-on steps and join slots.
 
 use deployarr_core::action::{Action, BuiltinAction, SecretSource};
-use deployarr_core::compile::compile;
+use deployarr_core::compile::{CompileError, NodePath, Rule, compile};
 use deployarr_core::join::JoinStage;
 use deployarr_core::lower::{DeferredKind, Expansions, LowerError, LowerRule, deferred, lower};
 use deployarr_core::sequence::{AuthoredSequence, Group, Node, NodeId, RunIn, Step};
@@ -547,12 +547,41 @@ fn lower_checks_the_full_os_condition_rule_on_a_disabled_add_on_step() {
 
 #[test]
 fn a_full_os_condition_on_a_full_os_add_on_step_is_fine() {
-    let sequence = sequence(vec![when(step(2, "full_os", add_on()), wmi())]);
+    // The group that `lower` builds keeps the step's condition, so the step
+    // comes after a restart into the installed OS.
+    let sequence = sequence(vec![
+        step(
+            3,
+            "either",
+            json!({ "restart": { "into": "installed_os" } }),
+        ),
+        when(step(2, "full_os", add_on()), wmi()),
+    ]);
     let expansions = Expansions::from([(id(2), vec![child(0x100, "full_os", collect_hash())])]);
 
     let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
 
     compile(&lowered).unwrap_or_else(|errors| panic!("{errors}"));
+}
+
+#[test]
+fn a_full_os_condition_on_a_full_os_add_on_step_before_the_restart_into_the_os_fails_to_compile() {
+    let sequence = sequence(vec![when(step(2, "full_os", add_on()), wmi())]);
+    let expansions = Expansions::from([(id(2), vec![child(0x100, "full_os", collect_hash())])]);
+
+    let lowered = lower(&sequence, &expansions).unwrap_or_else(|errors| panic!("{errors}"));
+
+    // The group that `lower` builds keeps the step's condition, whatever the
+    // step's `run_in`.
+    let errors = compile(&lowered).expect_err("the group comes before any restart");
+    assert_eq!(
+        errors.as_slice(),
+        [CompileError {
+            node: id(2),
+            path: NodePath::from(vec![0]),
+            rule: Rule::FullOsConditionBeforeInstalledOs { condition: "wmi" },
+        }]
+    );
 }
 
 #[test]

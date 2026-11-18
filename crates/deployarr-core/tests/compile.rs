@@ -768,8 +768,13 @@ fn a_win_pe_step_with_an_installed_msi_or_wmi_condition_fails() {
             "{condition}"
         );
 
+        // An `either` step needs a restart into the installed OS before it,
+        // for the rule on conditions before that restart.
         for other in ["full_os", "either"] {
-            let document = root(vec![when(step(0x02, other, command()), condition.clone())]);
+            let document = root(vec![
+                step(0x03, "either", restart()),
+                when(step(0x02, other, command()), condition.clone()),
+            ]);
             compile_ok(&document);
         }
     }
@@ -791,6 +796,241 @@ fn a_win_pe_step_with_a_condition_that_win_pe_can_answer_compiles() {
             condition,
         )]));
     }
+}
+
+fn before_installed_os(condition: &'static str) -> Rule {
+    Rule::FullOsConditionBeforeInstalledOs { condition }
+}
+
+/// Group `n` with condition `condition`, which holds one step with `run_in`
+/// `either`.
+fn conditional_group(n: u32, condition: Value) -> Value {
+    when(group(n, vec![step(n + 1, "either", command())]), condition)
+}
+
+/// An `installed_msi` condition inside `not` inside `any`.
+fn nested_installed_msi() -> Value {
+    json!({ "any": [var_exists(), { "not": installed_msi() }] })
+}
+
+#[test]
+fn a_root_with_a_wmi_condition_fails() {
+    // The root's `Enter` is the first instruction, so it comes before every
+    // restart.
+    let cases = [
+        vec![step(0x02, "either", command())],
+        vec![
+            step(0x02, "either", restart()),
+            step(0x03, "either", command()),
+        ],
+    ];
+
+    for children in cases {
+        let document = when(root(children), wmi());
+
+        let errors = compile_err(&document);
+
+        assert_eq!(
+            errors,
+            [error(0x01, vec![], before_installed_os("wmi"))],
+            "{document}"
+        );
+        assert_eq!(
+            errors[0].to_string(),
+            format!(
+                "root, node {}: a `wmi` condition works only in the full OS. The run reaches this node in WinPE, because no `restart` into `installed_os` comes before it",
+                id_text(0x01)
+            )
+        );
+    }
+}
+
+#[test]
+fn a_group_with_a_nested_installed_msi_condition_before_the_first_restart_into_the_os_fails() {
+    let document = root(vec![
+        step(0x02, "win_pe", partition()),
+        group(
+            0x03,
+            vec![
+                conditional_group(0x04, nested_installed_msi()),
+                step(0x06, "win_pe", restart()),
+            ],
+        ),
+    ]);
+
+    let errors = compile_err(&document);
+
+    assert_eq!(
+        errors,
+        [error(
+            0x04,
+            vec![1, 0],
+            before_installed_os("installed_msi")
+        )]
+    );
+    assert_eq!(
+        errors[0].to_string(),
+        format!(
+            "root.children[1].group.children[0], node {}: a `installed_msi` condition works only in the full OS. The run reaches this node in WinPE, because no `restart` into `installed_os` comes before it",
+            id_text(0x04)
+        )
+    );
+}
+
+#[test]
+fn a_group_with_a_nested_installed_msi_condition_after_the_first_restart_into_the_os_compiles() {
+    let cases = [
+        root(vec![
+            step(0x02, "win_pe", partition()),
+            step(0x03, "win_pe", restart()),
+            conditional_group(0x04, nested_installed_msi()),
+        ]),
+        // The restart counts with a condition of its own, in a group with a
+        // condition.
+        root(vec![
+            step(0x02, "win_pe", partition()),
+            when(
+                group(
+                    0x03,
+                    vec![when(step(0x06, "win_pe", restart()), var_exists())],
+                ),
+                var_exists(),
+            ),
+            conditional_group(0x04, nested_installed_msi()),
+        ]),
+    ];
+
+    for document in cases {
+        compile_ok(&document);
+    }
+}
+
+#[test]
+fn only_an_enabled_restart_into_the_os_lets_a_later_group_have_a_wmi_condition() {
+    let cases = [
+        // After a restart into WinPE only.
+        step(0x03, "win_pe", restart_into_win_pe()),
+        // After a disabled restart into the installed OS.
+        disabled(step(0x03, "win_pe", restart())),
+        // After a restart into the installed OS in a disabled group.
+        disabled(group(0x03, vec![step(0x06, "win_pe", restart())])),
+    ];
+
+    for earlier in cases {
+        let document = root(vec![
+            step(0x02, "win_pe", partition()),
+            earlier,
+            conditional_group(0x04, wmi()),
+        ]);
+
+        assert_eq!(
+            compile_err(&document),
+            [error(0x04, vec![2], before_installed_os("wmi"))],
+            "{document}"
+        );
+    }
+}
+
+#[test]
+fn a_disabled_group_with_a_wmi_condition_before_the_first_restart_into_the_os_compiles() {
+    let cases = [
+        root(vec![disabled(conditional_group(0x02, wmi()))]),
+        // A group inside a disabled group counts as disabled.
+        root(vec![disabled(group(
+            0x02,
+            vec![conditional_group(0x03, wmi())],
+        ))]),
+    ];
+
+    for document in cases {
+        compile_ok(&document);
+    }
+}
+
+#[test]
+fn an_either_step_with_a_wmi_condition_fails_only_before_the_first_restart_into_the_os() {
+    let before = root(vec![
+        when(step(0x02, "either", command()), wmi()),
+        step(0x03, "either", restart()),
+    ]);
+    assert_eq!(
+        compile_err(&before),
+        [error(0x02, vec![0], before_installed_os("wmi"))]
+    );
+
+    let after = root(vec![
+        step(0x03, "either", restart()),
+        when(step(0x02, "either", command()), wmi()),
+    ]);
+    compile_ok(&after);
+
+    // The rule checks neither a `full_os` step nor a disabled `either` step.
+    compile_ok(&root(vec![
+        when(step(0x02, "full_os", command()), wmi()),
+        disabled(when(step(0x04, "either", command()), wmi())),
+        step(0x03, "either", restart()),
+    ]));
+}
+
+#[test]
+fn the_first_either_restart_into_the_os_with_a_wmi_condition_fails() {
+    // The run evaluates the first restart's condition in WinPE. A later
+    // restart with the same condition passes.
+    let document = root(vec![
+        step(0x02, "win_pe", partition()),
+        group(
+            0x03,
+            vec![
+                when(step(0x04, "either", restart()), wmi()),
+                when(step(0x05, "either", restart()), wmi()),
+            ],
+        ),
+    ]);
+    assert_eq!(
+        compile_err(&document),
+        [error(0x04, vec![1, 0], before_installed_os("wmi"))]
+    );
+
+    compile_ok(&root(vec![
+        step(0x02, "win_pe", partition()),
+        step(0x03, "win_pe", restart()),
+        when(step(0x04, "either", restart()), wmi()),
+    ]));
+}
+
+#[test]
+fn full_os_conditions_before_the_first_restart_into_the_os_are_reported_in_document_order() {
+    let document = when(
+        root(vec![
+            when(
+                group(
+                    0x02,
+                    vec![
+                        when(step(0x03, "either", command()), installed_msi()),
+                        when(step(0x04, "win_pe", command()), wmi()),
+                    ],
+                ),
+                wmi(),
+            ),
+            step(0x05, "either", restart()),
+            when(
+                group(0x06, vec![when(step(0x07, "either", command()), wmi())]),
+                installed_msi(),
+            ),
+        ]),
+        wmi(),
+    );
+
+    assert_eq!(
+        compile_err(&document),
+        [
+            error(0x01, vec![], before_installed_os("wmi")),
+            error(0x02, vec![0], before_installed_os("wmi")),
+            error(0x03, vec![0, 0], before_installed_os("installed_msi")),
+            // A `win_pe` step gets only the rule for `win_pe` steps.
+            error(0x04, vec![0, 1], Rule::FullOsCondition { condition: "wmi" }),
+        ]
+    );
 }
 
 #[test]
