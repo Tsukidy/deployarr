@@ -12,6 +12,7 @@
 //! host. The executor writes each step's journal phase before the step's work
 //! starts, and runs the code checks of [`Step::Prepare`] and [`Step::Check`].
 
+use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec;
@@ -38,6 +39,11 @@ pub struct PackageHash(pub [u8; 32]);
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PublicKey(pub [u8; 32]);
 
+/// A digest of exactly the permissions that the review dialog shows for a
+/// package. The host computes it. The planner only compares two of them.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PermissionsDigest(pub [u8; 32]);
+
 fn write_hex(f: &mut fmt::Formatter<'_>, bytes: &[u8]) -> fmt::Result {
     bytes.iter().try_for_each(|byte| write!(f, "{byte:02x}"))
 }
@@ -51,6 +57,18 @@ impl fmt::Display for PackageHash {
 impl fmt::Debug for PackageHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "PackageHash({self})")
+    }
+}
+
+impl fmt::Display for PermissionsDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write_hex(f, &self.0)
+    }
+}
+
+impl fmt::Debug for PermissionsDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "PermissionsDigest({self})")
     }
 }
 
@@ -126,6 +144,9 @@ pub struct Package {
     /// The version of the store's data that the package works with.
     pub data_version: u32,
     pub signer: Signer,
+    /// The digest of the permissions that the review dialog shows for the
+    /// package.
+    pub permissions: PermissionsDigest,
 }
 
 // ------------------------------------------------------------------ registry
@@ -380,9 +401,10 @@ pub struct SequenceVersion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     /// Install, upgrade, downgrade, or reinstall the package, whichever
-    /// applies.
+    /// applies. The package is boxed, because it is much larger than the
+    /// other changes.
     Apply {
-        package: Package,
+        package: Box<Package>,
         approval: Approval,
     },
     /// Abandon the add-on's operation while it waits for deployments.
@@ -463,6 +485,10 @@ pub struct Approval {
     /// The SHA-256 that the admin confirmed for a package that is unsigned,
     /// or signed by a key that the trust bundle does not list.
     pub unsigned_hash: Option<PackageHash>,
+    /// The digest of the permissions that the dialog showed the admin. An
+    /// install, upgrade, downgrade, or reinstall needs it to match the
+    /// package's.
+    pub permissions: Option<PermissionsDigest>,
     pub when_busy: WhenBusy,
 }
 
@@ -683,6 +709,13 @@ pub enum Refusal {
         was: String,
         now: Option<String>,
     },
+    /// The admin approved no permissions digest, or one that differs from
+    /// the package's. A roll back checks none, because the admin approved its
+    /// package's permissions when it was installed.
+    PermissionsNotApproved {
+        package: PermissionsDigest,
+        approved: Option<PermissionsDigest>,
+    },
     /// The package is older than the active one, and the admin did not
     /// confirm the downgrade.
     Downgrade {
@@ -756,6 +789,16 @@ impl fmt::Display for Refusal {
                 None => write!(
                     f,
                     "publisher {was:?} signed the add-on, and this package is unsigned or its key is unknown"
+                ),
+            },
+            Self::PermissionsNotApproved { package, approved } => match approved {
+                Some(approved) => write!(
+                    f,
+                    "the admin approved permissions digest {approved}, and the package's permissions digest is {package}. Review its permissions again"
+                ),
+                None => write!(
+                    f,
+                    "no permissions digest was approved, and the package's permissions digest is {package}. Review its permissions"
                 ),
             },
             Self::Downgrade { from, to } => write!(
@@ -893,6 +936,7 @@ impl Planner<'_> {
         self.check_level(package);
         let verdict = self.check_new_package(package, approval);
         let publisher = self.check_publisher(installed, &verdict);
+        self.check_permissions(package, approval);
         // An uninstalled add-on comes back enabled, on the store it kept.
         let (store_data_version, enabled, previous) = match installed {
             None => {
@@ -1113,6 +1157,18 @@ impl Planner<'_> {
             }
         }
         verdict
+    }
+
+    /// Refuses a package whose permissions digest the admin did not approve.
+    /// Only an apply runs it. A roll back returns to permissions that the
+    /// admin approved at install (owner input on #213).
+    fn check_permissions(&mut self, package: &Package, approval: &Approval) {
+        if approval.permissions != Some(package.permissions) {
+            self.refuse(Refusal::PermissionsNotApproved {
+                package: package.permissions,
+                approved: approval.permissions,
+            });
+        }
     }
 
     /// Refuses a package that is unsigned, or from another publisher, for an
