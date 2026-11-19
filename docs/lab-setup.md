@@ -317,7 +317,8 @@ With the uplink on:
 - Only replies come back in. The table drops every other packet that the host forwards into `br-lab`. So no connection that starts outside the lab host reaches a VM.
 - Programs on the lab host itself still reach the VMs, as they do with the uplink off.
 - The table never drops traffic between the ports of `br-lab`.
-- Forwarding is on for the whole host, because `net.ipv4.ip_forward` turns on `forwarding` for every interface. So the host also forwards IPv4 that comes in on its other interfaces, such as from a machine on its network that uses the host as a gateway. The lab's table leaves that traffic to the host's own firewall.
+- Forwarding is on for the whole host, because `net.ipv4.ip_forward` turns on `forwarding` for every interface. So the host also forwards IPv4 that comes in on its other interfaces, such as from a machine on its network that uses the host as a gateway. The lab's table leaves that traffic to the host's own firewall, unless its source is in `10.41.0.0/24`.
+- The table drops a forwarded packet with a source in `10.41.0.0/24` that does not come in on `br-lab`. So a machine outside the bridge cannot use a VM's address through the uplink.
 - The uplink is IPv4 only. Its table is an `ip` table, and `up` changes no IPv6 setting.
 
 Turn on the uplink before you start a VM. A VM that already holds a lease gets the DNS server only from its next DHCP exchange, so restart it.
