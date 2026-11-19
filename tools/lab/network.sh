@@ -80,7 +80,9 @@ add_uplink() {
     fi
     # One transaction replaces the whole table, so a second "up" adds no
     # duplicate rule. The policy stays accept, so other forwarded traffic on
-    # the host is left to the host's own rules.
+    # the host is left to the host's own rules. NAT rewrites no packet that
+    # connection tracking marks invalid, so the table drops such a packet from
+    # the bridge instead of forwarding it with its lab address.
     nft -f - <<NFT
 table ip $UPLINK_TABLE
 delete table ip $UPLINK_TABLE
@@ -88,6 +90,7 @@ table ip $UPLINK_TABLE {
     chain forward {
         type filter hook forward priority filter; policy accept;
         iifname "$BRIDGE" oifname "$BRIDGE" accept
+        iifname "$BRIDGE" oifname "$out" ct state invalid counter drop
         iifname "$BRIDGE" ip saddr $SUBNET oifname "$out" counter accept
         iifname "$out" oifname "$BRIDGE" ct state established,related counter accept
         iifname "$BRIDGE" counter drop
