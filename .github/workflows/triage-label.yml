@@ -2,7 +2,7 @@ name: Triage label
 
 # A new issue with no state label gets `needs-triage`, so nothing skips the
 # queue. Tickets that agents write already carry a state label, and epics
-# carry none on purpose, so this leaves both alone.
+# and wayfinder maps carry none on purpose, so this leaves them all alone.
 # Adapted from mattpocock/skills. See docs/agents/third-party-notices.md.
 
 on:
@@ -27,8 +27,8 @@ jobs:
           labels=$(gh issue view "$NUMBER" --json labels --jq '[.labels[].name] | join(",")')
           echo "Labels on #$NUMBER: ${labels:-none}"
           case ",$labels," in
-            *,needs-triage,* | *,needs-info,* | *,ready-for-agent,* | *,ready-for-human,* | *,wontfix,* | *,epic,*)
-              echo "It already has a state label or is an epic." ;;
+            *,needs-triage,* | *,needs-info,* | *,ready-for-agent,* | *,ready-for-human,* | *,wontfix,* | *,epic,* | *,wayfinder:map,*)
+              echo "It already has a state label or is an epic or a map." ;;
             *)
               gh issue edit "$NUMBER" --add-label needs-triage ;;
           esac

@@ -5,7 +5,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from claim_model import CLAIM, HELD_BY_GONE, RELEASE, WITHDRAW, WORK, Model, holder, run_all  # noqa: E402
+from claim_model import CLAIM, HELD_BY_GONE, HUMAN, RELEASE, WITHDRAW, WORK, Model, holder, run_all  # noqa: E402
 
 
 class HolderTest(unittest.TestCase):
@@ -64,6 +64,25 @@ class ProtocolTest(unittest.TestCase):
                     queue.append(new_state)
         lab_host_works = [s for s in seen if s[3] and s[6][1][0] == WORK]
         self.assertTrue(lab_host_works)
+
+    def test_catches_a_map_session_that_skips_the_lab_test(self):
+        """Another session hands the ticket to the lab after the map session read the map's frontier."""
+        states, failure = Model(2, 1, owner=False, mapped=True, map_lab_verify=False).check()
+        self.assertIsNotNone(failure)
+        self.assertIn("d", failure[0])
+
+    def test_map_session_works_a_ready_for_human_ticket(self):
+        """The map's frontier takes any state label, so a grilling ticket can run."""
+        model = Model(2, 1, owner=False, mapped=True, label=HUMAN)
+        seen, queue = {model.initial}, [model.initial]
+        while queue:
+            state = queue.pop()
+            for new_state, _ in model.successors(state):
+                if new_state not in seen:
+                    seen.add(new_state)
+                    queue.append(new_state)
+        self.assertTrue([s for s in seen if s[2] == HUMAN and s[6][0][0] == WORK])
+        self.assertFalse([s for s in seen if s[6][1][0] == WORK])
 
     def test_catches_a_lost_claim_that_keeps_a_stale_assignee(self):
         model = Model(2, 1, owner=False, log=HELD_BY_GONE, assigned=True, blocked=True, named=True,

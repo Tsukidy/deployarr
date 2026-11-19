@@ -117,12 +117,12 @@ To claim a ticket:
 1. Read every comment. If a session holds the ticket, pick another one.
 2. Comment `Claimed by branch <branch>`.
 3. Read every comment again. If you do not hold the ticket now, another session got there first. Comment `Claim withdrawn by branch <branch>`, leave the assignee alone, and pick another ticket.
-4. Read the issue again with `issue_read`, `method: get`. If it is closed, is no longer labeled `ready-for-agent`, gained or lost the `lab` label, or an issue in its `## Blocked by` section is open, it changed after you found it. Remove the assignee, then comment `Claim released by branch <branch>`, and pick another ticket. You hold the ticket at this point, so any assignee is left over from a session that is gone. Skip the label test for an issue that your prompt names.
+4. Read the issue again with `issue_read`, `method: get`. If it is closed, is no longer labeled `ready-for-agent`, gained or lost the `lab` label, or an issue in its `## Blocked by` section is open, it changed after you found it. Remove the assignee, then comment `Claim released by branch <branch>`, and pick another ticket. You hold the ticket at this point, so any assignee is left over from a session that is gone. Skip the label test for an issue that your prompt names. A session whose prompt names a wayfinder map skips only the `ready-for-agent` part of that test for the ticket it takes from the map's frontier, as [Work through a map](#work-through-a-map) says.
 5. Assign yourself. With MCP, call `get_me` for your login, then `issue_write` with `method: update` and `assignees`. With `gh`, run `gh issue edit <number> --add-assignee @me`.
 
 For an issue that your prompt names, each step that says to pick another ticket means stop and tell the owner instead.
 
-`tools/claim_model.py` checks every interleaving of these steps, the release steps below, and the hand-off steps under [Take a ticket](#take-a-ticket): not planned, waiting on a question, ready-for-human, and the hand-off to the lab. It covers two and three sessions, crashes, an owner who answers questions and frees stale claims, a session named in a prompt that frees a gone branch, and a session on the lab host beside sessions that are not. It finds no state where two sessions hold a ticket, where a session works a ticket it should not, or where a ticket stays held or assigned after every session released it. It assumes the claim comments are never edited or deleted, and it does not cover reopening an issue or a pull request that waits for review. The Tools workflow runs it on every pull request. Change the model in the same pull request as any of these steps.
+`tools/claim_model.py` checks every interleaving of these steps, the release steps below, and the hand-off steps under [Take a ticket](#take-a-ticket): not planned, waiting on a question, ready-for-human, and the hand-off to the lab. It covers two and three sessions, crashes, an owner who answers questions and frees stale claims, a session named in a prompt that frees a gone branch, a session off the lab host that takes a `ready-for-agent` or `ready-for-human` ticket from a wayfinder map's frontier, and a session on the lab host beside sessions that are not. It finds no state where two sessions hold a ticket, where a session works a ticket it should not, or where a ticket stays held or assigned after every session released it. It assumes the claim comments are never edited or deleted, and it does not cover reopening an issue or a pull request that waits for review. The Tools workflow runs it on every pull request. Change the model in the same pull request as any of these steps.
 
 ### Release a claim
 
@@ -136,7 +136,7 @@ A ticket closed by a merged pull request needs no release. Whoever reopens an is
 
 ### Stale claims
 
-A session that ends without releasing its claim leaves the ticket held, and off the frontier. Only the owner can tell that the session is gone. A session whose `Closes` pull request is still open is not gone. Close that pull request without merging it before you free its claim, or its later merge closes a ticket that another session is working. A held ticket can also be unassigned, when a session stopped between its claim comment and its assignment. To find stale claims, read the comments of the open `ready-for-agent` tickets, not only the assigned ones.
+A session that ends without releasing its claim leaves the ticket held, and off the frontier. Only the owner can tell that the session is gone. A session whose `Closes` pull request is still open is not gone. Close that pull request without merging it before you free its claim, or its later merge closes a ticket that another session is working. A held ticket can also be unassigned, when a session stopped between its claim comment and its assignment. To find stale claims, read the comments of the open `ready-for-agent` tickets, not only the assigned ones. Also read the comments of every open sub-issue of each open `wayfinder:map` issue, whatever its state label, because a session whose prompt names a map can hold a ticket in any state.
 
 The owner frees a stale claim in one of two ways:
 
@@ -147,16 +147,16 @@ Do not delete the gone session's claim comment. A deletion can hand the ticket t
 
 ## Take a ticket
 
-Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone.
+Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone. A session that charts a wayfinder map creates the map and its tickets before its first claim, as [Chart a map](#chart-a-map) says.
 
-- If your prompt names an issue for you to work on, work on that issue, whatever its labels, and keep its state label. A prompt that asks you to triage an issue or break an epic into tickets is not a request to work on it, and you do not claim it.
+- If your prompt names an issue for you to work on, work on that issue, whatever its labels, and keep its state label. A prompt that asks you to triage an issue or break an epic into tickets is not a request to work on it, and you do not claim it. A prompt that names a wayfinder map is not a request to work on the map, and you do not claim it. Follow [Work through a map](#work-through-a-map) instead.
 - Never work on an issue in `needs-triage` without the owner's direct approval of that issue. This holds for issues that you or your subagents filed. Direct approval means the owner names the issue in your prompt, or approves that issue by number in the session. An answer about the same work that the owner gave before you saw the issue does not count. Treat an issue that the owner approves in the session like an issue your prompt names. Never relabel a `needs-triage` issue so that you can take it. Only triage that the owner asked for changes its state.
 - If the prompt gives input, such as a decision or lab results, first post it on the issue as a comment that starts with `Owner input:`, so a later session can find it.
 - Claim a named issue with the steps in [Claim](#claim). If another branch holds it and the prompt names that branch as gone, release that branch's claim as described under [Stale claims](#stale-claims) first.
 - Otherwise, take the first ticket on the [frontier](#frontier). Never take an issue in any other state.
 - Claim it with the steps in [Claim](#claim).
 - Before you start, read each issue in the `## Blocked by` section with its comments. Follow any answer the owner gave there, and read the ticket's comments for `Owner input:` and for partial work that an earlier session pushed.
-- If a blocker was closed as not planned, the ticket should not happen. Comment `Not planned, because #<blocker> was closed as not planned.` Then close the ticket as not planned, swap its state label for `wontfix`, and clear the assignee, all in one `issue_write` call. Then comment `Claim released by branch <branch>`. If a blocker was closed as a duplicate, follow the duplicates to the first issue that was not closed as one, and replace the blocker with it in one body edit. Then check that issue like any other blocker. If it is open, [release your claim](#release-a-claim). If it was closed as not planned, close the ticket as above.
+- If a blocker was closed as not planned, the ticket should not happen. Comment `Not planned, because #<blocker> was closed as not planned.` Then close the ticket as not planned, swap its state label for `wontfix`, and clear the assignee, all in one `issue_write` call. Then comment `Claim released by branch <branch>`. If a blocker was closed as a duplicate, follow the duplicates to the first issue that was not closed as one, and replace the blocker with it in one body edit. Then check that issue like any other blocker. If it is open, [release your claim](#release-a-claim). If it was closed as not planned, close the ticket as above. A ticket on a wayfinder map with an `Owner input:` comment that says it should not happen is the exception. Rule it out as the ticket you hold, as [Rule a ticket out of scope](#rule-a-ticket-out-of-scope) says, in place of closing it as above.
 - If you need an answer from the owner and the owner is in the session, ask them, with your recommended option first. Post the answer on the ticket as a comment that starts with `Owner input:`, then carry on. You keep the ticket.
 - If you need an answer from the owner and the owner is not in the session, as in a scheduled run, open a question as described under [Write tickets](agent-brief.md#write-tickets). In one body edit, add it to the ticket's `## Blocked by` section. Comment `Waiting on #<question>. Partial work: branch <branch>, pushed`, or `not pushed`. Then [release your claim](#release-a-claim). The ticket keeps its label and returns to the frontier when the owner closes the question.
 - If the ticket's own work turns out to need the VM lab, and your prompt does not name `lab`, first comment on what the session on the lab host must do. Then add `lab` and clear the assignee in one `issue_write` call. Then comment `Claim released by branch <branch>`.
@@ -167,7 +167,7 @@ Claiming is the first write of a session that works a ticket. Two comments may c
 
 A session works on a fixed list of issues, set when it starts.
 
-- At the start, list the issues you will work on, and tell the owner. For a named issue or one ticket, the list is that issue. For a run over the frontier or over `needs-triage`, it is the issues there when you start. Claim comments mark the tickets on it.
+- At the start, list the issues you will work on, and tell the owner. For a named issue or one ticket, the list is that issue. For a run over the frontier or over `needs-triage`, it is the issues there when you start. A run over the frontier takes tickets on a wayfinder map within the limit in [Work through a map](#work-through-a-map). Claim comments mark the tickets on it.
 - Finish the issues on your list. Review fixes and merge conflicts on your own pull requests are part of that work. A triage run also triages the issues it files itself.
 - Do not move on to an issue that another session opens while you work, or to a ticket that becomes unblocked after you start, without the owner's permission. You may ask.
 - When your list is done, report and stop. A run over the frontier or over `needs-triage` first lists it once more and changes nothing there. Its report names the issues that joined it during the run and tells the owner to start a new session for them.
@@ -192,3 +192,86 @@ Create a GitHub issue.
 ## When a skill says "fetch the relevant ticket"
 
 Read it as in [Read an issue](#read-an-issue).
+
+## Wayfinding operations
+
+The `wayfinder` skill in the `mattpocock-skills` plugin reads this section. A person starts it by typing `/wayfinder`. The skill charts an effort too big for one session as a map of decision tickets, then resolves the tickets one at a time. This section expresses its operations through the rules on this page. Where the skill and this page differ, follow this page.
+
+### Maps and their tickets
+
+- A map is one issue labeled `wayfinder:map`. Like an epic, it carries no category or state label, and the Triage label workflow leaves it without `needs-triage`.
+- A map has no parent. Its body has the sections the skill gives it: Destination, Notes, Decisions so far, Not yet specified, and Out of scope. Its Notes name the milestone it serves, if any.
+- Each ticket on a map is a sub-issue of the map. It carries exactly one category label, exactly one state label, and exactly one `wayfinder:<type>` label from the table below. The type sets the state a ticket starts with.
+- Blocking follows [Blocking](#blocking). Publishing each blocker before the tickets it blocks, as that section says, takes the place of the skill's second wiring pass.
+- Other sessions edit the same map and tickets. Read an issue again right before you edit its body, then edit it as [Edit an issue body](#edit-an-issue-body) says.
+
+| Type label | State label |
+| --- | --- |
+| `wayfinder:research` | `ready-for-agent` |
+| `wayfinder:prototype` | `ready-for-human` |
+| `wayfinder:grilling` | `ready-for-human` |
+| `wayfinder:task` | `ready-for-agent` when an agent can do it alone, otherwise `ready-for-human` |
+
+A ticket's body follows this layout, in place of the skill's ticket body. The link under "Read first" leads a session that takes the ticket from the general frontier to this section.
+
+```markdown
+## Parent
+
+- #<map number>
+
+## Question
+
+The decision or investigation this ticket resolves.
+
+Read first:
+
+- [docs/agents/issue-tracker.md#wayfinding-operations](https://github.com/Tsukidy/deployarr/blob/main/docs/agents/issue-tracker.md#wayfinding-operations)
+
+## Blocked by
+
+- #<blocking issue number>
+```
+
+### Chart a map
+
+- Before you create the map or any ticket, show the owner the map body and the numbered list of tickets, with each ticket's type, state, and blockers. Create them only after the owner approves the list in the session, as [Write tickets](agent-brief.md#write-tickets) says.
+- Create the map with the `wayfinder:map` label. Then create its tickets as sub-issues of the map, blockers first, as in [Create an issue](#create-an-issue).
+- The owner's approval adds to your [work list](#work-list) each research ticket that is on the [frontier](#frontier) for you after you create it. A research ticket that is blocked, or whose labels keep it off your frontier, such as `lab` when you are not on the lab host, stays off your list. It waits on the general frontier for a later session. Charting is not ticket work, so the map and its tickets come before the claims on the research tickets. Before each research subagent starts, claim its ticket as in [Claim](#claim), as you would a ticket from the frontier, with its own branch as [Branches in a cloud session](#branches-in-a-cloud-session) says. Each claim comes before its subagent's first write. Each subagent resolves its ticket as in [Resolve a map ticket](#resolve-a-map-ticket).
+
+### Work through a map
+
+- A map's `ready-for-agent` tickets are on the general [frontier](#frontier) like any ticket. They have no epic, so they take issue number order there.
+- The map's frontier is its open sub-issues that have a `## Blocked by` section, are unblocked, and are held by no session under [Claim](#claim), whatever their state label, in the map's sub-issue order. The rule in [Frontier](#frontier) for the `lab` label applies to it too. The session on the lab host takes only the tickets labeled `lab` from it, and every other session skips them. List the sub-issues with `issue_read`, `method: get_sub_issues`, and `perPage: 100`, on the map. If a page is full, read the next one. With `gh`, run `gh api repos/Tsukidy/deployarr/issues/<map>/sub_issues --paginate`.
+- A session whose prompt names a map takes the first ticket on the map's frontier, unless the prompt names a ticket. It treats that ticket as an issue its prompt names, for [Take a ticket](#take-a-ticket) and for [Claim](#claim). So it keeps the ticket's state label, and it stops and tells the owner if it loses the claim. In Claim step 4 it skips only the `ready-for-agent` part of the label test. If the ticket gained or lost the `lab` label, it releases the ticket as that step says, then stops and tells the owner. A ticket that the prompt names directly skips the whole label test, as Claim says. The claim comments and the assignment in Claim take the place of the skill's "assign it first" step.
+- A `needs-triage` ticket still needs the owner's direct approval, as [Take a ticket](#take-a-ticket) says. Naming the map is not direct approval of a ticket on it. A `needs-info` ticket needs the same approval, because the Close needs-info workflow swaps its label for `needs-triage` after your claim comment, as [Who applies each label](triage-labels.md#who-applies-each-label) says. Before you claim a `needs-triage` or `needs-info` ticket from the map's frontier, ask the owner in the session to approve it by number. Without that approval, stop and tell the owner.
+- A session resolves at most one map ticket that is not a research ticket, and any number of research tickets, as the skill says. So a run over the frontier puts any number of research tickets on its [work list](#work-list), but at most one other map ticket, the first in issue number order. Its report names the other map tickets it left off and tells the owner to start a new session for them.
+
+### Resolve a map ticket
+
+These steps apply to every session that resolves a ticket on a map, including a session that took it from the general frontier without running `/wayfinder`.
+
+1. Record the owner's answers as `Owner input:` comments on the ticket, as [Take a ticket](#take-a-ticket) says.
+2. Post the answer as a resolution comment on the ticket. Link any asset, such as a prototype, a research page, or a pull request.
+3. Make any change to the repository through a pull request from the branch that [Branches in a cloud session](#branches-in-a-cloud-session) gives you, in place of the skill's `research/<name>` branch.
+   - A research ticket that reads a source writes its findings on that source's page under `docs/research/`, as [Rules for changes](../../AGENTS.md#rules-for-changes) says. Its pull request leaves `docs/architecture.md` alone and closes the ticket. The design changes that the page ends with follow in a separate pull request, for the map ticket that decides them or for a new ticket that [New map tickets](#new-map-tickets) adds.
+   - Any other ticket whose decision changes the design or the plan updates `docs/architecture.md` or `docs/roadmap.md` in its pull request, as Rules for changes requires. An ADR, if the decision needs one, goes in the same pull request, as [Record a decision](domain.md#record-a-decision) says.
+4. Close the ticket as completed. When the resolution goes through a pull request, the pull request closes it instead, with `Closes #<number>`.
+5. Add one line for the ticket to the map's Decisions so far, as `- [<ticket title>](<ticket link>): <one-line gist of the answer>`. Keep the rest of the map body.
+
+When the resolution goes through a pull request, do steps 2 and 5 when you mark the pull request ready for review.
+
+### Rule a ticket out of scope
+
+- To rule out the ticket you hold, comment why it sits past the destination. Then close it as not planned with `wontfix` and release your claim, as [Take a ticket](#take-a-ticket) does for a ticket that is not planned.
+- To rule out another ticket on the map, ask the owner in the session. If the owner agrees, post that answer on the ticket as an `Owner input:` comment. Then claim the ticket as in [Claim](#claim), with its own branch name as [Branches in a cloud session](#branches-in-a-cloud-session) says, and treat it as an issue the owner approved in the session. Once you hold it, rule it out as the ticket you hold. If you cannot claim it, because another session holds it or a blocker is open, stop and tell the owner. A session that later takes a ticket with such an `Owner input:` comment rules it out as the ticket it holds. With no owner in the session, name the ticket in your resolution comment instead.
+- Before you close a ticket to rule it out, find the open issues that list it under `## Blocked by`. Read the map's other open tickets. An issue outside the map can wait on a map ticket too, so also search as in [Tools](#tools), with `is:open` and the ticket's number in place of `<words>`. Read the `## Blocked by` section of each result.
+- For each map ticket that lists it, remove that line in a body edit, and write `None (can start immediately).` if no line is left. Keep the line only when the owner agrees in the session that the waiting ticket should not happen either. Post that answer on the waiting ticket as an `Owner input:` comment, and name that ticket in your comment. Once you close the ticket you rule out, choose one of two paths for the waiting ticket. Claim the waiting ticket, and rule it out as the bullet above on ruling out another ticket says. Or leave the waiting ticket to the next session that takes it. That session rules it out as the ticket it holds, with the search for waiting issues, the blocker line rules, and the Out of scope line, in place of the not-planned close in [Take a ticket](#take-a-ticket). With no owner in the session, choose one of two paths. Remove the line, and name the waiting ticket in your comment. Or leave the ticket you rule out open, and get the owner's answer as [Take a ticket](#take-a-ticket) says for an owner who is not in the session.
+- For an issue outside the map that lists it, ask the owner in the session whether to remove the line, keep it, or leave the ticket open. Post the answer on that issue as an `Owner input:` comment, then do what the owner said. With no owner in the session, do not close the ticket. Get the owner's answer as [Take a ticket](#take-a-ticket) says for an owner who is not in the session.
+- Add one line for each ticket you rule out to the map's Out of scope section, with the gist, the reason, and a link to the ticket. It gets no line in Decisions so far.
+- A ticket that a decision makes moot follows the same steps, without the line on the map. Its comment links the ticket whose decision makes it moot, in place of why it sits past the destination. This takes the place of the skill's delete.
+
+### New map tickets
+
+- New tickets, including fog that a resolution makes specifiable, follow [Chart a map](#chart-a-map). The owner approves the numbered list in the session before you create them.
+- With no owner in the session, write the tickets you would add into the map's Not yet specified section instead, for the next session with the owner.
+- When the owner is not in the session, a question for the owner can block the ticket you hold. That question is not a new map ticket. The two bullets above do not apply to it. Open it as [Take a ticket](#take-a-ticket) says. Make it a sub-issue of the epic for the milestone that the map's Notes name, as [Write tickets](agent-brief.md#write-tickets) says. When the map serves no milestone, the question has no parent.
