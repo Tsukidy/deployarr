@@ -1700,6 +1700,31 @@ fn difference_wmi_namespace_is_not_substituted() {
     );
 }
 
+/// MDT calls `CCM::Utility::String::trimLeft` on the expanded WMI namespace
+/// (`TsCore!0x1801aa762`) and opens the result (`TsCore!0x1801aa941`). That
+/// this removes white space from the start of the namespace is inferred,
+/// because the function is in `CcmCore.dll`. deployarr does not trim the
+/// namespace, so a namespace with a space at its start reaches the probe as
+/// written, as `docs/architecture.md#conditions` says.
+#[test]
+fn difference_wmi_namespace_is_not_trimmed() {
+    let namespace = r" root\cimv2";
+    let machine = Machine::new().wmi("SELECT * FROM Win32_Battery", Ok(true));
+    let json = wmi(namespace, "SELECT * FROM Win32_Battery", false);
+
+    assert_eq!(
+        run(json, &Vars::new(), &machine),
+        Err(ConditionError::Probe {
+            kind: ProbeKind::WmiNamespace,
+            error: ProbeError::new(INVALID_NAMESPACE),
+        })
+    );
+    assert_eq!(
+        machine.asked(),
+        [format!("wmi {namespace} SELECT * FROM Win32_Battery")]
+    );
+}
+
 // Errors.
 
 /// "A condition that fails to evaluate is not false" (`TsCore!0x1801a96c0`
