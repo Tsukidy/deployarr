@@ -298,7 +298,7 @@ Turn on the uplink:
 sudo env LAB_UPLINK=1 tools/lab/network.sh up
 ```
 
-`sudo` resets the environment, so the variable goes after `sudo env`. With `LAB_UPLINK=1 sudo tools/lab/network.sh up`, the script never sees the variable and leaves the uplink off. With any value other than `0` or `1`, `up` stops with `LAB_UPLINK must be 0 or 1.` before it changes anything.
+`sudo` resets the environment, so the variable goes after `sudo env`. With `LAB_UPLINK=1 sudo tools/lab/network.sh up`, the script never sees the variable and leaves the uplink off. With a value that is not `0`, `1`, or empty, `up` stops with `LAB_UPLINK must be 0 or 1.` before it changes anything. An empty value counts as `0`.
 
 With the variable, `up` builds the lab network as in [step 4](#4-start-the-lab-network), and then it does four more things:
 
