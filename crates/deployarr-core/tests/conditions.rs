@@ -1703,15 +1703,17 @@ fn difference_wmi_namespace_is_not_substituted() {
 /// MDT's condition parser reads the namespace's `<variable>` element through
 /// MSXML's `text` property when it parses the sequence (`TsCore!0x180165124`,
 /// called at `TsCore!0x18019a259`, with the `get_text` call at
-/// `TsCore!0x180165169`). Microsoft documents that `text` "trims the whitespace
-/// on the edges of the result". That MDT therefore trims the namespace at both
-/// ends before it expands it is inferred from that page, because MSXML is
-/// outside the binary (#336). After it expands the namespace, MDT calls
-/// `CCM::Utility::String::trimLeft` on it (`TsCore!0x1801aa762`) and opens the
-/// result (`TsCore!0x1801aa941`). That this removes white space from the start
-/// of the namespace is inferred, because the function is in `CcmCore.dll`.
-/// deployarr does not trim the namespace, so a namespace with a space at each
-/// end reaches the probe as written, as `docs/architecture.md#conditions` says.
+/// `TsCore!0x180165169`). Microsoft's page on the MSXML `text` property
+/// (<https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ms762687(v=vs.85)>)
+/// says that `text` "trims the whitespace on the edges of the result". That
+/// MDT therefore trims the namespace at both ends before it expands it is
+/// inferred from that page, because MSXML is outside the binary (#336). After
+/// it expands the namespace, MDT calls `CCM::Utility::String::trimLeft` on it
+/// (`TsCore!0x1801aa762`) and opens the result (`TsCore!0x1801aa941`). That
+/// this removes white space from the start of the namespace is inferred,
+/// because the function is in `CcmCore.dll`. The agent does not trim the
+/// namespace, so a namespace with a space at each end reaches the probe as
+/// written, as `docs/architecture.md#conditions` says.
 #[test]
 fn difference_wmi_namespace_is_not_trimmed() {
     let namespace = r" root\cimv2 ";
