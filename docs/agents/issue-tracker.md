@@ -192,3 +192,81 @@ Create a GitHub issue.
 ## When a skill says "fetch the relevant ticket"
 
 Read it as in [Read an issue](#read-an-issue).
+
+## Wayfinding operations
+
+The `wayfinder` skill in the `mattpocock-skills` plugin reads this section. A person starts it by typing `/wayfinder`. The skill charts an effort too big for one session as a map of decision tickets, then resolves the tickets one at a time. This section expresses its operations through the rules on this page. Where the skill and this page differ, follow this page.
+
+### Maps and their tickets
+
+- A map is one issue labeled `wayfinder:map`. Like an epic, it carries no category or state label, and the Triage label workflow leaves it without `needs-triage`.
+- A map has no parent. Its body has the sections the skill gives it: Destination, Notes, Decisions so far, Not yet specified, and Out of scope. Its Notes name the milestone it serves, if any.
+- Each ticket on a map is a sub-issue of the map. It carries exactly one category label, exactly one state label, and exactly one `wayfinder:<type>` label from the table below. The type sets the state.
+- Blocking uses each ticket's `## Blocked by` section, as [Blocking](#blocking) says, and the Blocked by workflow makes the native links from it. Publish each blocker before the tickets it blocks, and list it in their sections when you create them. This takes the place of the skill's second wiring pass. To add a blocker to a ticket that exists, edit its section.
+- Other sessions edit the same map and tickets. Read an issue again right before you edit its body, then edit it as [Edit an issue body](#edit-an-issue-body) says.
+
+| Type label | State label |
+| --- | --- |
+| `wayfinder:research` | `ready-for-agent` |
+| `wayfinder:prototype` | `ready-for-human` |
+| `wayfinder:grilling` | `ready-for-human` |
+| `wayfinder:task` | `ready-for-agent` when an agent can do it alone, otherwise `ready-for-human` |
+
+A ticket's body follows this layout, in place of the skill's ticket body. The link under "Read first" leads a session that takes the ticket from the general frontier to this section.
+
+```markdown
+## Parent
+
+- #<map number>
+
+## Question
+
+The decision or investigation this ticket resolves.
+
+Read first:
+
+- [docs/agents/issue-tracker.md#wayfinding-operations](https://github.com/Tsukidy/deployarr/blob/main/docs/agents/issue-tracker.md#wayfinding-operations)
+
+## Blocked by
+
+- #<blocking issue number>
+```
+
+### Chart a map
+
+- Before you create the map or any ticket, show the owner the map body and the numbered list of tickets, with each ticket's type, state, and blockers. Create them only after the owner approves the list in the session, as [Write tickets](agent-brief.md#write-tickets) says.
+- Create the map with the `wayfinder:map` label. Then create its tickets as sub-issues of the map, blockers first, as in [Create an issue](#create-an-issue).
+- The owner's approval adds the research tickets to your [work list](#work-list). Before each research subagent starts, claim its ticket as in [Claim](#claim), with its own branch as [Branches in a cloud session](#branches-in-a-cloud-session) says. Each subagent resolves its ticket as in [Resolve a map ticket](#resolve-a-map-ticket).
+
+### Work through a map
+
+- A map's `ready-for-agent` tickets are on the general [frontier](#frontier) like any ticket. They have no epic, so they take issue number order there.
+- The map's frontier is its open sub-issues that are unblocked and held by no session under [Claim](#claim), whatever their state label, in the map's sub-issue order. List the sub-issues with `issue_read`, `method: get_sub_issues`, on the map. With `gh`, run `gh api repos/Tsukidy/deployarr/issues/<map>/sub_issues --paginate`.
+- A prompt that names a map asks you to work through it. You never claim the map itself.
+- A session whose prompt names a map takes the first ticket on the map's frontier, unless the prompt names a ticket. It treats that ticket as an issue its prompt names, for [Take a ticket](#take-a-ticket) and for [Claim](#claim). So it keeps the ticket's state label, skips the label test in Claim step 4, and stops and tells the owner if it loses the claim. The claim comments and the assignment in Claim take the place of the skill's "assign it first" step.
+- A `needs-triage` ticket still needs the owner's direct approval, as [Take a ticket](#take-a-ticket) says.
+- A session resolves at most one ticket on a map, but any number of research tickets, as the skill says.
+
+### Resolve a map ticket
+
+These steps apply to every session that resolves a ticket on a map, including a session that took it from the general frontier without running `/wayfinder`.
+
+1. Record the owner's answers as `Owner input:` comments on the ticket, as [Take a ticket](#take-a-ticket) says.
+2. Post the answer as a resolution comment on the ticket. Link any asset, such as a prototype, a research page, or a pull request.
+3. If the decision changes the design or the plan, update `docs/architecture.md` or `docs/roadmap.md`, as [Rules for changes](../../AGENTS.md#rules-for-changes) requires. A research ticket that reads a source writes its findings on that source's page under `docs/research/`, by the same rules. Make these changes through a pull request from the branch that [Branches in a cloud session](#branches-in-a-cloud-session) gives you, in place of the skill's `research/<name>` branch.
+4. Close the ticket as completed. When the resolution goes through a pull request, the pull request closes it instead, with `Closes #<number>`.
+5. Add one line for the ticket to the map's Decisions so far, as `- [<ticket title>](<ticket link>): <one-line gist of the answer>`. Keep the rest of the map body.
+
+When the resolution goes through a pull request, do steps 2 and 5 when you mark the pull request ready for review.
+
+### Rule a ticket out of scope
+
+- To rule out the ticket you hold, comment why it sits past the destination. Then close it as not planned, swap its state label for `wontfix`, and clear the assignee, all in one `issue_write` call. Then comment `Claim released by branch <branch>`, as [Take a ticket](#take-a-ticket) does for a ticket that is not planned.
+- To rule out another ticket on the map, ask the owner in the session. If the owner agrees and no session holds the ticket, comment why, then close it as not planned with `wontfix` in one call. With no owner in the session, name the ticket in your resolution comment instead.
+- Add one line for each ticket you rule out to the map's Out of scope section, with the gist, the reason, and a link to the ticket. It gets no line in Decisions so far.
+- A ticket that a decision makes moot follows the same steps, without the line on the map. This takes the place of the skill's delete.
+
+### New map tickets
+
+- New tickets, including fog that a resolution makes specifiable, follow [Chart a map](#chart-a-map). The owner approves the numbered list in the session before you create them.
+- With no owner in the session, write the tickets you would add into the map's Not yet specified section instead, for the next session with the owner.

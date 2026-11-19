@@ -61,7 +61,7 @@ GitHub issues hold the project's work. [Roadmap](docs/roadmap.md) sets the order
 - Triage only when the owner asks. See [Triage](docs/agents/triage-labels.md#triage).
 - List your issues at the start. Take no issue that another session opens later without the owner's permission. See [Work list](docs/agents/issue-tracker.md#work-list).
 - Work you find outside your ticket becomes a new `needs-triage` issue, never part of your change. See [Write tickets](docs/agents/agent-brief.md#write-tickets).
-- Every issue carries exactly one category label and exactly one state label, and an epic is the exception. See [Triage labels](docs/agents/triage-labels.md).
+- Every issue carries exactly one category label and exactly one state label, and an epic or a map is the exception. See [Triage labels](docs/agents/triage-labels.md).
 
 ## Branches and pull requests
 

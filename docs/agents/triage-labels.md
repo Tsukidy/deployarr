@@ -6,7 +6,7 @@ This page maps the canonical triage roles from [mattpocock/skills](https://githu
 
 ## State roles
 
-Every issue except an epic carries exactly one state label.
+Every issue except an epic or a wayfinder map carries exactly one state label.
 
 | Label in mattpocock/skills | Label in this repository | Meaning |
 | --- | --- | --- |
@@ -20,7 +20,7 @@ Every issue except an epic carries exactly one state label.
 
 ## Category roles
 
-Every issue except an epic carries exactly one category label.
+Every issue except an epic or a wayfinder map carries exactly one category label.
 
 | Label | Meaning |
 | --- | --- |
@@ -29,7 +29,7 @@ Every issue except an epic carries exactly one category label.
 
 ## Labels outside the triage roles
 
-These labels belong to this repository. The upstream skills do not know them.
+These labels belong to this repository. The upstream skills do not know them, except the `wayfinder:*` labels, which come from the upstream `wayfinder` skill.
 
 | Label | Meaning |
 | --- | --- |
@@ -37,6 +37,8 @@ These labels belong to this repository. The upstream skills do not know them.
 | `area:*` | The part of deployarr an issue touches. An issue can carry several, or none. |
 | `bookkeeping` | Upkeep of the docs and agent guides, kept apart from milestone work. The owner uses it to point an agent at this work. It goes with a category and a state, like `area:*`. |
 | `lab` | Work that needs the VM lab, which only a session on the lab host can reach. It goes with a category and a state, like `area:*`. The lab host's session has `lab` in its prompt and takes only these tickets. Every other session skips them. See [Frontier](issue-tracker.md#frontier). |
+| `wayfinder:map` | A wayfinder map. Its sub-issues are the map's tickets. Like an epic, a map carries no category or state label. See [Wayfinding operations](issue-tracker.md#wayfinding-operations). |
+| `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task` | The type of a ticket on a wayfinder map. Each ticket on a map carries exactly one of them, beside its category and its state, like `lab`. The type sets the state, as [Wayfinding operations](issue-tracker.md#wayfinding-operations) says. |
 
 ## Who applies each label
 
