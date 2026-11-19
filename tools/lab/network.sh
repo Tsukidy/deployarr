@@ -109,7 +109,8 @@ NFT
 }
 
 remove_uplink() {
-    # Forwarding goes off before the rules go, so the bridge is never open.
+    # Forwarding goes back to its saved value before the rules go, so
+    # forwarding that the uplink turned on never runs without the rules.
     if [[ -e $SAVED_SYSCTL ]]; then
         sysctl -q -p "$SAVED_SYSCTL"
         rm -f "$SAVED_SYSCTL"
