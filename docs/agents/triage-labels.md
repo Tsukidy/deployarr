@@ -38,14 +38,14 @@ These labels belong to this repository. The upstream skills do not know them, ex
 | `bookkeeping` | Upkeep of the docs and agent guides, kept apart from milestone work. The owner uses it to point an agent at this work. It goes with a category and a state, like `area:*`. |
 | `lab` | Work that needs the VM lab, which only a session on the lab host can reach. It goes with a category and a state, like `area:*`. The lab host's session has `lab` in its prompt and takes only these tickets. Every other session skips them. See [Frontier](issue-tracker.md#frontier). |
 | `wayfinder:map` | A wayfinder map. Its sub-issues are the map's tickets. Like an epic, a map carries no category or state label. See [Wayfinding operations](issue-tracker.md#wayfinding-operations). |
-| `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task` | The type of a ticket on a wayfinder map. Each ticket on a map carries exactly one of them, beside its category and its state, like `lab`. The type sets the state, as [Wayfinding operations](issue-tracker.md#wayfinding-operations) says. |
+| `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, `wayfinder:task` | The type of a ticket on a wayfinder map. Each ticket on a map carries exactly one of them, beside its category and its state, like `lab`. The type sets the state a ticket starts with, as [Wayfinding operations](issue-tracker.md#wayfinding-operations) says. |
 
 ## Who applies each label
 
 - The Triage label workflow adds `needs-triage` to a new issue that has no state label.
 - The issue forms add the category. An issue opened blank has none until triage adds it.
 - An agent that breaks work into tickets shows the owner the list first. Once the owner approves it, the agent labels each ticket with its category and `ready-for-agent` or `ready-for-human`, and adds `lab` to a ticket that needs the VM lab. The tickets skip triage, and the owner never labels them by hand.
-- Work an agent finds outside its ticket gets its category and `needs-triage`, so the owner decides whether it happens.
+- Work an agent finds outside its ticket gets its category and `needs-triage`, so the owner decides whether it happens. When the agent's ticket is on a wayfinder map, a new question for that map follows [New map tickets](issue-tracker.md#new-map-tickets) instead.
 - Triage applies the category and the state of an issue in `needs-triage`. See [Triage](#triage). The maintainer can override any label at any time. A `ready-for-agent` label applied by hand also needs a `## Blocked by` section at the end of the body, with `None (can start immediately).` when nothing blocks the issue. Without one, the frontier skips it.
 - The Close needs-info workflow runs daily. Any comment made after `needs-info` goes on swaps it for `needs-triage`, so add the label after you ask your question. An issue with no activity for 14 days after the label goes on is closed as not planned.
 - An agent that needs the owner's answer asks the owner in the session when the owner is there, and records the answer on the issue as an `Owner input:` comment. Otherwise it opens a `ready-for-human` question and lists it as a blocker of its ticket. The ticket keeps its label. When the owner answers and closes the question, the ticket is back on the frontier with no relabel.
