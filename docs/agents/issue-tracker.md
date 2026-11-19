@@ -147,7 +147,7 @@ Do not delete the gone session's claim comment. A deletion can hand the ticket t
 
 ## Take a ticket
 
-Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone. A session that charts a wayfinder map creates the map and its tickets before its first claim, as [Chart a map](#chart-a-map) says.
+Claiming is the first write of a session that works a ticket. Two comments may come before it: an `Owner input:` comment, and the `Claim released by branch <branch>` comment that frees a branch the prompt names as gone. A session that charts a wayfinder map creates the map and its tickets without a claim, and claims none of them, as [Chart a map](#chart-a-map) says.
 
 - If your prompt names an issue for you to work on, work on that issue, whatever its labels, and keep its state label. A prompt that asks you to triage an issue or break an epic into tickets is not a request to work on it, and you do not claim it. A prompt that names a wayfinder map is not a request to work on the map, and you do not claim it. Follow [Work through a map](#work-through-a-map) instead.
 - Never work on an issue in `needs-triage` without the owner's direct approval of that issue. This holds for issues that you or your subagents filed. Direct approval means the owner names the issue in your prompt, or approves that issue by number in the session. An answer about the same work that the owner gave before you saw the issue does not count. Treat an issue that the owner approves in the session like an issue your prompt names. Never relabel a `needs-triage` issue so that you can take it. Only triage that the owner asked for changes its state.
@@ -236,7 +236,7 @@ Read first:
 
 - Before you create the map or any ticket, show the owner the map body and the numbered list of tickets, with each ticket's type, state, and blockers. Create them only after the owner approves the list in the session, as [Write tickets](agent-brief.md#write-tickets) says.
 - Create the map with the `wayfinder:map` label. Then create its tickets as sub-issues of the map, blockers first, as in [Create an issue](#create-an-issue).
-- The owner's approval adds to your [work list](#work-list) each research ticket that is on the [frontier](#frontier) for you after you create it. A research ticket that is blocked, or whose labels keep it off your frontier, such as `lab` when you are not on the lab host, stays off your list. It waits on the general frontier for a later session. Charting is not ticket work, so the map and its tickets come before the claims on the research tickets. Before each research subagent starts, claim its ticket as in [Claim](#claim), as you would a ticket from the frontier, with its own branch as [Branches in a cloud session](#branches-in-a-cloud-session) says. Each claim comes before its subagent's first write. Each subagent resolves its ticket as in [Resolve a map ticket](#resolve-a-map-ticket).
+- The tickets you create do not join your [work list](#work-list), as Work list says for every issue you file. They wait on the [frontier](#frontier) for a later session. Your report names them and tells the owner to start a new session for them.
 
 ### Work through a map
 
