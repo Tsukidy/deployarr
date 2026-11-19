@@ -168,9 +168,9 @@ Claiming is the first write of a session that works a ticket. Two comments may c
 A session works on a fixed list of issues, set when it starts.
 
 - At the start, list the issues you will work on, and tell the owner. For a named issue or one ticket, the list is that issue. For a run over the frontier or over `needs-triage`, it is the issues there when you start. Claim comments mark the tickets on it.
-- Finish the issues on your list. Review fixes and merge conflicts on your own pull requests are part of that work. A triage run also triages the issues it files itself.
+- Finish the issues on your list. Review fixes and merge conflicts on your own pull requests are part of that work. An issue you file does not join your list, so a triage run leaves the issues it files in `needs-triage`.
 - Do not move on to an issue that another session opens while you work, or to a ticket that becomes unblocked after you start, without the owner's permission. You may ask.
-- When your list is done, report and stop. A run over the frontier or over `needs-triage` first lists it once more and changes nothing there. Its report names the issues that joined it during the run and tells the owner to start a new session for them.
+- When your list is done, report and stop. A run over the frontier or over `needs-triage` first lists it once more and changes nothing there. Its report names the issues that joined it during the run, including the ones the run filed, and tells the owner to start a new session for them.
 
 ## Branches in a cloud session
 
