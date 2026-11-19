@@ -62,7 +62,7 @@ Triage is for issues the owner or anyone else files by hand. They arrive with `n
 - Before you recommend, check whether the request is already implemented, and read `.out-of-scope/` for an earlier rejection of the same idea.
 - For a bug, reproduce it before it reaches `ready-for-agent`.
 - Apply the labels last, in one call with the category and the state, after the comments and edits below. Applying the state last keeps an issue that triage leaves half done in `needs-triage`.
-- For `ready-for-agent` and `ready-for-human`, post the agent brief comment first. Then add a `## Blocked by` section to the end of the body, keeping the reporter's text, and keep the `id` that the `issue_write` call returns. Attach the issue to the epic for its milestone with that `id`. Then apply the labels.
+- For `ready-for-agent` and `ready-for-human`, post the agent brief comment first. Then add a `## Blocked by` section to the end of the body, keeping the reporter's text, and keep the `id` that the `issue_write` call returns. Attach the issue to the epic for its milestone with that `id`. A ticket on a wayfinder map stays a sub-issue of its map, so do not attach it to an epic. See [Wayfinding operations](issue-tracker.md#wayfinding-operations). Then apply the labels.
 - For `needs-info`, post triage notes first: what is established, and specific questions for the reporter. Then apply the label.
 - For `wontfix`, follow the steps in `.out-of-scope/README.md` when an enhancement is rejected. If the work already exists, comment where it lives. Then close the issue as not planned, and swap its state label for `wontfix` in the same `issue_write` call.
 
