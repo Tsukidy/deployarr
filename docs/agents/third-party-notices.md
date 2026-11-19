@@ -1,6 +1,6 @@
 # Third-party notices
 
-The issue workflow in `docs/agents/` and `.github/`, and its summary in `AGENTS.md`, are adapted from [mattpocock/skills](https://github.com/mattpocock/skills), at commit `4ae2317ddb22b046e26455e4f9c9b3aaaf62212d`. `docs/agents/domain.md` is adapted from the same repository, at version 1.2.3 of its `mattpocock-skills` plugin. That repository carries this license:
+The issue workflow in `docs/agents/` and `.github/`, and its summary in `AGENTS.md`, are adapted from [mattpocock/skills](https://github.com/mattpocock/skills), at commit `4ae2317ddb22b046e26455e4f9c9b3aaaf62212d`. `docs/agents/domain.md` is adapted from the same repository, at version 1.2.3 of its `mattpocock-skills` plugin. The "Wayfinding operations" section of `docs/agents/issue-tracker.md` and the `wayfinder:*` labels are adapted from the `wayfinder` skill and the GitHub tracker template of the same plugin version. That repository carries this license:
 
 ```text
 MIT License
