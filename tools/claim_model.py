@@ -11,9 +11,13 @@ question, or close it as not planned. A session off the lab host can also hand
 it to the lab. The owner can answer an open question and free a gone holder.
 In some runs, the ticket starts held by a branch whose session is gone, and the
 first session is one the owner named in its prompt: it frees that branch, skips
-the label test, and stops instead of moving to another ticket. In some runs,
-the last session runs on the lab host. Its prompt names `lab`, so it takes the
-ticket only with that label, and every other session skips it then.
+the label test, and stops instead of moving to another ticket. In other runs,
+the first session's prompt names a wayfinder map. It takes the ticket from the
+map's frontier whatever its state label, which can start as `ready-for-human`.
+It skips the `ready-for-agent` test but keeps the `lab` test, and it stops
+instead of moving to another ticket. In some runs, the last session runs on the
+lab host. Its prompt names `lab`, so it takes the ticket only with that label,
+and every other session skips it then.
 
 The checker explores every interleaving and checks these properties:
 
@@ -24,7 +28,8 @@ The checker explores every interleaving and checks these properties:
      crashed session holds it and the owner has not acted.
   d. A session works the ticket only while it is open, ready for agents, and
      unblocked, and it carries the `lab` label exactly when the session runs
-     on the lab host. A named session needs only open and unblocked.
+     on the lab host. A named session needs only open and unblocked. A map
+     session needs open, unblocked, and the `lab` rule, with any state label.
   e. A session works the ticket only while it is assigned, so GitHub shows it
      as taken.
 
@@ -40,6 +45,7 @@ from collections import deque
 CLAIM, RELEASE, WITHDRAW = "Claimed", "Released", "Withdrawn"
 GONE = "gone"  # the branch of a session that ended before the run
 AGENT, HUMAN, WONTFIX = "ready-for-agent", "ready-for-human", "wontfix"
+NAMED, MAP = "named", "map"  # what the first session's prompt names, an issue or a wayfinder map
 
 
 def holder(log, honor_release=True):
@@ -65,12 +71,13 @@ HOLDING = {LOST_UNASSIGN, COMMENT_LOST, ASSIGN, WORK, RELEASE_UNASSIGN, RELEASE_
 
 class Model:
     """`honor_release`, `recheck`, `verify`, `verify_unassign`, `relabel_first`,
-    `unassign_first` and `lab_skip` exist so the tests can show that the checker
-    catches a protocol without each safeguard."""
+    `unassign_first`, `lab_skip` and `map_lab_verify` exist so the tests can show
+    that the checker catches a protocol without each safeguard."""
 
     def __init__(self, sessions, attempts, owner, log=(), assigned=False, blocked=False, named=False,
-                 lab=False, lab_host=False, honor_release=True, recheck=True, verify=True,
-                 verify_unassign=True, relabel_first=True, unassign_first=True, lab_skip=True):
+                 mapped=False, label=AGENT, lab=False, lab_host=False, honor_release=True, recheck=True,
+                 verify=True, verify_unassign=True, relabel_first=True, unassign_first=True, lab_skip=True,
+                 map_lab_verify=True):
         self.attempts = attempts
         self.owner = owner
         self.honor_release = honor_release
@@ -80,12 +87,14 @@ class Model:
         self.unassign_first = unassign_first
         self.verify_unassign = verify_unassign
         self.lab_skip = lab_skip
+        self.map_lab_verify = map_lab_verify
         self.named = named
+        self.mapped = mapped
         # With lab_host, the last session runs on the lab host.
         self.lab_hosts = frozenset([sessions - 1]) if lab_host else frozenset()
         starts = [(NAMED_READ if named and i == 0 else FRONTIER, 0) for i in range(sessions)]
         # (log, assigned, label, lab, blocked, is_open, sessions, owner_pending_release)
-        self.initial = (tuple(log), assigned, AGENT, lab, blocked, True, tuple(starts), None)
+        self.initial = (tuple(log), assigned, label, lab, blocked, True, tuple(starts), None)
 
     def holder(self, log):
         return holder(log, self.honor_release)
@@ -97,6 +106,9 @@ class Model:
         return not lab or not self.lab_skip
 
     def ready_for(self, i, label, lab, blocked, is_open):
+        if self.mapped and i == 0:
+            # The map's frontier takes any state label, but keeps the `lab` rule.
+            return is_open and not blocked and self.lab_fits(i, lab)
         return is_open and label == AGENT and not blocked and self.lab_fits(i, lab)
 
     def holding(self, step):
@@ -115,8 +127,9 @@ class Model:
                 continue
             me = f"s{i}"
             named = self.named and i == 0
-            # A named session stops instead of going back to the frontier.
-            back = DONE if named else FRONTIER
+            mapped = self.mapped and i == 0
+            # A named session and a map session stop instead of going back to the frontier.
+            back = DONE if named or mapped else FRONTIER
 
             def go(text, new_step, log=log, assigned=assigned, label=label, lab=lab, blocked=blocked,
                    is_open=is_open, tries=tries):
@@ -143,7 +156,7 @@ class Model:
                 # branch, never whoever holds the ticket by the time it comments.
                 go(f"comments Released {GONE}", NAMED_READ, log=log + ((RELEASE, GONE),))
             elif step == READ_COMMENTS:
-                go("reads comments", COMMENT_CLAIM if self.holder(log) is None else FRONTIER)
+                go("reads comments", COMMENT_CLAIM if self.holder(log) is None else back)
             elif step == COMMENT_CLAIM:
                 go("comments Claimed", REREAD_COMMENTS, log=log + ((CLAIM, me),))
             elif step == REREAD_COMMENTS:
@@ -152,7 +165,10 @@ class Model:
             elif step == COMMENT_WITHDRAW:
                 go("comments Withdrawn", back, log=log + ((WITHDRAW, me),))
             elif step == VERIFY:
-                fit = is_open and not blocked and (named or (label == AGENT and self.lab_fits(i, lab)))
+                if mapped:
+                    fit = is_open and not blocked and (self.lab_fits(i, lab) or not self.map_lab_verify)
+                else:
+                    fit = is_open and not blocked and (named or (label == AGENT and self.lab_fits(i, lab)))
                 lost = LOST_UNASSIGN if self.verify_unassign else COMMENT_LOST
                 go("rereads the issue", ASSIGN if fit else lost)
             elif step == LOST_UNASSIGN:
@@ -220,7 +236,12 @@ class Model:
             found.append("a")
         for i in working:
             named = self.named and i == 0
-            if not (is_open and not blocked and (named or (label == AGENT and lab == (i in self.lab_hosts)))):
+            lab_ok = lab == (i in self.lab_hosts)
+            if self.mapped and i == 0:
+                fit = lab_ok
+            else:
+                fit = named or (label == AGENT and lab_ok)
+            if not (is_open and not blocked and fit):
                 found.append("d")
         if working and not assigned:
             found.append("e")
@@ -259,14 +280,17 @@ class Model:
 
 
 HELD_BY_GONE = ((CLAIM, GONE),)
-# name: (comment log, assigned, blocked, the first session is named in its prompt)
+# name: (comment log, assigned, blocked, what the first session's prompt names, the starting state label)
 HISTORIES = {
-    "no comments": ((), False, False, False),
-    "an old released claim": (((CLAIM, "old"), (RELEASE, "old")), False, False, False),
-    "an old lost race": (((CLAIM, "old"), (CLAIM, "other"), (WITHDRAW, "other"), (RELEASE, "old")), False, False, False),
-    "a gone holder, assigned, named session": (HELD_BY_GONE, True, False, True),
-    "a gone holder, unassigned, named session": (HELD_BY_GONE, False, False, True),
-    "a gone holder waiting on a question, named session": (HELD_BY_GONE, True, True, True),
+    "no comments": ((), False, False, None, AGENT),
+    "an old released claim": (((CLAIM, "old"), (RELEASE, "old")), False, False, None, AGENT),
+    "an old lost race": (((CLAIM, "old"), (CLAIM, "other"), (WITHDRAW, "other"), (RELEASE, "old")), False, False,
+                         None, AGENT),
+    "a gone holder, assigned, named session": (HELD_BY_GONE, True, False, NAMED, AGENT),
+    "a gone holder, unassigned, named session": (HELD_BY_GONE, False, False, NAMED, AGENT),
+    "a gone holder waiting on a question, named session": (HELD_BY_GONE, True, True, NAMED, AGENT),
+    "no comments, map session": ((), False, False, MAP, AGENT),
+    "no comments, map session, ready-for-human ticket": ((), False, False, MAP, HUMAN),
 }
 
 CONFIGS = [(2, 1), (2, 2), (3, 1)]
@@ -282,10 +306,10 @@ LAB_SETUPS = {
 def run_all(**variant):
     """Check every configuration. Returns (total states, list of failures)."""
     total, failures = 0, []
-    for (sessions, attempts), owner, (name, (log, assigned, blocked, named)), (lab_name, (lab_host, lab)) in (
+    for (sessions, attempts), owner, (name, (log, assigned, blocked, prompt, label)), (lab_name, (lab_host, lab)) in (
             itertools.product(CONFIGS, (False, True), HISTORIES.items(), LAB_SETUPS.items())):
-        model = Model(sessions, attempts, owner, log, assigned=assigned, blocked=blocked, named=named,
-                      lab=lab, lab_host=lab_host, **variant)
+        model = Model(sessions, attempts, owner, log, assigned=assigned, blocked=blocked, named=prompt == NAMED,
+                      mapped=prompt == MAP, label=label, lab=lab, lab_host=lab_host, **variant)
         states, failure = model.check()
         total += states
         if failure:
