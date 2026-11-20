@@ -2,17 +2,6 @@
 
 This page holds the rules for how a session runs pull request reviews, subagents, and workflow agents. [Branches and pull requests](../../AGENTS.md#branches-and-pull-requests) links it.
 
-## GitHub work in a cloud session
-
-When a cloud session gives work on issues or pull requests to a subagent or a workflow agent, it says in that agent's prompt to:
-
-- load the `mcp__github__*` tools it needs with ToolSearch, and use them for issues and pull requests;
-- use `gh` only for REST search, as [Tools](issue-tracker.md#tools) on the issue tracker page shows.
-
-The agent's Bash tool description points it to `gh` for GitHub work, and its `mcp__github__*` tools start unloaded. Without these two lines, the agent reaches for `gh` first.
-
-This rule is for cloud sessions only. A local session and its agents can use `gh`, as [Tools](issue-tracker.md#tools) says.
-
 ## Pull request reviews
 
 These rules hold at every effort level, and with ultracode on.
@@ -32,3 +21,14 @@ This round is the review that [Branches and pull requests](../../AGENTS.md#branc
 | A few lines that add one rule to a page in `docs/agents/` | One reviewer reads the diff against the ticket's acceptance criteria and checks that no other rule contradicts it. |
 | An owner answer that rewrites one sentence after the round | One reviewer reads that sentence against the answer. |
 | A research page with many new claims and citations | A few reviewers split the claims, and each opens the citations it checks. A skeptic checks each finding that changes a claim. |
+
+## GitHub work in a cloud session
+
+When a cloud session gives work on issues or pull requests to a subagent or a workflow agent, it says in that agent's prompt to:
+
+- load the `mcp__github__*` tools it needs with ToolSearch, and use them for issues and pull requests;
+- use `gh` only for REST search, as [Tools](issue-tracker.md#tools) on the issue tracker page shows.
+
+The agent's Bash tool description points it to `gh` for GitHub work, and its `mcp__github__*` tools start unloaded. Without these two lines, the agent reaches for `gh` first.
+
+This rule is for cloud sessions only. A local session and its agents can use `gh`, as [Tools](issue-tracker.md#tools) says.
