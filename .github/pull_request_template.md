@@ -1,3 +1,5 @@
+<!-- This body describes the final diff against main. Leave out the branch's history, such as its commits, its earlier versions, and its review rounds. -->
+
 ## Summary
 
 <!-- The smallest view that makes the change clear: a diff sketch, a file tree, a call tree, pseudocode, or a Mermaid diagram. Keep prose short. -->
@@ -8,7 +10,7 @@
 
 ## Removed text
 
-<!-- Each existing line this change deletes, shortens, or rewrites. For each, say who asked for it, the ticket or the owner, and where its content lives now. Write None when the change only adds. -->
+<!-- Each line on main that the final diff against main deletes, shortens, or rewrites. Leave out rewrites between commits on this branch. A line that one branch commit added and a later one rewrote is not listed, and neither is a line on main that one branch commit changed and a later one restored. For each listed line, say who asked for it, the ticket or the owner, and where its content lives now. Write None when the change only adds. -->
 
 ## Merge danger
 
