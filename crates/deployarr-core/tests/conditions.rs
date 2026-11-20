@@ -2070,6 +2070,34 @@ fn difference_wmi_namespace_is_not_trimmed() {
     );
 }
 
+/// MDT calls `trimLeft` on the expanded namespace (`TsCore!0x1801aa762`), and
+/// then fails the condition at its empty namespace check, before it opens any
+/// namespace (`TsCore!0x1801aa7c6`). `trimLeft` removes space, tab, CR, and LF
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`), so MDT
+/// fails a condition whose namespace is only a space. The check jumps to the
+/// evaluator's exit, so the ignore-query-failure flag does not cover it
+/// (`TsCore!0x1801aae22`). For a literal namespace, MDT's parser most likely
+/// trims the text to empty even before that, through MSXML's `text` property
+/// (inferred, `docs/research/mdt-8450-binaries.md#conditions`). deployarr's
+/// parser rejects only an empty namespace. A namespace of only a space parses,
+/// and the agent does not trim it, so it reaches the probe unchanged, as
+/// `docs/architecture.md#conditions` says.
+/// Nobody has recorded what WMI does with it.
+#[test]
+fn difference_wmi_a_namespace_of_only_white_space_reaches_the_probe() {
+    let machine = Machine::new().wmi("SELECT * FROM Win32_Battery", Ok(true));
+    let json = wmi(" ", "SELECT * FROM Win32_Battery", true);
+
+    assert_eq!(
+        run(json, &Vars::new(), &machine),
+        Err(ConditionError::Probe {
+            kind: ProbeKind::WmiNamespace,
+            error: ProbeError::new(INVALID_NAMESPACE),
+        })
+    );
+    assert_eq!(machine.asked(), ["wmi   SELECT * FROM Win32_Battery"]);
+}
+
 // Empty paths, keys, and queries.
 
 /// MDT fails a condition whose path, key, or query is empty after it expands

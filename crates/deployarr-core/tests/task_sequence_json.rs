@@ -8,9 +8,9 @@ use deployarr_core::action::{
     UpdateTimeouts, WsusUrl, WsusUrlError,
 };
 use deployarr_core::condition::{
-    Comparison, Condition, EmptyPathError, EmptyQueryError, FileVersion, PathTemplate,
-    QueryTemplate, RegData, RegKeyError, RegKeyTemplate, RegText, RegType, RegValueName,
-    RegistryCondition, RegistryConditionError, Test,
+    Comparison, Condition, EmptyNamespaceError, EmptyPathError, EmptyQueryError, FileVersion,
+    PathTemplate, QueryTemplate, RegData, RegKeyError, RegKeyTemplate, RegText, RegType,
+    RegValueName, RegistryCondition, RegistryConditionError, Test, WmiNamespace,
 };
 use deployarr_core::sequence::{
     AuthoredSequence, DefaultVars, DefaultVarsError, Node, NodeMeta, ParseError, TaskSequenceId,
@@ -1311,6 +1311,44 @@ fn path_key_and_query_types_reject_empty_text() {
         Err(RegKeyError::Hive)
     );
     assert_eq!(Template::from(query), space);
+}
+
+/// MDT fails a WMI condition whose namespace is empty after it expands and
+/// trims it, before it opens the namespace (`TsCore!0x1801aa7c6`). deployarr's
+/// parser rejects an empty namespace when the sequence is saved, as
+/// `docs/architecture.md#json-format` says.
+#[test]
+fn an_empty_wmi_namespace_fails_at_its_field() {
+    let condition = json!({ "wmi": { "namespace": "", "query": "SELECT * FROM Win32_Battery", "ignore_failure": true } });
+    let document = sequence_with_condition(condition);
+
+    let error = assert_fails_at(&document, &format!("{STEP}.meta.condition.wmi.namespace"));
+    assert!(
+        error
+            .to_string()
+            .contains("a WMI namespace must not be empty"),
+        "{error}"
+    );
+}
+
+/// The namespace type rejects empty text, so code that builds a sequence
+/// cannot hold an empty namespace. Text of only white space is not empty.
+#[test]
+fn the_namespace_type_rejects_empty_text() {
+    assert_eq!("".parse::<WmiNamespace>(), Err(EmptyNamespaceError));
+    assert_eq!(
+        WmiNamespace::try_from(String::new()),
+        Err(EmptyNamespaceError)
+    );
+    assert_eq!(
+        EmptyNamespaceError.to_string(),
+        "a WMI namespace must not be empty"
+    );
+
+    let space = " ".parse::<WmiNamespace>().expect("a space is not empty");
+    assert_eq!(space.as_str(), " ");
+    let namespace = r"root\cimv2".parse::<WmiNamespace>().expect("a namespace");
+    assert_eq!(namespace.as_str(), r"root\cimv2");
 }
 
 /// Keys whose hive is fixed text and is not one of the four full names. MDT
