@@ -1924,33 +1924,56 @@ fn mdt_wmi_an_empty_query_is_an_error_even_when_ignored() {
 }
 
 /// The error for a path, key, or query that substitutes to empty text names
-/// the template as written. Neither the error nor its message holds a
-/// variable's value.
+/// the template as written and the field. `EmptyText` fires only when the
+/// substituted text is empty, so it can never hold a non-empty value. The test
+/// pins the whole error and its whole message, so neither can hold any text
+/// but the template as written and the field's name.
 #[test]
 fn an_empty_text_error_names_the_template_not_a_value() {
-    const SECRET: &str = "hunter2-secret";
-    let mut vars = Vars::new();
-    for (text, value) in [("Password", SECRET), ("Blank", "")] {
-        vars.set(name(text), value, Sensitivity::Secret, SetSource::Prompt)
-            .unwrap();
-    }
+    let vars = vars_of(&[("Blank", "")]);
     let cases = [
-        file("%Blank%", None, None),
-        folder("%Blank%", None),
-        registry("%Blank%", None, json!("exists")),
-        wmi(r"root\cimv2", "%Blank%", true),
+        (
+            file("%Blank%", None, None),
+            TemplateField::FilePath,
+            "a file path",
+        ),
+        (
+            folder("%Blank%", None),
+            TemplateField::FolderPath,
+            "a folder path",
+        ),
+        (
+            registry("%Blank%", None, json!("exists")),
+            TemplateField::RegistryKey,
+            "a registry key",
+        ),
+        (
+            wmi(r"root\cimv2", "%Blank%", true),
+            TemplateField::WmiQuery,
+            "a WMI query",
+        ),
     ];
-    for json in cases {
+    for (json, field, field_name) in cases {
         let text = json.to_string();
         let error = run(json, &vars, &Machine::new()).expect_err(&text);
-        assert!(
-            matches!(error, ConditionError::EmptyText { .. }),
-            "{text}: {error:?}"
+        assert_eq!(
+            error,
+            ConditionError::EmptyText {
+                field,
+                template: Template::new("%Blank%"),
+            },
+            "{text}"
         );
-        let message = format!("{error} {error:?}");
-        assert!(!message.contains(SECRET), "{text}: {message}");
-        assert!(message.contains("%Blank%"), "{text}: {message}");
-        assert!(message.contains("must not be empty"), "{text}: {message}");
+        assert_eq!(
+            error.to_string(),
+            format!("`%Blank%` substitutes to empty text, and {field_name} must not be empty"),
+            "{text}"
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            format!("EmptyText {{ field: {field:?}, template: Template(\"%Blank%\") }}"),
+            "{text}"
+        );
     }
 }
 
