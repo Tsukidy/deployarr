@@ -490,6 +490,71 @@ fn mdt_var_like_matches_star_and_question_mark() {
     }
 }
 
+/// MDT's Variable evaluator matches `Like` with `PathMatchSpecW`
+/// (`TsCore!0x1801aa078`). In base WinPE 10.0.26100.1, `PathMatchSpecW` matches
+/// two UTF-16 units when `LCMapStringEx` upper-cases both to the same unit.
+/// When `LCMapStringEx` takes its short path with the case table in
+/// `l_intl.nls` loaded, it upper-cases through that table
+/// (`docs/research/winpe-10.1.26100.9457.md#what-it-matches`). So `Ä` matches
+/// `ä` and `Σ` matches `σ`, but the final sigma `ς`, the Kelvin sign, `ß` and
+/// `ẞ`, and the dotless and dotted `i` match only themselves. The research does
+/// not record whether base WinPE loads the table. `docs/architecture.md#conditions`
+/// lists that and the other cases where MDT's result departs or is not recorded.
+#[test]
+fn mdt_var_like_matches_letters_by_the_winpe_case_table() {
+    let cases = [
+        ("x64", "X64", true),
+        ("Ä", "ä", true),
+        ("ä", "Ä", true),
+        ("ÄRGER", "ärger", true),
+        ("Σ", "σ", true),
+        ("σ", "Σ", true),
+        ("ÿ", "Ÿ", true),
+        ("Σ", "ς", false),
+        ("ς", "σ", false),
+        ("k", "\u{212a}", false),
+        ("\u{212a}", "K", false),
+        ("ß", "ẞ", false),
+        ("ı", "I", false),
+        ("i", "İ", false),
+        ("Ärger 7440", "ä*74?0", true),
+    ];
+    for (value, pattern, expected) in cases {
+        let vars = vars_of(&[("Model", value)]);
+        let json = var("Model", json!({ "like": pattern }));
+        assert_eq!(
+            check(json, &vars, &Machine::new()),
+            expected,
+            "{value:?} like {pattern:?}"
+        );
+    }
+}
+
+/// `PathMatchSpecW` steps one UTF-16 unit at a time, so it sees a character
+/// above U+FFFF as two surrogate units. The research does not record how
+/// `LCMapStringEx` maps a surrogate unit
+/// (`docs/research/winpe-10.1.26100.9457.md#how-lcmapstringex-upper-cases-one-unit`),
+/// so MDT's result is not recorded. deployarr matches a character above U+FFFF
+/// only with itself, so U+10400 does not match U+10428, which
+/// `char::to_lowercase` pairs.
+#[test]
+fn difference_like_matches_a_character_above_u_ffff_only_with_itself() {
+    let cases = [
+        ("\u{10400}", "\u{10400}", true),
+        ("\u{10400}", "\u{10428}", false),
+        ("\u{10428}", "\u{10400}", false),
+    ];
+    for (value, pattern, expected) in cases {
+        let vars = vars_of(&[("Model", value)]);
+        let json = var("Model", json!({ "like": pattern }));
+        assert_eq!(
+            check(json, &vars, &Machine::new()),
+            expected,
+            "{value:?} like {pattern:?}"
+        );
+    }
+}
+
 /// "Exists means 'not empty', so an unset variable and an empty one look the
 /// same" (`TsCore!0x1801a96c0`).
 #[test]
@@ -1058,7 +1123,10 @@ fn difference_file_and_folder_paths_are_not_trimmed() {
 /// "Registry conditions accept only full hive names" (`TsCore!0x1801a6bec`).
 /// The four that MDT accepts are `HKEY_LOCAL_MACHINE`, `HKEY_CURRENT_USER`,
 /// `HKEY_CURRENT_CONFIG`, and `HKEY_USERS`, in any case and followed by `\`
-/// (`TsCore!0x1801ab5c0`). Another key fails to evaluate.
+/// (`TsCore!0x1801ab5c0`). Another key fails to evaluate. The parser rejects
+/// a key whose hive is fixed text and is not one of the four, so each bad
+/// hive comes from a `%VAR%` reference here, as
+/// `docs/architecture.md#conditions` says.
 #[test]
 fn mdt_registry_keys_start_with_a_full_hive_name() {
     let machine = Machine::new()
@@ -1079,14 +1147,21 @@ fn mdt_registry_keys_start_with_a_full_hive_name() {
         );
     }
 
+    let vars = vars_of(&[
+        ("Short", "HKLM"),
+        ("Classes", "HKEY_CLASSES_ROOT"),
+        ("Machine", "HKEY_LOCAL_MACHINE"),
+        ("Software", "SOFTWARE"),
+        ("Longer", "HKEY_LOCAL_MACHINE_X"),
+    ]);
     for key in [
-        r"HKLM\SOFTWARE\Contoso",
-        r"HKEY_CLASSES_ROOT\.txt",
-        "HKEY_LOCAL_MACHINE",
-        r"SOFTWARE\Contoso",
-        r"HKEY_LOCAL_MACHINE_X\SOFTWARE",
+        r"%Short%\SOFTWARE\Contoso",
+        r"%Classes%\.txt",
+        "%Machine%",
+        r"%Software%\Contoso",
+        r"%Longer%\SOFTWARE",
     ] {
-        let error = run(registry(key, None, json!("exists")), &Vars::new(), &machine).unwrap_err();
+        let error = run(registry(key, None, json!("exists")), &vars, &machine).unwrap_err();
         assert_eq!(
             error,
             ConditionError::RegistryHive {
@@ -1117,17 +1192,18 @@ fn mdt_registry_keys_start_with_a_full_hive_name() {
 /// inferred, because `CCM::Utility::RegKey::Open` is in `CcmCore.dll`. The
 /// agent trims neither, so such a key fails to evaluate with
 /// `ConditionError::RegistryHive` and the probe is asked nothing, as
-/// `docs/architecture.md#conditions` says. That holds for a space that a
-/// variable's value puts at the start too.
+/// `docs/architecture.md#conditions` says. The parser rejects such a key when
+/// the space is in the sequence, so the space comes from a variable's value
+/// here.
 #[test]
 fn difference_registry_key_is_not_trimmed() {
     let machine = Machine::new().key(HKLM_CONTOSO);
-    let vars = vars_of(&[("Hive", " HKEY_LOCAL_MACHINE")]);
+    let vars = vars_of(&[
+        ("Key", r" HKEY_LOCAL_MACHINE\SOFTWARE\Contoso"),
+        ("Hive", " HKEY_LOCAL_MACHINE"),
+    ]);
 
-    for key in [
-        r" HKEY_LOCAL_MACHINE\SOFTWARE\Contoso",
-        r"%Hive%\SOFTWARE\Contoso",
-    ] {
+    for key in ["%Key%", r"%Hive%\SOFTWARE\Contoso"] {
         let error = run(registry(key, None, json!("exists")), &vars, &machine).unwrap_err();
         assert_eq!(
             error,
@@ -1519,6 +1595,34 @@ fn difference_registry_like_matches_wildcards() {
         ("Edition", "*", true),
         ("Build", "26*", true),
         ("Build", "19*", false),
+    ];
+    for (value, pattern, expected) in cases {
+        let json = registry(HKLM_CONTOSO, Some(value), json!({ "like": pattern }));
+        assert_eq!(
+            check(json, &Vars::new(), &machine),
+            expected,
+            "{value} {pattern}"
+        );
+    }
+}
+
+/// A `Registry` `Like` test applies the `Var` `Like` rule, so it matches
+/// letters by base WinPE's `l_intl.nls` case table
+/// (`docs/research/winpe-10.1.26100.9457.md#what-it-matches`). This departs
+/// from MDT, whose registry condition has no branch for `Like` and is true for
+/// every value that exists, whatever the pattern (`TsCore!0x1801a6bec`,
+/// `TsCore!0x1801ab054`).
+#[test]
+fn difference_registry_like_matches_letters_by_the_var_like_rule() {
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Region", RegValue::Sz("Österreich".into()))
+        .value(HKLM_CONTOSO, "Letter", RegValue::Sz("Σ".into()));
+    let cases = [
+        ("Region", "öster*", true),
+        ("Region", "ÖSTERREICH", true),
+        ("Letter", "σ", true),
+        ("Letter", "ς", false),
+        ("Region", "Oster*", false),
     ];
     for (value, pattern, expected) in cases {
         let json = registry(HKLM_CONTOSO, Some(value), json!({ "like": pattern }));
@@ -2178,12 +2282,14 @@ fn difference_wmi_a_failed_query_of_only_white_space_is_false_when_ignored() {
 /// does not trim the key, so the key is not empty. It fails to evaluate with
 /// `RegistryHive`, because it does not start with a full hive name. The
 /// outcome matches MDT, and the error differs, as
-/// `docs/architecture.md#conditions` says.
+/// `docs/architecture.md#conditions` says. The parser rejects a key of only
+/// white space in the sequence, so the white space comes from a variable's
+/// value here.
 #[test]
 fn mdt_registry_a_key_of_only_white_space_fails_to_evaluate() {
     let machine = Machine::new().key(HKLM_CONTOSO);
-    let vars = vars_of(&[("Space", " ")]);
-    for key in [" ", "%Space%"] {
+    let vars = vars_of(&[("Space", " "), ("Spaces", " \t ")]);
+    for key in ["%Spaces%", "%Space%"] {
         assert_eq!(
             run(registry(key, None, json!("exists")), &vars, &machine),
             Err(ConditionError::RegistryHive {
@@ -2278,10 +2384,14 @@ fn errors_name_the_template_not_the_substituted_text() {
         SetSource::Prompt,
     )
     .unwrap();
+    // The parser rejects `HKLM\` as fixed text, so the short name comes from
+    // a variable.
+    vars.set(name("Hive"), "HKLM", Sensitivity::Plain, SetSource::Rule)
+        .unwrap();
     let machine = Machine::broken(ACCESS_DENIED);
     let cases = [
         file(r"C:\%Password%\x.txt", None, None),
-        registry(r"HKLM\%Password%", None, json!("exists")),
+        registry(r"%Hive%\%Password%", None, json!("exists")),
         registry(
             r"HKEY_LOCAL_MACHINE\%Password%",
             Some("Stage"),

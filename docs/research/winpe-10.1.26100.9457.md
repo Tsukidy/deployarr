@@ -212,7 +212,7 @@ The files come from the `winpe.wim` in [Sources](#sources). `KernelBase.dll` is 
 | `Windows\System32\l_intl.nls` | 9,926 | `f8e9574c1c2ee28c669e903f5faf86ac24476f692076340b23881b4d0c82112b` |
 | `Windows\System32\ntoskrnl.exe` | 12,543,280 | `1cc3b103b25333ee2b79363bb898832a93576befd2e3a29817bd34cf7a3a102b` |
 
-7-Zip 23.01 took the files from the WIM. `rz-bin` 0.7.4 read the export and import tables. `rizin` 0.7.4 and GNU `objdump` 2.42 disassembled the code. The Python reader and the Rust program are not in the repository, and the rerun script does not repeat these reads.
+7-Zip 23.01 took the files from the WIM. `rz-bin` 0.7.4 read the export and import tables. `rizin` 0.7.4 and GNU `objdump` 2.42 disassembled the code. `tools/re/winpe/reproduce.sh` writes the same map as the Python reader, unit for unit, with `tools/re/winpe/case_map.py`. It does not repeat the disassembly, and the Python reader and the Rust program are not in the repository.
 
 ## What changes in deployarr
 
