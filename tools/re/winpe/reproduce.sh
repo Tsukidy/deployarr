@@ -10,6 +10,7 @@
 #   <workdir>/out/system32-dlls.txt   System32 DLLs in stored case
 #   <workdir>/out/apisets.tsv         every API set schema entry and whether it resolves
 #   <workdir>/out/summary.txt         versions, sizes, hashes, and counts
+#   <workdir>/out/upper-case-map.tsv  the upper case map that PathMatchSpecW applies, from l_intl.nls
 #
 # Needs: bash 4.4 or later, curl, 7z, msiinfo (msitools), sha1sum, sha256sum, and Python 3.10 or later (stdlib only).
 set -euo pipefail
@@ -20,6 +21,7 @@ url="${2:-https://go.microsoft.com/fwlink/?linkid=2289981}"
 expected="${3:-d4de67acc83de253ccc941dd0590808d83726bdd8ea768a374a7beaff7949d6a}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 helper="$here/winpe_dlls.py"
+case_map="$here/case_map.py"
 msi_package="package_WindowsPEwimsDesktopEditions_x86_en_us"
 
 py() { python3 -I "$helper" "$@"; }
@@ -95,6 +97,10 @@ listing="$work/wim/listing.txt"
 schema_path="$(py schema-path "$listing")"
 schema_dll="$work/wim/files/$schema_path"
 7z x -y -o"$work/wim/files" "$wim" "$schema_path" >/dev/null
+nls_path="Windows/System32/l_intl.nls"
+grep -qxF "Path = $nls_path" "$listing" || die "$nls_path is not in winpe.wim"
+nls="$work/wim/files/$nls_path"
+7z x -y -o"$work/wim/files" "$wim" "$nls_path" >/dev/null
 
 py build "$listing" "$schema_dll" "$work/out" \
   "addon_version=$addon_version" \
@@ -106,6 +112,13 @@ py build "$listing" "$schema_dll" "$work/out" \
   "wim_file_key=$wim_key" \
   "wim_size=$wim_size" \
   "wim_sha256=$(sha256sum "$wim" | cut -d' ' -f1)"
+
+case_map_count="$(python3 -I "$case_map" "$nls" "$work/out/upper-case-map.tsv")"
+{
+  echo "l_intl_nls_sha256: $(sha256sum "$nls" | cut -d' ' -f1)"
+  echo "$case_map_count"
+  echo "upper_case_map_sha256: $(sha256sum "$work/out/upper-case-map.tsv" | cut -d' ' -f1)"
+} >> "$work/out/summary.txt"
 
 cat "$work/out/summary.txt"
 echo "Outputs in $work/out"
