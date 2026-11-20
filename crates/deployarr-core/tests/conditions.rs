@@ -18,7 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use deployarr_core::condition::{Condition, FileVersion, MsiProduct};
 use deployarr_core::evaluate::{
-    ConditionError, Probe, ProbeError, ProbeKind, RegKey, RegValue, WmiError, evaluate,
+    ConditionError, Probe, ProbeError, ProbeKind, RegKey, RegValue, TemplateField, WmiError,
+    evaluate,
 };
 use deployarr_core::non_empty::NonEmpty;
 use deployarr_core::store::{Sensitivity, SetSource, Vars};
@@ -427,6 +428,11 @@ fn mdt_var_compares_as_integers_when_both_sides_are_integers() {
 
 /// "Otherwise it compares strings without regard to case"
 /// (`TsCore!0x1801a96c0`). One side that is not an integer makes both text.
+/// MDT compares the text through `CCM::Utility::String::compare_no_case`
+/// (`TsCore!0x1801aa10a`). That export (`CcmCore!0x180085f08`) jumps to
+/// `_wcsicmp`. That `_wcsicmp` runs in the C locale, where only `A` to `Z`
+/// match `a` to `z`, is inferred from Microsoft's `_wcsicmp` page, so `Ä`
+/// does not match `ä` (`docs/architecture.md#conditions`).
 #[test]
 fn mdt_var_compares_other_text_without_regard_to_case() {
     let cases = [
@@ -434,7 +440,8 @@ fn mdt_var_compares_other_text_without_regard_to_case() {
         ("Contoso", "not_equals", "CONTOSO", false),
         ("apple", "less", "Banana", true),
         ("Zebra", "greater", "apple", true),
-        ("ÄRGER", "equals", "ärger", true),
+        ("X64", "equals", "x64", true),
+        ("ÄRGER", "equals", "ärger", false),
         // As text, "10" sorts before "9".
         ("10", "less", "9x", true),
         ("1.10", "less", "1.9", true),
@@ -1299,6 +1306,28 @@ fn difference_registry_data_is_not_substituted() {
     assert!(!check(json, &Vars::new(), &machine));
 }
 
+/// MDT compares `REG_SZ` and `REG_EXPAND_SZ` data through
+/// `CCM::Utility::String::compare_no_case` (`TsCore!0x1801a824d`). That export
+/// (`CcmCore!0x180085f08`) jumps to `_wcsicmp`. That `_wcsicmp` runs in the
+/// C locale, where only `A` to `Z` match `a` to `z`, is inferred from
+/// Microsoft's `_wcsicmp` page (`docs/architecture.md#conditions`). So
+/// `Ärger` matches `ÄRGER` written with the same `Ä`, and does not match
+/// `ärger`.
+#[test]
+fn mdt_registry_string_values_match_only_ascii_letters_in_any_case() {
+    let machine = Machine::new().value(HKLM_CONTOSO, "Mood", RegValue::Sz("Ärger".into()));
+    let cases = [
+        (json!({ "equals": "ärger" }), false),
+        (json!({ "equals": "ÄRGER" }), true),
+        (json!({ "not_equals": "ärger" }), true),
+    ];
+    for (test, expected) in cases {
+        let text = test.to_string();
+        let json = registry(HKLM_CONTOSO, Some("Mood"), test);
+        assert_eq!(check(json, &Vars::new(), &machine), expected, "{text}");
+    }
+}
+
 /// MDT fails one of the six comparisons against empty registry data when it
 /// runs (`TsCore!0x1801a6bec`). deployarr's parser rejects the empty data, so
 /// the evaluator never meets it.
@@ -1521,6 +1550,64 @@ fn difference_registry_data_is_not_trimmed() {
         assert!(!check(padded, &Vars::new(), &machine), "{value}");
         let trimmed = registry(HKLM_CONTOSO, Some(value), json!({ "equals": "5" }));
         assert!(check(trimmed, &Vars::new(), &machine), "{value}");
+    }
+}
+
+/// MDT's condition parser reads each `<variable>` element, a Registry
+/// condition's value name and a Variable condition's `Value` included, through
+/// MSXML's `text` property when it parses the sequence (`TsCore!0x180165124`,
+/// called at `TsCore!0x18019a259`), and Microsoft documents that `text` trims
+/// white space at both ends. That MDT therefore trims both texts at both ends
+/// is inferred from that page, because MSXML is outside the binary (#336).
+/// Neither evaluator trims them again. The Registry evaluator expands the value
+/// name at `TsCore!0x1801a71d8` and gives the result no trim call, and the
+/// Variable evaluator (`TsCore!0x1801a96c0`) trims only the operator. So MDT
+/// most likely finds the value `Edition` for the value name ` Edition`, and
+/// finds `5 ` equal to a variable that holds `5`. The agent uses the value name
+/// and compares the `Value` as written, as `docs/architecture.md#conditions`
+/// says, and an MDT importer trims both instead (#383).
+#[test]
+fn difference_registry_value_name_and_var_value_are_not_trimmed() {
+    let machine = Machine::new().value(HKLM_CONTOSO, "Edition", RegValue::Sz("Pro".into()));
+    let padded = registry(HKLM_CONTOSO, Some(" Edition"), json!("exists"));
+    assert!(!check(padded, &Vars::new(), &machine));
+    let trimmed = registry(HKLM_CONTOSO, Some("Edition"), json!("exists"));
+    assert!(check(trimmed, &Vars::new(), &machine));
+
+    let vars = vars_of(&[("Count", "5")]);
+    let padded = var("Count", json!({ "equals": "5 " }));
+    assert!(!check(padded, &vars, &machine));
+    let trimmed = var("Count", json!({ "equals": "5" }));
+    assert!(check(trimmed, &vars, &machine));
+}
+
+/// For a `REG_DWORD` value, MDT reads the data with
+/// `CCM::Utility::String::toULong` (`TsCore!0x1801a83a9`,
+/// `TsCore!0x1801a83c2`). That export (`CcmCore!0x18008810c`) calls `wcstoul`
+/// in base 0, so MDT most likely reads `0x10` as 16 and `010` as 8. What
+/// `wcstoul` reads is inferred from Microsoft's documentation, because the
+/// function is in the C runtime. The agent keeps the `var` rules, as
+/// `docs/architecture.md#conditions` says. `0x10` is not an integer, so it
+/// compares as text with `16`, and `010` reads as the integer 10. An MDT
+/// importer writes the number that MDT reads instead (#377).
+#[test]
+fn difference_registry_dword_data_is_not_read_in_base_0() {
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Sixteen", RegValue::Dword(16))
+        .value(HKLM_CONTOSO, "Eight", RegValue::Dword(8))
+        .value(HKLM_CONTOSO, "Ten", RegValue::Dword(10));
+    let cases = [
+        ("Sixteen", "0x10", false),
+        ("Eight", "010", false),
+        ("Ten", "010", true),
+    ];
+    for (value, data, expected) in cases {
+        let json = registry(HKLM_CONTOSO, Some(value), json!({ "equals": data }));
+        assert_eq!(
+            check(json, &Vars::new(), &machine),
+            expected,
+            "{value} {data}"
+        );
     }
 }
 
@@ -1794,10 +1881,13 @@ fn mdt_wmi_a_namespace_that_cannot_open_is_an_error_even_when_ignored() {
 }
 
 /// MDT calls `CCM::Utility::String::toUpper` on the expanded WMI query before
-/// it runs it (`TsCore!0x1801aa380`). That this upper-cases the query is
-/// inferred, because the function is in `CcmCore.dll`. deployarr runs the
-/// query exactly as substitution leaves it, with its case and the spaces at
-/// either end kept, as `docs/architecture.md#conditions` says.
+/// it runs it (`TsCore!0x1801aa380`). `toUpper` passes the query to
+/// `CharUpperBuffW`
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`). Which
+/// characters that call upper-cases is inferred from Microsoft's
+/// documentation of `CharUpperBuffW`. deployarr runs the query exactly as
+/// substitution leaves it, with its case and the spaces at either end kept,
+/// as `docs/architecture.md#conditions` says.
 #[test]
 fn difference_wmi_runs_the_substituted_query_as_written() {
     let substituted = " select * from win32_battery where status = 'ok' ";
@@ -1847,11 +1937,11 @@ fn difference_wmi_namespace_is_not_substituted() {
 /// MDT therefore trims the namespace at both ends before it expands it is
 /// inferred from that page, because MSXML is outside the binary (#336). After
 /// it expands the namespace, MDT calls `CCM::Utility::String::trimLeft` on it
-/// (`TsCore!0x1801aa762`) and opens the result (`TsCore!0x1801aa941`). That
-/// this removes white space from the start of the namespace is inferred,
-/// because the function is in `CcmCore.dll`. The agent does not trim the
-/// namespace, so a namespace with a space at each end reaches the probe as
-/// written, as `docs/architecture.md#conditions` says.
+/// (`TsCore!0x1801aa762`) and opens the result (`TsCore!0x1801aa941`).
+/// `trimLeft` removes space, tab, CR, and LF from the start of the text
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`). The
+/// agent does not trim the namespace, so a namespace with a space at each end
+/// reaches the probe as written, as `docs/architecture.md#conditions` says.
 #[test]
 fn difference_wmi_namespace_is_not_trimmed() {
     let namespace = r" root\cimv2 ";
@@ -1869,6 +1959,206 @@ fn difference_wmi_namespace_is_not_trimmed() {
         machine.asked(),
         [format!("wmi {namespace} SELECT * FROM Win32_Battery")]
     );
+}
+
+// Empty paths, keys, and queries.
+
+/// MDT fails a condition whose path, key, or query is empty after it expands
+/// and trims it, before it asks the machine. The File check at
+/// `TsCore!0x1801a2c77` comes before `File::Exists` (`TsCore!0x1801a31eb`).
+/// The Folder check at `TsCore!0x1801a3eb6` comes before `Directory::Exists`
+/// (`TsCore!0x1801a42c4`). The Registry check at `TsCore!0x1801a747a` comes
+/// before the key reaches the hive check in `TsCore!0x1801ab5c0`
+/// (`TsCore!0x1801a7787`). The WMI check at `TsCore!0x1801aa872` comes before
+/// the query runs. deployarr's parser rejects empty text, so only a template
+/// that substitutes to empty text reaches this rule. The probe is asked
+/// nothing. An empty key gets this error, not `RegistryHive`, because MDT
+/// checks for an empty key before it checks the hive name.
+#[test]
+fn mdt_an_empty_path_key_or_query_fails_to_evaluate() {
+    let machine = Machine::new()
+        .file(r"C:\x.txt", None, "2026-01-01T00:00:00Z")
+        .key(HKLM_CONTOSO);
+    let vars = vars_of(&[("Empty", "")]);
+    let cases = [
+        (file("%Empty%", None, None), TemplateField::FilePath),
+        (
+            file("%Empty%", Some(("equals", "1.0.0.0")), None),
+            TemplateField::FilePath,
+        ),
+        (folder("%Empty%", None), TemplateField::FolderPath),
+        (
+            registry("%Empty%", None, json!("exists")),
+            TemplateField::RegistryKey,
+        ),
+        (
+            registry("%Empty%", Some("Stage"), json!({ "equals": 1 })),
+            TemplateField::RegistryKey,
+        ),
+        (
+            wmi(r"root\cimv2", "%Empty%", false),
+            TemplateField::WmiQuery,
+        ),
+    ];
+    for (json, field) in cases {
+        let text = json.to_string();
+        assert_eq!(
+            run(json, &vars, &machine),
+            Err(ConditionError::EmptyText {
+                field,
+                template: Template::new("%Empty%"),
+            }),
+            "{text}"
+        );
+    }
+    assert_eq!(machine.asked(), Vec::<String>::new());
+}
+
+/// MDT's empty query check jumps straight to the WMI evaluator's exit, so the
+/// ignore-query-failure flag does not cover it (`TsCore!0x1801aa872`,
+/// `TsCore!0x1801aae22` to `TsCore!0x1801aae46`). A query that substitutes to
+/// empty text fails to evaluate whatever `ignore_failure` says.
+#[test]
+fn mdt_wmi_an_empty_query_is_an_error_even_when_ignored() {
+    let machine = Machine::new();
+    let vars = vars_of(&[("Empty", "")]);
+    for ignore_failure in [false, true] {
+        let json = wmi(r"root\cimv2", "%Empty%", ignore_failure);
+        assert_eq!(
+            run(json, &vars, &machine),
+            Err(ConditionError::EmptyText {
+                field: TemplateField::WmiQuery,
+                template: Template::new("%Empty%"),
+            }),
+            "{ignore_failure}"
+        );
+    }
+    assert_eq!(machine.asked(), Vec::<String>::new());
+}
+
+/// The error for a path, key, or query that substitutes to empty text names
+/// the template as written and the field. `EmptyText` fires only when the
+/// substituted text is empty, so it can never hold a non-empty value. The test
+/// pins the whole error and its whole message, so neither can hold any text
+/// but the template as written and the field's name.
+#[test]
+fn an_empty_text_error_names_the_template_not_a_value() {
+    let vars = vars_of(&[("Blank", "")]);
+    let cases = [
+        (
+            file("%Blank%", None, None),
+            TemplateField::FilePath,
+            "a file path",
+        ),
+        (
+            folder("%Blank%", None),
+            TemplateField::FolderPath,
+            "a folder path",
+        ),
+        (
+            registry("%Blank%", None, json!("exists")),
+            TemplateField::RegistryKey,
+            "a registry key",
+        ),
+        (
+            wmi(r"root\cimv2", "%Blank%", true),
+            TemplateField::WmiQuery,
+            "a WMI query",
+        ),
+    ];
+    for (json, field, field_name) in cases {
+        let text = json.to_string();
+        let error = run(json, &vars, &Machine::new()).expect_err(&text);
+        assert_eq!(
+            error,
+            ConditionError::EmptyText {
+                field,
+                template: Template::new("%Blank%"),
+            },
+            "{text}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("`%Blank%` substitutes to empty text, and {field_name} must not be empty"),
+            "{text}"
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            format!("EmptyText {{ field: {field:?}, template: Template(\"%Blank%\") }}"),
+            "{text}"
+        );
+    }
+}
+
+/// MDT calls `trimLeft` on the expanded path (`TsCore!0x1801a2c01`,
+/// `TsCore!0x1801a3e78`), and `trimLeft` and `trimRight` on the expanded query
+/// right after `toUpper` (`TsCore!0x1801aa770`, `TsCore!0x1801aa77e`,
+/// `TsCore!0x1801aa78c`), before its empty checks
+/// (`TsCore!0x1801a2c77`, `TsCore!0x1801a3eb6`, `TsCore!0x1801aa872`). Both
+/// trims remove space, tab, CR, and LF
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`), so MDT
+/// fails a condition whose path or query is only a space. For a literal path
+/// or query, MDT's parser most likely trims the text to empty even before
+/// that, through MSXML's `text` property (inferred, #336). The agent does not
+/// trim, so a path or query of only a space is not empty. It reaches the
+/// probe as written, as `docs/architecture.md#conditions` says. That holds
+/// for a space that a variable's value gives too.
+#[test]
+fn difference_a_path_or_query_of_only_white_space_reaches_the_probe() {
+    let vars = vars_of(&[("Space", " ")]);
+    let cases = [
+        (file(" ", None, None), "file  "),
+        (file("%Space%", None, None), "file  "),
+        (folder(" ", None), "folder  "),
+        (folder("%Space%", None), "folder  "),
+        (wmi(r"root\cimv2", " ", false), r"wmi root\cimv2  "),
+        (wmi(r"root\cimv2", "%Space%", false), r"wmi root\cimv2  "),
+    ];
+    for (json, question) in cases {
+        let machine = Machine::new().wmi(" ", Ok(false));
+        let text = json.to_string();
+        assert!(!check(json, &vars, &machine), "{text}");
+        assert_eq!(machine.asked(), [question], "{text}");
+    }
+}
+
+/// A query of only a space reaches the probe, as the test above shows. When
+/// the probe fails it, `ignore_failure` covers that failure, so the condition
+/// is false. MDT fails the condition at its empty query check after its trims,
+/// whatever the ignore-query-failure flag says (`TsCore!0x1801aa770`,
+/// `TsCore!0x1801aa77e`, `TsCore!0x1801aa78c`, `TsCore!0x1801aa872`,
+/// `TsCore!0x1801aae22`).
+#[test]
+fn difference_wmi_a_failed_query_of_only_white_space_is_false_when_ignored() {
+    let machine = Machine::new().wmi(" ", Err(WmiError::Query(ProbeError::new(INVALID_QUERY))));
+    let json = wmi(r"root\cimv2", " ", true);
+
+    assert_eq!(run(json, &Vars::new(), &machine), Ok(false));
+    assert_eq!(machine.asked(), [r"wmi root\cimv2  "]);
+}
+
+/// MDT calls `trimLeft` on the expanded key (`TsCore!0x1801a73a5`), so a key
+/// of only a space is empty at its empty key check, which fails the condition
+/// (`TsCore!0x1801a747a`,
+/// `docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`). The agent
+/// does not trim the key, so the key is not empty. It fails to evaluate with
+/// `RegistryHive`, because it does not start with a full hive name. The
+/// outcome matches MDT, and the error differs, as
+/// `docs/architecture.md#conditions` says.
+#[test]
+fn mdt_registry_a_key_of_only_white_space_fails_to_evaluate() {
+    let machine = Machine::new().key(HKLM_CONTOSO);
+    let vars = vars_of(&[("Space", " ")]);
+    for key in [" ", "%Space%"] {
+        assert_eq!(
+            run(registry(key, None, json!("exists")), &vars, &machine),
+            Err(ConditionError::RegistryHive {
+                key: Template::new(key)
+            }),
+            "{key}"
+        );
+    }
+    assert_eq!(machine.asked(), Vec::<String>::new());
 }
 
 // Errors.

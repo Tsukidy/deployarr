@@ -29,6 +29,10 @@ This round is the review that [Branches and pull requests](../../AGENTS.md#branc
 | An owner answer that rewrites one sentence after the round | One reviewer reads that sentence against the answer. |
 | A research page with many new claims and citations | A few reviewers split the claims, and each opens the citations it checks. A skeptic checks each finding that changes a claim. |
 
+## Work that agents find
+
+A subagent or a workflow agent returns the work it finds outside its task to the session that started it, unless its prompt tells it to file that work itself. The session files each item that still holds on the latest `main`, that no open issue tracks, and that `.out-of-scope/` does not reject, as [Write tickets](agent-brief.md#write-tickets) says, before its final report. An item it files as a `needs-triage` issue needs no go-ahead from the owner. A new ticket on a wayfinder map and a question that blocks the session's own ticket follow Write tickets too, with the owner's approval where that section asks for it. The session tells each agent in its prompt to return such work, because the agent does not read this page.
+
 ## GitHub work in a cloud session
 
 When a cloud session gives work on issues or pull requests to a subagent or a workflow agent, it says in that agent's prompt to:
