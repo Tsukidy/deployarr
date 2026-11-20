@@ -1829,10 +1829,13 @@ fn mdt_wmi_a_namespace_that_cannot_open_is_an_error_even_when_ignored() {
 }
 
 /// MDT calls `CCM::Utility::String::toUpper` on the expanded WMI query before
-/// it runs it (`TsCore!0x1801aa380`). That this upper-cases the query is
-/// inferred, because the function is in `CcmCore.dll`. deployarr runs the
-/// query exactly as substitution leaves it, with its case and the spaces at
-/// either end kept, as `docs/architecture.md#conditions` says.
+/// it runs it (`TsCore!0x1801aa380`). `toUpper` passes the query to
+/// `CharUpperBuffW`
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`). Which
+/// characters that call upper-cases is inferred from Microsoft's
+/// documentation of `CharUpperBuffW`. deployarr runs the query exactly as
+/// substitution leaves it, with its case and the spaces at either end kept,
+/// as `docs/architecture.md#conditions` says.
 #[test]
 fn difference_wmi_runs_the_substituted_query_as_written() {
     let substituted = " select * from win32_battery where status = 'ok' ";
@@ -1882,11 +1885,11 @@ fn difference_wmi_namespace_is_not_substituted() {
 /// MDT therefore trims the namespace at both ends before it expands it is
 /// inferred from that page, because MSXML is outside the binary (#336). After
 /// it expands the namespace, MDT calls `CCM::Utility::String::trimLeft` on it
-/// (`TsCore!0x1801aa762`) and opens the result (`TsCore!0x1801aa941`). That
-/// this removes white space from the start of the namespace is inferred,
-/// because the function is in `CcmCore.dll`. The agent does not trim the
-/// namespace, so a namespace with a space at each end reaches the probe as
-/// written, as `docs/architecture.md#conditions` says.
+/// (`TsCore!0x1801aa762`) and opens the result (`TsCore!0x1801aa941`).
+/// `trimLeft` removes space, tab, CR, and LF from the start of the text
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`). The
+/// agent does not trim the namespace, so a namespace with a space at each end
+/// reaches the probe as written, as `docs/architecture.md#conditions` says.
 #[test]
 fn difference_wmi_namespace_is_not_trimmed() {
     let namespace = r" root\cimv2 ";
