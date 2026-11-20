@@ -70,6 +70,7 @@ Several agents can work in this repository at once. Each one delivers its work t
 - Do not commit to `main` directly. Work on your own branch, made from the latest `main`.
 - Open your pull request into `main` as a draft. Keep each pull request to one change. CI runs on drafts, and GitHub does not merge a draft.
 - Mark the pull request ready for review as your last step. Before that, run every review you planned and push its fixes, fill in the template for the final diff, and wait for CI to pass on the last commit. The owner reads ready for review as ready to merge.
+- Read [Reviews and agents](docs/agents/reviews-and-agents.md) before you plan a pull request review or start a subagent or a workflow agent.
 - To change a pull request after you mark it ready, convert it back to a draft first. Mark it ready again when you finish.
 - If your session ends before the work is done, leave the pull request as a draft and say in its body what remains.
 - Fill in the pull request template. Summary shows the change with the smallest view that makes it clear, such as a diff sketch, a tree, or pseudocode. Evidence shows a before and an after, such as a failing and then passing test. Merge danger says whether the change is a one-way or a two-way door, and names its blast radius. The template comes from the `pr` skill in mattpocock/skills.
