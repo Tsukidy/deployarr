@@ -59,7 +59,9 @@ SKIP_DIRS = {".git", "target", "node_modules"}
 # fits. For #263 the owner raised it to 14,500, so that the docs build line
 # fits beside the sentence that #283 changes. For the domain docs page, the
 # owner raised it to 14,600, so that its line in the Agent skills list fits.
-AGENT_FILES_BUDGET = 14600
+# For #359 the owner raised it to 14,750, so that the line in Branches and
+# pull requests that links the reviews and agents page fits.
+AGENT_FILES_BUDGET = 14750
 REQUIRED_AGENT_FILES = ("AGENTS.md", "CLAUDE.md")
 IMPORT_HOPS = 4
 # An @path import. A backslash before a space keeps the space in the path.
