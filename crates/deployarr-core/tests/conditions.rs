@@ -998,6 +998,53 @@ fn mdt_a_version_test_on_a_file_without_a_version_is_an_error() {
     );
 }
 
+/// MDT's condition parser reads each `<variable>` element, the path's
+/// included, through MSXML's `text` property when it parses the sequence
+/// (`TsCore!0x180165124`, called at `TsCore!0x18019a259`, with the `get_text`
+/// call at `TsCore!0x180165169`). Microsoft's page on the MSXML `text`
+/// property
+/// (<https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ms762687(v=vs.85)>)
+/// says that `text` "trims the whitespace on the edges of the result". That
+/// MDT therefore trims the path at both ends before it expands it is inferred
+/// from that page, because MSXML is outside the binary (#336). After it
+/// expands the path, MDT calls `CCM::Utility::String::trimLeft` on it, at
+/// `TsCore!0x1801a2c01` in the File evaluator and at `TsCore!0x1801a3e78` in
+/// the Folder evaluator. `trimLeft` removes space, tab, CR, and LF from the
+/// start of the text
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`). The
+/// agent trims neither, so a path with a space at each end reaches the probe
+/// as written, as `docs/architecture.md#conditions` says. A space that a
+/// variable's value puts at the start reaches the probe too, where MDT
+/// removes it.
+#[test]
+fn difference_file_and_folder_paths_are_not_trimmed() {
+    let machine = || {
+        Machine::new()
+            .file(r"C:\Windows\explorer.exe", None, "2026-01-01T00:00:00Z")
+            .folder(r"C:\Windows", "2026-01-01T00:00:00Z")
+    };
+    let vars = vars_of(&[("Drive", " C:")]);
+
+    let cases = [
+        (
+            file(r" C:\Windows\explorer.exe ", None, None),
+            r"file  C:\Windows\explorer.exe ",
+        ),
+        (folder(r" C:\Windows ", None), r"folder  C:\Windows "),
+        (
+            file(r"%Drive%\Windows\explorer.exe", None, None),
+            r"file  C:\Windows\explorer.exe",
+        ),
+        (folder(r"%Drive%\Windows", None), r"folder  C:\Windows"),
+    ];
+    for (json, question) in cases {
+        let machine = machine();
+        let text = json.to_string();
+        assert!(!check(json, &vars, &machine), "{text}");
+        assert_eq!(machine.asked(), [question], "{text}");
+    }
+}
+
 // Registry.
 
 /// "Registry conditions accept only full hive names" (`TsCore!0x1801a6bec`).
@@ -1040,6 +1087,48 @@ fn mdt_registry_keys_start_with_a_full_hive_name() {
             "{key}"
         );
     }
+}
+
+/// MDT's condition parser reads each `<variable>` element, the key's included,
+/// through MSXML's `text` property when it parses the sequence
+/// (`TsCore!0x180165124`, called at `TsCore!0x18019a259`, with the `get_text`
+/// call at `TsCore!0x180165169`). Microsoft's page on the MSXML `text`
+/// property
+/// (<https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ms762687(v=vs.85)>)
+/// says that `text` "trims the whitespace on the edges of the result". That
+/// MDT therefore trims the key at both ends before it expands it is inferred
+/// from that page, because MSXML is outside the binary (#336). After it
+/// expands the key, MDT calls `CCM::Utility::String::trimLeft` on it
+/// (`TsCore!0x1801a73a5`) and passes the result to its hive check
+/// (`TsCore!0x1801ab5c0`, called at `TsCore!0x1801a7787` to
+/// `TsCore!0x1801a779d`). `trimLeft` removes space, tab, CR, and LF from the
+/// start of the text
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`). So MDT
+/// reads a key with a space before its hive name. That MDT reads the key is
+/// inferred, because `CCM::Utility::RegKey::Open` is in `CcmCore.dll`. The
+/// agent trims neither, so such a key fails to evaluate with
+/// `ConditionError::RegistryHive` and the probe is asked nothing, as
+/// `docs/architecture.md#conditions` says. That holds for a space that a
+/// variable's value puts at the start too.
+#[test]
+fn difference_registry_key_is_not_trimmed() {
+    let machine = Machine::new().key(HKLM_CONTOSO);
+    let vars = vars_of(&[("Hive", " HKEY_LOCAL_MACHINE")]);
+
+    for key in [
+        r" HKEY_LOCAL_MACHINE\SOFTWARE\Contoso",
+        r"%Hive%\SOFTWARE\Contoso",
+    ] {
+        let error = run(registry(key, None, json!("exists")), &vars, &machine).unwrap_err();
+        assert_eq!(
+            error,
+            ConditionError::RegistryHive {
+                key: Template::new(key)
+            },
+            "{key}"
+        );
+    }
+    assert_eq!(machine.asked(), Vec::<String>::new());
 }
 
 /// A key with no value name tests whether the key exists
