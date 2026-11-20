@@ -2,6 +2,13 @@
 
 This page holds the rules for how a session runs pull request reviews, subagents, and workflow agents. [Branches and pull requests](../../AGENTS.md#branches-and-pull-requests) links it.
 
+## Cargo builds by agents that run at once
+
+A session never lets two agents that run at the same time share one cargo target folder, through one checkout or through one `CARGO_TARGET_DIR`. Neither `.cargo/config.toml` nor the `env` environment sets a target folder, so cargo builds into the `target` folder of the checkout it runs in. A shared folder lets one agent's test run pick up another agent's build, so local test results stop being reliable.
+
+- Each subagent or workflow agent that runs `cargo` while another agent may run it too sets its own `CARGO_TARGET_DIR` before its first `cargo` command. A folder in the session scratchpad, such as `cargo-target-issue-361` for the agent that works issue #361, is an example.
+- The session that starts such an agent names that folder in the agent's prompt, because the agent does not read this page.
+
 ## Pull request reviews
 
 These rules hold at every effort level, and with ultracode on.
