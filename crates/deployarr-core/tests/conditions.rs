@@ -1123,7 +1123,10 @@ fn difference_file_and_folder_paths_are_not_trimmed() {
 /// "Registry conditions accept only full hive names" (`TsCore!0x1801a6bec`).
 /// The four that MDT accepts are `HKEY_LOCAL_MACHINE`, `HKEY_CURRENT_USER`,
 /// `HKEY_CURRENT_CONFIG`, and `HKEY_USERS`, in any case and followed by `\`
-/// (`TsCore!0x1801ab5c0`). Another key fails to evaluate.
+/// (`TsCore!0x1801ab5c0`). Another key fails to evaluate. The parser rejects
+/// a key whose hive is fixed text and is not one of the four, so each bad
+/// hive comes from a `%VAR%` reference here, as
+/// `docs/architecture.md#conditions` says.
 #[test]
 fn mdt_registry_keys_start_with_a_full_hive_name() {
     let machine = Machine::new()
@@ -1144,14 +1147,21 @@ fn mdt_registry_keys_start_with_a_full_hive_name() {
         );
     }
 
+    let vars = vars_of(&[
+        ("Short", "HKLM"),
+        ("Classes", "HKEY_CLASSES_ROOT"),
+        ("Machine", "HKEY_LOCAL_MACHINE"),
+        ("Software", "SOFTWARE"),
+        ("Longer", "HKEY_LOCAL_MACHINE_X"),
+    ]);
     for key in [
-        r"HKLM\SOFTWARE\Contoso",
-        r"HKEY_CLASSES_ROOT\.txt",
-        "HKEY_LOCAL_MACHINE",
-        r"SOFTWARE\Contoso",
-        r"HKEY_LOCAL_MACHINE_X\SOFTWARE",
+        r"%Short%\SOFTWARE\Contoso",
+        r"%Classes%\.txt",
+        "%Machine%",
+        r"%Software%\Contoso",
+        r"%Longer%\SOFTWARE",
     ] {
-        let error = run(registry(key, None, json!("exists")), &Vars::new(), &machine).unwrap_err();
+        let error = run(registry(key, None, json!("exists")), &vars, &machine).unwrap_err();
         assert_eq!(
             error,
             ConditionError::RegistryHive {
@@ -1182,17 +1192,18 @@ fn mdt_registry_keys_start_with_a_full_hive_name() {
 /// inferred, because `CCM::Utility::RegKey::Open` is in `CcmCore.dll`. The
 /// agent trims neither, so such a key fails to evaluate with
 /// `ConditionError::RegistryHive` and the probe is asked nothing, as
-/// `docs/architecture.md#conditions` says. That holds for a space that a
-/// variable's value puts at the start too.
+/// `docs/architecture.md#conditions` says. The parser rejects such a key when
+/// the space is in the sequence, so the space comes from a variable's value
+/// here.
 #[test]
 fn difference_registry_key_is_not_trimmed() {
     let machine = Machine::new().key(HKLM_CONTOSO);
-    let vars = vars_of(&[("Hive", " HKEY_LOCAL_MACHINE")]);
+    let vars = vars_of(&[
+        ("Key", r" HKEY_LOCAL_MACHINE\SOFTWARE\Contoso"),
+        ("Hive", " HKEY_LOCAL_MACHINE"),
+    ]);
 
-    for key in [
-        r" HKEY_LOCAL_MACHINE\SOFTWARE\Contoso",
-        r"%Hive%\SOFTWARE\Contoso",
-    ] {
+    for key in ["%Key%", r"%Hive%\SOFTWARE\Contoso"] {
         let error = run(registry(key, None, json!("exists")), &vars, &machine).unwrap_err();
         assert_eq!(
             error,
@@ -2243,12 +2254,14 @@ fn difference_wmi_a_failed_query_of_only_white_space_is_false_when_ignored() {
 /// does not trim the key, so the key is not empty. It fails to evaluate with
 /// `RegistryHive`, because it does not start with a full hive name. The
 /// outcome matches MDT, and the error differs, as
-/// `docs/architecture.md#conditions` says.
+/// `docs/architecture.md#conditions` says. The parser rejects a key of only
+/// white space in the sequence, so the white space comes from a variable's
+/// value here.
 #[test]
 fn mdt_registry_a_key_of_only_white_space_fails_to_evaluate() {
     let machine = Machine::new().key(HKLM_CONTOSO);
-    let vars = vars_of(&[("Space", " ")]);
-    for key in [" ", "%Space%"] {
+    let vars = vars_of(&[("Space", " "), ("Spaces", " \t ")]);
+    for key in ["%Spaces%", "%Space%"] {
         assert_eq!(
             run(registry(key, None, json!("exists")), &vars, &machine),
             Err(ConditionError::RegistryHive {
@@ -2343,10 +2356,14 @@ fn errors_name_the_template_not_the_substituted_text() {
         SetSource::Prompt,
     )
     .unwrap();
+    // The parser rejects `HKLM\` as fixed text, so the short name comes from
+    // a variable.
+    vars.set(name("Hive"), "HKLM", Sensitivity::Plain, SetSource::Rule)
+        .unwrap();
     let machine = Machine::broken(ACCESS_DENIED);
     let cases = [
         file(r"C:\%Password%\x.txt", None, None),
-        registry(r"HKLM\%Password%", None, json!("exists")),
+        registry(r"%Hive%\%Password%", None, json!("exists")),
         registry(
             r"HKEY_LOCAL_MACHINE\%Password%",
             Some("Stage"),
