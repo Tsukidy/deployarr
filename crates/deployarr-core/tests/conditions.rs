@@ -1013,7 +1013,8 @@ fn mdt_a_version_test_on_a_file_without_a_version_is_an_error() {
 /// (<https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ms762687(v=vs.85)>)
 /// says that `text` "trims the whitespace on the edges of the result". That
 /// MDT therefore trims the path at both ends before it expands it is inferred
-/// from that page, because MSXML is outside the binary (#336). After it
+/// from that page, because MSXML is outside the binary
+/// (`docs/research/mdt-8450-binaries.md#conditions`). After it
 /// expands the path, MDT calls `CCM::Utility::String::trimLeft` on it, at
 /// `TsCore!0x1801a2c01` in the File evaluator and at `TsCore!0x1801a3e78` in
 /// the Folder evaluator. `trimLeft` removes space, tab, CR, and LF from the
@@ -1104,7 +1105,8 @@ fn mdt_registry_keys_start_with_a_full_hive_name() {
 /// (<https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ms762687(v=vs.85)>)
 /// says that `text` "trims the whitespace on the edges of the result". That
 /// MDT therefore trims the key at both ends before it expands it is inferred
-/// from that page, because MSXML is outside the binary (#336). After it
+/// from that page, because MSXML is outside the binary
+/// (`docs/research/mdt-8450-binaries.md#conditions`). After it
 /// expands the key, MDT calls `CCM::Utility::String::trimLeft` on it
 /// (`TsCore!0x1801a73a5`) and passes the result to its hive check
 /// (`TsCore!0x1801ab5c0`, called at `TsCore!0x1801a7787` to
@@ -1532,7 +1534,8 @@ fn difference_registry_like_matches_wildcards() {
 /// MSXML's `text` property when it parses the sequence (`TsCore!0x180165124`,
 /// called at `TsCore!0x18019a259`), and Microsoft documents that `text` trims
 /// white space at both ends. That this trims literal data for every value type
-/// is inferred from that page, because MSXML is outside the binary (#336). On
+/// is inferred from Microsoft's documentation, because MSXML is outside the
+/// binary (`docs/research/mdt-8450-binaries.md#conditions`). On
 /// its `REG_DWORD` path, MDT's evaluator also calls `trimLeft` and `trimRight`
 /// on the expanded data (`TsCore!0x1801a8303`, `TsCore!0x1801a8311`). That
 /// this trim matters only for white space that `%VAR%` expansion adds is
@@ -1558,7 +1561,8 @@ fn difference_registry_data_is_not_trimmed() {
 /// MSXML's `text` property when it parses the sequence (`TsCore!0x180165124`,
 /// called at `TsCore!0x18019a259`), and Microsoft documents that `text` trims
 /// white space at both ends. That MDT therefore trims both texts at both ends
-/// is inferred from that page, because MSXML is outside the binary (#336).
+/// is inferred from Microsoft's documentation, because MSXML is outside the
+/// binary (`docs/research/mdt-8450-binaries.md#conditions`).
 /// Neither evaluator trims them again. The Registry evaluator expands the value
 /// name at `TsCore!0x1801a71d8` and gives the result no trim call, and the
 /// Variable evaluator (`TsCore!0x1801a96c0`) trims only the operator. So MDT
@@ -1935,7 +1939,8 @@ fn difference_wmi_namespace_is_not_substituted() {
 /// (<https://learn.microsoft.com/en-us/previous-versions/windows/desktop/ms762687(v=vs.85)>)
 /// says that `text` "trims the whitespace on the edges of the result". That
 /// MDT therefore trims the namespace at both ends before it expands it is
-/// inferred from that page, because MSXML is outside the binary (#336). After
+/// inferred from that page, because MSXML is outside the binary
+/// (`docs/research/mdt-8450-binaries.md#conditions`). After
 /// it expands the namespace, MDT calls `CCM::Utility::String::trimLeft` on it
 /// (`TsCore!0x1801aa762`) and opens the result (`TsCore!0x1801aa941`).
 /// `trimLeft` removes space, tab, CR, and LF from the start of the text
@@ -2099,7 +2104,8 @@ fn an_empty_text_error_names_the_template_not_a_value() {
 /// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`), so MDT
 /// fails a condition whose path or query is only a space. For a literal path
 /// or query, MDT's parser most likely trims the text to empty even before
-/// that, through MSXML's `text` property (inferred, #336). The agent does not
+/// that, through MSXML's `text` property (inferred,
+/// `docs/research/mdt-8450-binaries.md#conditions`). The agent does not
 /// trim, so a path or query of only a space is not empty. It reaches the
 /// probe as written, as `docs/architecture.md#conditions` says. That holds
 /// for a space that a variable's value gives too.
