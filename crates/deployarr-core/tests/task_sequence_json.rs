@@ -1328,7 +1328,7 @@ const KEYS_WITH_A_BAD_FIXED_HIVE: [&str; 7] = [
 ];
 
 /// The message of [`RegKeyError::Hive`].
-const BAD_HIVE: &str = "a registry key must start with `HKEY_LOCAL_MACHINE\\`, `HKEY_CURRENT_USER\\`, `HKEY_CURRENT_CONFIG\\`, or `HKEY_USERS\\`, unless a `%` comes before its first `\\`";
+const BAD_HIVE: &str = "a registry key must start with `HKEY_LOCAL_MACHINE\\`, `HKEY_CURRENT_USER\\`, `HKEY_CURRENT_CONFIG\\`, or `HKEY_USERS\\`, unless a `%` comes before its first `\\`, or it has a `%` and no `\\`";
 
 #[test]
 fn a_key_whose_fixed_hive_is_not_a_full_hive_name_fails_at_its_field() {
@@ -1361,8 +1361,9 @@ fn an_empty_key_fails_with_the_empty_key_error_not_the_hive_error() {
 }
 
 /// A full hive name in any ASCII case, a key with an empty path, and a key
-/// whose hive comes from a `%VAR%` reference parse. The agent checks the hive
-/// of the last two after substitution.
+/// whose hive comes from a `%VAR%` reference parse, even with white space
+/// before the `%`. The agent checks the hive of the last three after
+/// substitution.
 #[test]
 fn a_key_with_a_full_hive_name_or_a_percent_before_its_hive_ends_parses() {
     for key in [
@@ -1370,6 +1371,7 @@ fn a_key_with_a_full_hive_name_or_a_percent_before_its_hive_ends_parses() {
         r"HKEY_USERS\",
         r"HKEY_LOCAL_MACHINE\%Sub%",
         r"%Root%\SOFTWARE",
+        r" %Root%\SOFTWARE",
         "%Key%",
     ] {
         let document = sequence_with_condition(json!({

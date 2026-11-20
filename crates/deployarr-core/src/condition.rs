@@ -242,7 +242,7 @@ impl fmt::Display for RegKeyError {
         f.write_str(match self {
             Self::Empty => "a registry key must not be empty",
             Self::Hive => {
-                "a registry key must start with `HKEY_LOCAL_MACHINE\\`, `HKEY_CURRENT_USER\\`, `HKEY_CURRENT_CONFIG\\`, or `HKEY_USERS\\`, unless a `%` comes before its first `\\`"
+                "a registry key must start with `HKEY_LOCAL_MACHINE\\`, `HKEY_CURRENT_USER\\`, `HKEY_CURRENT_CONFIG\\`, or `HKEY_USERS\\`, unless a `%` comes before its first `\\`, or it has a `%` and no `\\`"
             }
         })
     }
@@ -307,8 +307,8 @@ impl RegistryCondition {
     }
 
     /// The key, such as `HKEY_LOCAL_MACHINE\SOFTWARE\Contoso`. It is a
-    /// template. When a `%` comes before its first `\`, its hive is known
-    /// only after substitution.
+    /// template. When a `%` comes before its first `\`, or it has a `%` and
+    /// no `\`, its hive is known only after substitution.
     pub fn key(&self) -> &RegKeyTemplate {
         &self.key
     }
