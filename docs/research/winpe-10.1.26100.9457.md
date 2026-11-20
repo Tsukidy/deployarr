@@ -1,6 +1,6 @@
 # WinPE add-on 10.1.26100.9457 reference
 
-This page records which DLLs and API sets base WinPE x64 provides. The source is the Windows PE add-on for the Windows ADK 10.1.26100.9457. `deployarr-agent` runs in base WinPE, so a module it imports must match a name in [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) by the rule in [The list file](#the-list-file). The CI check reads that file. Use this page when you add an import to the agent. The page also records which letters `PathMatchSpecW` matches in any case in this image, in [PathMatchSpecW letter case](#pathmatchspecw-letter-case), and what it returns for an empty pattern, in [PathMatchSpecW with an empty pattern](#pathmatchspecw-with-an-empty-pattern).
+This page records which DLLs and API sets base WinPE x64 provides. The source is the Windows PE add-on for the Windows ADK 10.1.26100.9457. `deployarr-agent` runs in base WinPE, so a module it imports must match a name in [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) by the rule in [The list file](#the-list-file). The CI check reads that file. Use this page when you add an import to the agent. The page also records which letters `PathMatchSpecW` matches in any case in this image, in [PathMatchSpecW letter case](#pathmatchspecw-letter-case), what it returns for an empty pattern, in [PathMatchSpecW with an empty pattern](#pathmatchspecw-with-an-empty-pattern), and how it handles wildcards and `;`, in [PathMatchSpecW wildcard rules](#pathmatchspecw-wildcard-rules).
 
 ## Sources
 
@@ -127,7 +127,7 @@ The DLLs come from `Windows\System32` in the `winpe.wim` that [Sources](#sources
 
 ## PathMatchSpecW letter case
 
-MDT's Variable condition matches `Like` with `PathMatchSpecW`. It passes the variable's value as `pszFile` and the expanded Value as `pszSpec` (`TsCore!0x1801aa078`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). This section records which letters `PathMatchSpecW` in this image matches in any case. It covers letter case only, not the wildcard rules. For an empty pattern, see [PathMatchSpecW with an empty pattern](#pathmatchspecw-with-an-empty-pattern).
+MDT's Variable condition matches `Like` with `PathMatchSpecW`. It passes the variable's value as `pszFile` and the expanded Value as `pszSpec` (`TsCore!0x1801aa078`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). This section records which letters `PathMatchSpecW` in this image matches in any case. It covers letter case only, not the [wildcard rules](#pathmatchspecw-wildcard-rules). For an empty pattern, see [PathMatchSpecW with an empty pattern](#pathmatchspecw-with-an-empty-pattern).
 
 The image checked is the `winpe.wim` in [Sources](#sources), version 10.0.26100.1. Other Windows builds were not checked, and neither was a full Windows install.
 
@@ -254,6 +254,83 @@ So `abc` does not match the pattern `;`, but it does match an empty pattern.
 
 7-Zip 23.01 took `KernelBase.dll` from the WIM. GNU `objdump` 2.42 disassembled the code of both files. `rz-bin` 0.7.4 read the import table of `TsCore.dll`, whose slot `TsCore!0x1802b5a08` imports `PathMatchSpecW` from `SHLWAPI.dll`. `tools/re/winpe/reproduce.sh` does not repeat the disassembly.
 
+## PathMatchSpecW wildcard rules
+
+MDT's Variable condition passes the variable's value to `PathMatchSpecW` as `pszFile` and the expanded Value as `pszSpec`. It stores the return value as the result (`TsCore!0x1801aa078`, `TsCore!0x1801aa07e`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). This section records how `PathMatchSpecW` in this image handles `;`, spaces at the start of a pattern, `?`, `*`, and the end of the text. Letter case is in [PathMatchSpecW letter case](#pathmatchspecw-letter-case). An empty pattern, an empty part after the cut, and the pointers that MDT passes are in [PathMatchSpecW with an empty pattern](#pathmatchspecw-with-an-empty-pattern).
+
+The image checked is the `winpe.wim` in [Sources](#sources), version 10.0.26100.1. Other Windows builds were not checked, and neither was a full Windows install.
+
+The matcher `KernelBase!0x18001b890` keeps the text in `rbx`, the pattern in `rdi`, and the flags in `esi` (`KernelBase!0x18001b8a2` to `KernelBase!0x18001b8a8`). Each step below reads one UTF-16 unit.
+
+### The cut at each semicolon
+
+- `PathMatchSpecW` (`KernelBase!0x1800d4dd0`) walks its copy of the pattern to the next `;` or to the end (`KernelBase!0x1800d4e86` to `KernelBase!0x1800d4e95`). It writes a 0 over the `;` (`KernelBase!0x1800d4e9c`). It passes the part, the text, and flags 0 to the matcher (`KernelBase!0x1800d4ea4` to `KernelBase!0x1800d4eaa`).
+- When the part does not match and a `;` ended it, the function goes on with the unit after that `;` (`KernelBase!0x1800d4eb5` to `KernelBase!0x1800d4ebe`). It stops when a part matches or when the last part does not. It returns TRUE when the last part it tried matched (`KernelBase!0x1800d4eb1` to `KernelBase!0x1800d4eb3`, `KernelBase!0x1800d4ec8` to `KernelBase!0x1800d4eca`).
+- So a pattern with `;` matches when any one part matches. The walk compares each unit only with `;`, so the cut has no escape, and no part holds a `;`. A `;` in the text can therefore match only `?` or `*`. For example, the text `a;b` does not match the pattern `a;b`, because neither `a` nor `b` matches it.
+- An empty part matches only empty text, as [An empty part after the cut](#an-empty-part-after-the-cut) says.
+
+### Spaces at the start of a pattern
+
+- When bit `0x10000` of the flags is clear, the matcher skips every U+0020 at the start of the pattern (`KernelBase!0x18001b8b5` to `KernelBase!0x18001b8c0`, `KernelBase!0x18001ba60` to `KernelBase!0x18001ba6e`). It skips no other unit, such as a tab. `PathMatchSpecW` passes flags 0, so the matcher skips them at the start of every part. For example, the text `b` matches the pattern `a; b`.
+- The matcher calls itself after a `*` with the pattern one unit on (`KernelBase!0x18001baa9` to `KernelBase!0x18001bab3`). It calls itself after a `*.` with the pattern two units on (`KernelBase!0x18001bae8` to `KernelBase!0x18001baf2`). Each call passes the same flags, so spaces right after `*` or `*.` are skipped too. For example, the text `ab` matches the pattern `a* b`.
+- A space anywhere else in the pattern is compared like any other unit. So the text ` ab` does not match the pattern ` ab`. The matcher skips the pattern's space, and then compares the pattern's `a` with the text's space.
+- Microsoft's [`PathMatchSpecExW`](https://learn.microsoft.com/en-us/windows/win32/api/shlwapi/nf-shlwapi-pathmatchspecexw) page lists `PMSF_DONT_STRIP_SPACES` as `0x00010000`. It says "If PMSF_NORMAL is used, don't ignore leading spaces in the string pointed to by pszSpec." That the matcher's bit `0x10000` is this flag is inferred from the value and the behavior, because this page does not trace `PathMatchSpecExW`.
+
+### A question mark takes one UTF-16 unit
+
+- When the text unit is not 0 and the pattern unit is `?`, the matcher moves both on by one unit, 2 bytes (`KernelBase!0x18001b930` to `KernelBase!0x18001b933`, `KernelBase!0x18001ba08` to `KernelBase!0x18001ba10`).
+- A character above U+FFFF is two units in UTF-16. So the text `A` followed by U+10400 does not match the pattern `a?`, and it does match `a??`.
+
+### The end of the text
+
+When the text unit is 0 (`KernelBase!0x18001b8cf` to `KernelBase!0x18001b8d2`), the matcher reads the rest of the pattern:
+
+- An empty rest returns TRUE (`KernelBase!0x18001b8d4` to `KernelBase!0x18001b8d7`).
+- A rest that starts with a unit other than `*` or `?` returns FALSE (`KernelBase!0x18001b8dd` to `KernelBase!0x18001b8e0`, `KernelBase!0x18001ba87` to `KernelBase!0x18001ba90`).
+- After that `*` or `?`, the end of the pattern returns TRUE (`KernelBase!0x18001b8e6` to `KernelBase!0x18001b8ed`). Any unit other than `.` returns FALSE (`KernelBase!0x18001b8f3` to `KernelBase!0x18001b8f7`).
+- After the `.`, the matcher needs `*` or `?` (`KernelBase!0x18001b8f9` to `KernelBase!0x18001b901`, `KernelBase!0x18001bb0d` to `KernelBase!0x18001bb17`), and then the end of the pattern (`KernelBase!0x18001b907` to `KernelBase!0x18001b90c`). Anything else returns FALSE.
+
+So once the text is used up, the rest of the pattern matches only when it is empty, `*`, `?`, `*.*`, `*.?`, `?.*`, or `?.?`. A `?` can therefore match no unit at the end of the text. The text `ab` matches the pattern `ab?`, and empty text matches `?`. Any other rest fails, `**` and `??` included. So `a` does not match `a**`, and empty text does not match `**`.
+
+### A star before the end of the text
+
+When the text unit is not 0 and the pattern unit is `*` (`KernelBase!0x18001b939` to `KernelBase!0x18001b93c`), the matcher reads the next pattern unit:
+
+- A `*` that ends the pattern returns TRUE (`KernelBase!0x18001ba46` to `KernelBase!0x18001ba4f`).
+- A `*.*` that ends the pattern returns TRUE without reading the text (`KernelBase!0x18001ba95` to `KernelBase!0x18001ba99`, `KernelBase!0x18001bac6` to `KernelBase!0x18001bacb`, `KernelBase!0x18001bb00` to `KernelBase!0x18001bb05`). So the text `ab` matches the pattern `*.*`, though it holds no `.`.
+- Any other `*.`, one that ends the pattern included, walks the text. After each `.` in the text, it matches the text after that `.` against the pattern after the `*.` (`KernelBase!0x18001bad0` to `KernelBase!0x18001bafb`). It returns TRUE at the first match, and FALSE at the end of the text. So `a.b.c` matches `*.c`. And `a.` matches `*.?`, because the rest `?` then meets the end of the text.
+- Any other `*` matches the pattern after the `*` against the text from each unit on, starting at the current one (`KernelBase!0x18001baa0` to `KernelBase!0x18001bac4`). It returns TRUE at the first match. It returns FALSE when it reaches the end of the text, without trying the rest of the pattern there (`KernelBase!0x18001baa0` to `KernelBase!0x18001baa3`). So a pattern whose rest after a `*` is only spaces, such as `a* `, never matches. The call after the `*` skips the spaces and leaves an empty pattern, which matches only empty text. The loop never makes that call at the end of the text, and the end of the text rejects `*` followed by a space.
+
+### Example pairs
+
+The MDT column follows the steps above. The deployarr column is what `like` in `crates/deployarr-core/src/evaluate.rs` returns on `main` at commit `56a1b0f`. A text or pattern in code font keeps its spaces, so ` ab` starts with a space and `a ` ends with one.
+
+| Text (`pszFile`) | Pattern (`pszSpec`) | MDT | deployarr | Step |
+| --- | --- | --- | --- | --- |
+| `A` and U+10400 | `a?` | FALSE | TRUE | [`?`](#a-question-mark-takes-one-utf-16-unit) |
+| `A` and U+10400 | `a??` | TRUE | FALSE | [`?`](#a-question-mark-takes-one-utf-16-unit) |
+| `ab` | `ab?` | TRUE | FALSE | [End of the text](#the-end-of-the-text) |
+| empty | `?` | TRUE | FALSE | [End of the text](#the-end-of-the-text) |
+| `ab` | `ab??` | FALSE | FALSE | [End of the text](#the-end-of-the-text) |
+| `a` | `a**` | FALSE | TRUE | [End of the text](#the-end-of-the-text) |
+| empty | `**` | FALSE | TRUE | [End of the text](#the-end-of-the-text) |
+| empty | `?.?` | TRUE | FALSE | [End of the text](#the-end-of-the-text) |
+| `a.` | `*.?` | TRUE | FALSE | [`*.`](#a-star-before-the-end-of-the-text) and [end of the text](#the-end-of-the-text) |
+| `a.b` | `*.*` | TRUE | TRUE | [`*.*`](#a-star-before-the-end-of-the-text) |
+| `ab` | `*.*` | TRUE | FALSE | [`*.*`](#a-star-before-the-end-of-the-text) |
+| `a.b.c` | `*.c` | TRUE | TRUE | [`*.`](#a-star-before-the-end-of-the-text) |
+| `ab` | `a* b` | TRUE | FALSE | [Spaces](#spaces-at-the-start-of-a-pattern) |
+| ` ab` | ` ab` | FALSE | TRUE | [Spaces](#spaces-at-the-start-of-a-pattern) |
+| `a ` | `a* ` | FALSE | TRUE | [Spaces](#spaces-at-the-start-of-a-pattern) |
+| `b` | `a; b` | TRUE | FALSE | [Cut](#the-cut-at-each-semicolon) and [spaces](#spaces-at-the-start-of-a-pattern) |
+| `b` | `a;b` | TRUE | FALSE | [Cut](#the-cut-at-each-semicolon) |
+| `a;b` | `a;b` | FALSE | TRUE | [Cut](#the-cut-at-each-semicolon) |
+| `abc` | `;` | FALSE | FALSE | [Cut](#the-cut-at-each-semicolon) and [an empty part](#an-empty-part-after-the-cut) |
+
+### Files and tools for the wildcard rules
+
+`KernelBase.dll` comes from the `winpe.wim` in [Sources](#sources), with the SHA-256 that the table in [Exports with code and forwarders](#exports-with-code-and-forwarders) gives. GNU `objdump` 2.42 disassembled `KernelBase!0x1800d4dd0` to `KernelBase!0x1800d4ef0` and `KernelBase!0x18001b890` to `KernelBase!0x18001bb17`. A Python model of `PathMatchSpecW` and the matcher, written from that listing, gave the same MDT column. A scratch test in a copy of `main` at commit `56a1b0f`, built with Rust 1.99.1, gave the deployarr column. Neither is in the repository, and `tools/re/winpe/reproduce.sh` does not repeat the disassembly.
+
 ## What changes in deployarr
 
 1. The [Agent](../architecture.md#agent) section says it is not yet checked whether base WinPE includes `tbs.dll`. It does not. Replace that sentence with this result, and drop the `tbs.dll` half of the M3 check in the [roadmap](../roadmap.md#m3-bare-metal-deployment-from-boot-media).
@@ -276,3 +353,29 @@ So `abc` does not match the pattern `;`, but it does match an empty pattern.
    - Keep the rule. Name it in Conditions as a departure from MDT, and add a `difference_` test for it in `crates/deployarr-core/tests/conditions.rs`.
 12. The MDT importer rule from [#340](https://github.com/Tsukidy/deployarr/issues/340#issuecomment-7015289761) for a Variable Like with an empty `Value` sets `enabled` to false on the node, and its note says that MDT's result is not recorded. Four texts in [Conditions](../architecture.md#conditions) rest on that and become stale: the rule text "No known deployarr test gives MDT's result", the note text "For a Variable Like, the note also says that MDT's result for an empty Like pattern is not recorded", the reason "MDT's result for a Variable Like with an empty pattern is not recorded, so these rules name no stand-in for it", and the departure "For a Variable Like, MDT may run the step or group on some PCs, because its result is not recorded". Whether the rule itself changes is the owner's call. For example, MDT's result now matches a condition that is always true, such as a `Var` `Like` with the pattern `*`, which `like` makes true for any scalar or unset variable (`crates/deployarr-core/src/evaluate.rs`, `var` and `like`).
 13. The [Conditions](mdt-8450-binaries.md#conditions) table row in `docs/research/mdt-8450-binaries.md` that starts "MDT reports a Variable comparison against an empty Value as an error" ends with "For Like, the note also says that MDT's result for an empty pattern is not recorded." Change that row to follow whatever the owner decides in item 12.
+14. `like` in `crates/deployarr-core/src/evaluate.rs` treats `;` as a character that matches only itself. `PathMatchSpecW` cuts the pattern at each `;` and matches when any part matches. So the text `b` matches the pattern `a;b` in MDT and not in deployarr, and the text `a;b` matches the pattern `a;b` in deployarr and not in MDT. See [The cut at each semicolon](#the-cut-at-each-semicolon) and [Example pairs](#example-pairs). Choose one of these:
+    - `Like` follows the cut.
+    - Keep the rule. Name it in [Conditions](../architecture.md#conditions) as a departure from MDT, and add a `difference_` test for it in `crates/deployarr-core/tests/conditions.rs`.
+
+    `Registry` `Like` calls the same `like` (`difference_registry_like_matches_wildcards`), so either choice reaches it too.
+15. `like` in `crates/deployarr-core/src/evaluate.rs` compares a space like any other character. `PathMatchSpecW` skips U+0020 at the start of each part, and right after each `*` or `*.`. So the text `ab` matches the pattern `a* b` in MDT and not in deployarr. The text ` ab` matches the pattern ` ab`, and the text `a ` matches the pattern `a* `, in deployarr and not in MDT. See [Spaces at the start of a pattern](#spaces-at-the-start-of-a-pattern) and [Example pairs](#example-pairs). Choose one of these:
+    - `Like` skips the spaces as `PathMatchSpecW` does.
+    - Keep the rule. Name it in [Conditions](../architecture.md#conditions) as a departure from MDT, and add a `difference_` test for it in `crates/deployarr-core/tests/conditions.rs`.
+
+    `Registry` `Like` calls the same `like` (`difference_registry_like_matches_wildcards`), so either choice reaches it too.
+16. `like` in `crates/deployarr-core/src/evaluate.rs` works on `char` values, so its `?` takes a whole character above U+FFFF. `PathMatchSpecW`'s `?` takes one UTF-16 unit, half of such a character. So the text `A` followed by U+10400 matches the pattern `a?` in deployarr, and the pattern `a??` in MDT. See [A question mark takes one UTF-16 unit](#a-question-mark-takes-one-utf-16-unit) and [Example pairs](#example-pairs). Choose one of these:
+    - `Like` follows the step. Its `?` then takes one UTF-16 unit. Item 9 says that this page does not record how `PathMatchSpecW` matches the letter case of a character above U+FFFF.
+    - Keep the rule. Name it in [Conditions](../architecture.md#conditions) as a departure from MDT, and add a `difference_` test for it in `crates/deployarr-core/tests/conditions.rs`.
+
+    `Registry` `Like` calls the same `like` (`difference_registry_like_matches_wildcards`), so either choice reaches it too.
+17. At the end of the text, `like` in `crates/deployarr-core/src/evaluate.rs` matches the rest of the pattern only when it holds only `*`. `PathMatchSpecW` matches it only when it is empty, `*`, `?`, `*.*`, `*.?`, `?.*`, or `?.?`. So in MDT and not in deployarr, a `?` can match nothing at the end. The text `ab` matches the pattern `ab?`, empty text matches `?` and `?.?`, and the text `a.` matches `*.?`. In deployarr and not in MDT, the text `a` matches the pattern `a**`, and empty text matches `**`. See [The end of the text](#the-end-of-the-text) and [Example pairs](#example-pairs). Choose one of these:
+    - `Like` follows the end of the text rule.
+    - Keep the rule. Name it in [Conditions](../architecture.md#conditions) as a departure from MDT, and add a `difference_` test for it in `crates/deployarr-core/tests/conditions.rs`.
+
+    `Registry` `Like` calls the same `like` (`difference_registry_like_matches_wildcards`), so either choice reaches it too.
+18. `like` in `crates/deployarr-core/src/evaluate.rs` matches the pattern `*.*` only when the text holds a `.`. `PathMatchSpecW` returns TRUE for a `*.*` that ends the pattern whatever the text. So the text `ab` matches the pattern `*.*` in MDT and not in deployarr. See [A star before the end of the text](#a-star-before-the-end-of-the-text) and [Example pairs](#example-pairs). The pairs show no other departure for `*.`, apart from the end of the text in item 17. Choose one of these:
+    - `Like` follows the `*.*` rule.
+    - Keep the rule. Name it in [Conditions](../architecture.md#conditions) as a departure from MDT, and add a `difference_` test for it in `crates/deployarr-core/tests/conditions.rs`.
+
+    `Registry` `Like` calls the same `like` (`difference_registry_like_matches_wildcards`), so either choice reaches it too.
+19. The test `mdt_var_like_matches_star_and_question_mark` in `crates/deployarr-core/tests/conditions.rs` holds the case `("", "?", false)` as MDT's result. By [The end of the text](#the-end-of-the-text), MDT gives TRUE for empty text and the pattern `?`. With the owner's choice for item 17, either change the case to `true`, or move it to a `difference_` test.
