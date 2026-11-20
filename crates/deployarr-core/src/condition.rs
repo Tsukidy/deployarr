@@ -38,7 +38,7 @@ pub enum Condition {
     },
     InstalledMsi(MsiProduct),
     Wmi {
-        namespace: String,
+        namespace: WmiNamespace,
         query: QueryTemplate,
         ignore_failure: bool,
     },
@@ -187,6 +187,35 @@ non_empty_template! {
     EmptyQueryError,
     "a WMI query must not be empty"
 }
+
+validated_string! {
+    /// The namespace that a `Wmi` condition opens, such as `root\cimv2`. It is
+    /// not empty. The agent opens it as written and never substitutes it. MDT
+    /// fails a condition whose namespace is empty after it expands and trims
+    /// it (`TsCore!0x1801aa7c6`).
+    #[derive(PartialEq, Eq, Hash)]
+    WmiNamespace, EmptyNamespaceError, check_namespace
+}
+
+fn check_namespace(text: &str) -> Result<(), EmptyNamespaceError> {
+    if text.is_empty() {
+        Err(EmptyNamespaceError)
+    } else {
+        Ok(())
+    }
+}
+
+/// The text of a [`WmiNamespace`] is empty.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmptyNamespaceError;
+
+impl fmt::Display for EmptyNamespaceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a WMI namespace must not be empty")
+    }
+}
+
+impl core::error::Error for EmptyNamespaceError {}
 
 /// A `Registry` condition: a key, the name of a value under it, the type that
 /// the value must have, and a test.
