@@ -1246,7 +1246,7 @@ fn mdt_registry_compares_dword_values_as_numbers() {
 /// MDT compares a `REG_SZ` value as text without regard to case, and a
 /// `REG_EXPAND_SZ` value after it expands it (`TsCore!0x1801a6bec`). The `var`
 /// rules do the same for text that is not an integer. Here the probe has
-/// expanded `%SystemRoot%\System32` already.
+/// expanded the `REG_EXPAND_SZ` value already.
 #[test]
 fn mdt_registry_compares_string_values_without_regard_to_case() {
     let machine = Machine::new()
@@ -1262,7 +1262,6 @@ fn mdt_registry_compares_string_values_without_regard_to_case() {
         ("Edition", json!({ "less": "Server" }), true),
         ("Edition", json!({ "greater": "enterprise" }), true),
         ("Path", json!({ "equals": r"c:\windows\system32" }), true),
-        ("Path", json!({ "equals": r"%SystemRoot%\System32" }), false),
     ];
     for (value, test, expected) in cases {
         let text = test.to_string();
@@ -1273,6 +1272,31 @@ fn mdt_registry_compares_string_values_without_regard_to_case() {
             "{value} {text}"
         );
     }
+}
+
+/// MDT expands a Registry condition's data when the condition runs
+/// (`TsCore!0x1801a7304`). Its expander passes the result through
+/// `ExpandEnvironmentStringsW`, so the process environment fills a name that
+/// no task sequence variable defines (`TsCore!0x18012cc00`). MDT also expands
+/// a `REG_EXPAND_SZ` value before it compares it (`TsCore!0x1801a6bec`). So on
+/// a PC whose `SystemRoot` is `C:\Windows`, MDT compares two equal texts and
+/// gives true. deployarr's registry data is not a `Template`, so the agent
+/// compares `%SystemRoot%\System32` as written and gives false, as
+/// `docs/architecture.md#conditions` says. An MDT importer disables a node
+/// whose comparison data holds `%` (#356).
+#[test]
+fn difference_registry_data_is_not_substituted() {
+    let machine = Machine::new().env("SystemRoot", r"C:\Windows").value(
+        HKLM_CONTOSO,
+        "Path",
+        RegValue::ExpandSz(r"C:\Windows\System32".into()),
+    );
+    let json = registry(
+        HKLM_CONTOSO,
+        Some("Path"),
+        json!({ "equals": r"%SystemRoot%\System32" }),
+    );
+    assert!(!check(json, &Vars::new(), &machine));
 }
 
 /// MDT fails one of the six comparisons against empty registry data when it
