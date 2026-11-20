@@ -330,7 +330,7 @@ tshark -r - -Y 'dhcp and eth.src == 52:54:00:41:00:21' -T fields -E separator=/t
 
 ## Not covered
 
-- Ubuntu 26.04's own machine types, `pc-i440fx-resolute` and `pc-q35-resolute`, also named `ubuntu` and `ubuntu-q35`. `-machine help` marks `pc-i440fx-resolute` as the default. No run used them.
+- Ubuntu 26.04's own machine types, `pc-i440fx-resolute` and `pc-q35-resolute`, also named `ubuntu` and `ubuntu-q35`. `-machine help` marks `pc-i440fx-resolute` as the default. No run on this page used them. [iPXE option 97 on Ubuntu 26.04's own machine types](ipxe-option-97-resolute.md) measures them.
 - The `fbbdc3926` ROM on QEMU 10.2.1's machine types, or on any machine type 9.0 or later.
 - `-machine pc,smbios-entry-point-type=32`, the lab's own setting. The [single-stage page](single-stage-chain.md#dhcp-1) records option 97 from it on the same versions.
 - A guest with no SMBIOS UUID, or with no SMBIOS entry point.
