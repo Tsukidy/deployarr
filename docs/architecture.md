@@ -201,7 +201,7 @@ The MDT importer reads MDT's `disable` and `runIn` attributes by these rules. Th
 - Each note names the node, the attribute, and what the importer did. It holds no values, as the notes above do.
 - These rules may depart from MDT in three places:
   - If MDT does not trim `disable` and `runIn`, text with white space around `true`, `WinPE`, or `FullOS` gives a different result than in MDT. Both readings are inferred, as the first item says.
-  - The `runIn` rule may read a letter case variant, such as `winpe`, as `Either` where MDT limits the step (inferred). The note shows each such step.
+  - The `runIn` rule may treat a letter case variant, such as `winpe`, as placing no limit where MDT limits the step (inferred). A step whose action allows all three values gets `Either`. A step whose action allows one value stays enabled, where MDT may fail it with `0x80070032`. The note shows each such step.
   - The importer disables a step whose `runIn` names the environment where its action cannot run. MDT runs such a step when its engine reaches it in the environment that its `runIn` names. No deployarr action runs it there, so deployarr never runs it until an admin fixes it and turns it back on.
 
 The condition types match what MDT's engine evaluates. MDT also has make, model, location, and computer conditions, which compare by substring, so a gateway of `10.0.0.1` also matches `10.0.0.10`. deployarr expresses those as `Var` conditions on gathered facts, which compare exactly.
