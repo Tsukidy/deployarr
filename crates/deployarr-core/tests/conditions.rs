@@ -427,6 +427,11 @@ fn mdt_var_compares_as_integers_when_both_sides_are_integers() {
 
 /// "Otherwise it compares strings without regard to case"
 /// (`TsCore!0x1801a96c0`). One side that is not an integer makes both text.
+/// MDT compares the text through `CCM::Utility::String::compare_no_case`
+/// (`TsCore!0x1801aa10a`), which calls `_wcsicmp` (`CcmCore!0x180085f08`).
+/// That `_wcsicmp` runs in the C locale, where only `A` to `Z` match `a` to
+/// `z`, is inferred from Microsoft's `_wcsicmp` page, so `Ä` does not match
+/// `ä` (`docs/architecture.md#conditions`).
 #[test]
 fn mdt_var_compares_other_text_without_regard_to_case() {
     let cases = [
@@ -434,7 +439,8 @@ fn mdt_var_compares_other_text_without_regard_to_case() {
         ("Contoso", "not_equals", "CONTOSO", false),
         ("apple", "less", "Banana", true),
         ("Zebra", "greater", "apple", true),
-        ("ÄRGER", "equals", "ärger", true),
+        ("X64", "equals", "x64", true),
+        ("ÄRGER", "equals", "ärger", false),
         // As text, "10" sorts before "9".
         ("10", "less", "9x", true),
         ("1.10", "less", "1.9", true),
@@ -1272,6 +1278,27 @@ fn mdt_registry_compares_string_values_without_regard_to_case() {
             expected,
             "{value} {text}"
         );
+    }
+}
+
+/// MDT compares `REG_SZ` and `REG_EXPAND_SZ` data through
+/// `CCM::Utility::String::compare_no_case` (`TsCore!0x1801a824d`), which calls
+/// `_wcsicmp` (`CcmCore!0x180085f08`). That `_wcsicmp` runs in the C locale,
+/// where only `A` to `Z` match `a` to `z`, is inferred from Microsoft's
+/// `_wcsicmp` page (`docs/architecture.md#conditions`). So `Ärger` matches
+/// `ÄRGER` written with the same `Ä`, and does not match `ärger`.
+#[test]
+fn mdt_registry_string_values_match_only_ascii_letters_in_any_case() {
+    let machine = Machine::new().value(HKLM_CONTOSO, "Mood", RegValue::Sz("Ärger".into()));
+    let cases = [
+        (json!({ "equals": "ärger" }), false),
+        (json!({ "equals": "ÄRGER" }), true),
+        (json!({ "not_equals": "ärger" }), true),
+    ];
+    for (test, expected) in cases {
+        let text = test.to_string();
+        let json = registry(HKLM_CONTOSO, Some("Mood"), test);
+        assert_eq!(check(json, &Vars::new(), &machine), expected, "{text}");
     }
 }
 
