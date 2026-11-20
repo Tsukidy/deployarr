@@ -1,6 +1,6 @@
 # WinPE add-on 10.1.26100.9457 reference
 
-This page records which DLLs and API sets base WinPE x64 provides. The source is the Windows PE add-on for the Windows ADK 10.1.26100.9457. `deployarr-agent` runs in base WinPE, so a module it imports must match a name in [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) by the rule in [The list file](#the-list-file). The CI check reads that file. Use this page when you add an import to the agent.
+This page records which DLLs and API sets base WinPE x64 provides. The source is the Windows PE add-on for the Windows ADK 10.1.26100.9457. `deployarr-agent` runs in base WinPE, so a module it imports must match a name in [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) by the rule in [The list file](#the-list-file). The CI check reads that file. Use this page when you add an import to the agent. The page also records which letters `PathMatchSpecW` matches in any case in this image, in [PathMatchSpecW letter case](#pathmatchspecw-letter-case).
 
 ## Sources
 
@@ -125,6 +125,95 @@ The DLLs come from `Windows\System32` in the `winpe.wim` that [Sources](#sources
 - The check covers module names only. A module that resolves can still lack a function. For example, an API set import whose last number is higher than the stored one resolves to a host that may lack the newer functions (inferred). A stricter check rejects such an import. The M3 lab covers functions.
 - The list covers the image as Microsoft ships it. A boot image built from another add-on, or serviced with a cumulative update, needs its own page and list.
 
+## PathMatchSpecW letter case
+
+MDT's Variable condition matches `Like` with `PathMatchSpecW`. It passes the variable's value as `pszFile` and the expanded Value as `pszSpec` (`TsCore!0x1801aa078`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). This section records which letters `PathMatchSpecW` in this image matches in any case. It covers letter case only, not the wildcard rules.
+
+The image checked is the `winpe.wim` in [Sources](#sources), version 10.0.26100.1. Other Windows builds were not checked, and neither was a full Windows install.
+
+### Where the function lives
+
+- `shlwapi.dll` exports `PathMatchSpecW` with code at `shlwapi!0x18000d4a0`. That code is a single jump through the import slot `shlwapi!0x180037330`, which imports `PathMatchSpecW` from `api-ms-win-core-shlwapi-legacy-l1-1-0.dll`.
+- The API set schema names `kernelbase.dll` as the default host of `api-ms-win-core-shlwapi-legacy-l1-1`. `tools/re/winpe/reproduce.sh` writes this row to `apisets.tsv`.
+- `KernelBase.dll` exports `PathMatchSpecW` with code at `KernelBase!0x1800d4dd0`. It copies the pattern, cuts the copy at each `;`, and passes each part with the text and a flags value of 0 to `KernelBase!0x18001b890` (`KernelBase!0x1800d4e8b`, `KernelBase!0x1800d4eaa`).
+- Microsoft's [`PathMatchSpecW`](https://learn.microsoft.com/en-us/windows/win32/api/shlwapi/nf-shlwapi-pathmatchspecw) page says nothing about letter case.
+
+### How the matcher compares one character
+
+- `KernelBase!0x18001b890` treats `?` and `*` in the pattern as wildcards (`KernelBase!0x18001b930`, `KernelBase!0x18001b939`). For any other pattern unit, it maps the pattern unit and the text unit through `LCMapStringEx`, one call each (`KernelBase!0x18001b97a`, `KernelBase!0x18001b9d1`). It compares the two results and fails the match when they differ (`KernelBase!0x18001b9de` to `KernelBase!0x18001b9e1`). The text and the pattern are UTF-16, so each step takes one UTF-16 unit.
+- Each call passes a null locale name, flags `0x200`, one unit as the source, and the same buffer, one unit long, as the destination (`KernelBase!0x18001b942` to `KernelBase!0x18001b975`, `KernelBase!0x18001b998` to `KernelBase!0x18001b9cc`). That `0x200` is `LCMAP_UPPERCASE` and a null name is `LOCALE_NAME_USER_DEFAULT` is inferred from the values in Wine's [`include/winnls.h`](https://github.com/wine-mirror/wine/blob/master/include/winnls.h), because this page does not analyze the Windows SDK header.
+- Microsoft's [`LCMapStringEx`](https://learn.microsoft.com/en-us/windows/win32/api/winnls/nf-winnls-lcmapstringex) page says that `LCMAP_LINGUISTIC_CASING` means "Use linguistic rules for casing, instead of file system rules (default)". The matcher does not set it.
+- So a pattern unit other than `?` and `*` matches a text unit when `LCMapStringEx` upper-cases both to the same unit. One more step can then require an exact match. See [A step for double-byte code pages](#a-step-for-double-byte-code-pages).
+
+### How LCMapStringEx upper-cases one unit
+
+With these arguments, `LCMapStringEx` (`KernelBase!0x18001a080`) can take a short path that maps each unit in a loop (`KernelBase!0x18001a48e` to `KernelBase!0x18001a4b4`, `KernelBase!0x18001b706` to `KernelBase!0x18001b746`):
+
+- `a` to `z` become `A` to `Z`.
+- Every other unit below U+00C0 stays as it is.
+- A unit from U+00C0 up goes through a three-level table `t`, as `unit + t[t[t[unit >> 8] + ((unit >> 4) & 0xf)] + (unit & 0xf)]`, with 16-bit wraparound. `t` is the pointer at `KernelBase!0x1803548f0`. When that pointer is null, the unit stays as it is.
+
+`LCMapStringEx` takes this path only when all of these hold:
+
+- Apart from `0x800` and `0x40000000`, the flags are `0x100` or `0x200` alone (`KernelBase!0x18001a10d`, `KernelBase!0x18001a167`, `KernelBase!0x18001a19b` to `KernelBase!0x18001a1a7`). The call passes no version information and no sort handle (`KernelBase!0x18001a175`, `KernelBase!0x18001a17e`).
+- The path reads the locale record at `KernelBase!0x180353228` (`KernelBase!0x18001a194`). With a null locale name, it skips a lookup by name (`KernelBase!0x18001a256` to `KernelBase!0x18001a25d`). A check at `KernelBase!0x18001a1bb` to `KernelBase!0x18001a1ca` XORs the record's field at `+4` with the 32-bit value at `KernelBase!0x18035322c`. On this path that value is the same field, so the check always passes.
+- The record's fields at `+0x10` and `+0x18` are null (`KernelBase!0x18001a1d6` to `KernelBase!0x18001a1de`, `KernelBase!0x18001a24f`). The code reads these two fields only when the record's first 32-bit value is at least `0x20` (`KernelBase!0x18001a1cc` to `KernelBase!0x18001a1d0`). Otherwise it reads the two 64-bit values at `KernelBase!0x180267248` instead, and both are zero in the file (`KernelBase!0x18001ae30` to `KernelBase!0x18001ae37`). The record's first 32-bit value is `0x20` in the file.
+- The source holds no unit from U+D800 to U+DFFF, unless the top byte of the record's field at `+4` is 1 (`KernelBase!0x18001a263` to `KernelBase!0x18001a2b4`).
+
+Otherwise `LCMapStringEx` calls `KernelBase!0x180017ff0` and then a function that the returned object points to, with flag `0x01000000` flipped (`KernelBase!0x18001a1e0` to `KernelBase!0x18001a243`). Wine's `winnls.h` names that flag `LCMAP_LINGUISTIC_CASING`. This page does not record that path, or which user locales take it. So the result for a lone surrogate unit, and for a user locale whose record fails the checks, is not recorded.
+
+### Where the case table comes from
+
+- `KernelBase!0x1800fa638` sets the pointers at `KernelBase!0x1803548f0` and `KernelBase!0x1803548f8` to null (`KernelBase!0x1800fa657`). When the byte at `KernelBase!0x180355a18` is zero and the 16-bit field at offset `0x350` of the PEB is not zero, it calls `NtGetNlsSectionPtr` with section type 14 (`KernelBase!0x1800fa649` to `KernelBase!0x1800fa687`). On success it stores the section's address plus 4 at `KernelBase!0x1803548f0`. It stores the address plus 4 plus twice the section's second 16-bit word at `KernelBase!0x1803548f8` (`KernelBase!0x1800fa697` to `KernelBase!0x1800fa6b3`).
+- Wine's [`include/winternl.h`](https://github.com/wine-mirror/wine/blob/master/include/winternl.h) names the 64-bit PEB's field at `0x350` `UseCaseMapping`. This page does not record what sets that field or the byte at `KernelBase!0x180355a18`. `KernelBase!0x1800fa49c` calls `KernelBase!0x1800fa638` (`KernelBase!0x1800fa4cc`). This page does not trace when that runs.
+- `ntoskrnl.exe` maps NLS section type 14 to the file `\SystemRoot\System32\l_intl.nls` (`ntoskrnl!0x1408ea70a` to `ntoskrnl!0x1408ea71b`, `ntoskrnl!0x1408ea85d`). It maps the same type to the section name `\NLS\NlsSectionCASE` (`ntoskrnl!0x1408ec2b9` to `ntoskrnl!0x1408ec2d0`). That `NtGetNlsSectionPtr` reaches these two functions, and that the section starts at the file's first byte, is inferred. This page did not trace the path from the system call, and the layout below fits that reading.
+- `Windows\System32\l_intl.nls` starts with the 16-bit words 1 and `0x9f1`. Read with the offsets above, the table at byte 4 maps `x` to `X`, `ä` to `Ä`, and `σ` to `Σ`. The table at byte `4 + 2 * 0x9f1` maps `X`, `Ä`, and `Σ` to `x`, `ä`, and `σ`.
+
+### What it matches
+
+A short Python reader applied the loop to every unit from U+0000 to U+FFFF, with the first table in `l_intl.nls`. This measurement assumes that `LCMapStringEx` takes the short path and that the table pointer is set.
+
+- The loop changes 973 units. 26 of them are `a` to `z`, and 947 are other units. The table maps `a` to `z` to `A` to `Z` and changes no other unit below U+00C0, so the loop gives the table's result for every unit. The reader also compared the loop with the table for every unit, and they agree.
+- Each upper case form maps to itself, and no two units map to the same other unit. So each changed unit matches its own upper case form in any case, which gives 973 pairs.
+- With the table pointer null, the loop changes only `a` to `z`. Then only `A` to `Z` match `a` to `z` in any case (`KernelBase!0x18001a493` to `KernelBase!0x18001a4a3`, `KernelBase!0x18001b717` to `KernelBase!0x18001b71a`).
+
+| Pair | Upper case of each unit | Match |
+| --- | --- | --- |
+| `X` (U+0058) with `x` (U+0078) | U+0058, U+0058 | Yes |
+| `Ä` (U+00C4) with `ä` (U+00E4) | U+00C4, U+00C4 | Yes |
+| `Σ` (U+03A3) with `σ` (U+03C3) | U+03A3, U+03A3 | Yes |
+| `Σ` (U+03A3) with `ς` (U+03C2) | U+03A3, U+03C2 | No |
+| `Ÿ` (U+0178) with `ÿ` (U+00FF) | U+0178, U+0178 | Yes |
+| `ẞ` (U+1E9E) with `ß` (U+00DF) | U+1E9E, U+00DF | No |
+| `I` (U+0049) with `ı` (U+0131) | U+0049, U+0131 | No |
+| `İ` (U+0130) with `i` (U+0069) | U+0130, U+0049 | No |
+| `K` (U+212A, Kelvin sign) with `k` (U+006B) | U+212A, U+004B | No |
+
+A [Rust](https://www.rust-lang.org/) 1.99.1 program read the same map and compared it with a rule that matches two characters when they are equal or when `char::to_lowercase` gives the same text for both. Over every character from U+0000 to U+FFFF except U+D800 to U+DFFF:
+
+- 973 pairs match under both rules.
+- 215 pairs match only under the `to_lowercase` rule. Examples are `K` and `k` with the Kelvin sign U+212A, `ω` with the ohm sign U+2126, `ß` with `ẞ`, the title case letters such as `ǅ` (U+01C5) with `ǆ` (U+01C6), Georgian Mkhedruli with Mtavruli, such as U+10D0 with U+1C90, and Cherokee capitals with Cherokee small letters, such as U+13A0 with U+AB70.
+- No pair matches only under the `l_intl.nls` map.
+- 947 pairs match under the `l_intl.nls` map but not when only `A` to `Z` match `a` to `z`.
+
+### A step for double-byte code pages
+
+After two units match, `KernelBase!0x18001b890` moves to the next unit when the 32-bit value at `KernelBase!0x18035321c` is `0xfde9` (`KernelBase!0x18001b9e7`). Otherwise it reads the pointer at `KernelBase!0x180354930`. When that pointer is null, it calls `KernelBase!0x180017dfc` with 2 and moves on (`KernelBase!0x18001ba70` to `KernelBase!0x18001ba82`). `KernelBase!0x180017dfc` jumps through the import slot at `KernelBase!0x180260a10`, which holds `ntdll!RtlSetLastWin32Error`. That this call sets the last error to 2 is inferred from that import's name. Otherwise it reads a table pointer at offset `0x30` of that structure. A null table moves on too. With a table, it looks up the low byte of the pattern unit as written. A zero entry moves on. A non-zero entry requires the text unit to equal the pattern unit exactly, and the next text unit to equal the next pattern unit exactly, and then moves past both (`KernelBase!0x18001b9f3` to `KernelBase!0x18001ba3a`). In that case the two units match only in the same letter case.
+
+That `0xfde9` is code page 65001 (UTF-8), and that the table marks the lead bytes of a double-byte ANSI code page, is inferred from the shape of the code. This page does not record what the structure and the table hold, which code page base WinPE uses, or which code pages give a non-zero entry.
+
+### Files and tools
+
+The files come from the `winpe.wim` in [Sources](#sources). `KernelBase.dll` is in the table in [Exports with code and forwarders](#exports-with-code-and-forwarders).
+
+| File | Bytes | SHA-256 |
+| --- | --- | --- |
+| `Windows\System32\shlwapi.dll` | 389,784 | `be1ed2d419ef9e0306b354be8900b4992a63fb60e395821b517174393632eb6b` |
+| `Windows\System32\l_intl.nls` | 9,926 | `f8e9574c1c2ee28c669e903f5faf86ac24476f692076340b23881b4d0c82112b` |
+| `Windows\System32\ntoskrnl.exe` | 12,543,280 | `1cc3b103b25333ee2b79363bb898832a93576befd2e3a29817bd34cf7a3a102b` |
+
+7-Zip 23.01 took the files from the WIM. `rz-bin` 0.7.4 read the export and import tables. `rizin` 0.7.4 and GNU `objdump` 2.42 disassembled the code. The Python reader and the Rust program are not in the repository, and the rerun script does not repeat these reads.
+
 ## What changes in deployarr
 
 1. The [Agent](../architecture.md#agent) section says it is not yet checked whether base WinPE includes `tbs.dll`. It does not. Replace that sentence with this result, and drop the `tbs.dll` half of the M3 check in the [roadmap](../roadmap.md#m3-bare-metal-deployment-from-boot-media).
@@ -136,3 +225,8 @@ The DLLs come from `Windows\System32` in the `winpe.wim` that [Sources](#sources
 5. [Directory join](../architecture.md#directory-join) says that base WinPE's list file holds `netapi32.dll`. Add that base WinPE's `netapi32.dll` forwards `DsRoleGetPrimaryDomainInformation` and `DsRoleFreeMemory` to `dsrole.dll`, and that the list file holds `dsrole.dll` too. Cite [Exports with code and forwarders](#exports-with-code-and-forwarders).
 6. [How the agent reaches BitLocker](../architecture.md#how-the-agent-reaches-bitlocker) names `CoCreateInstance` and says that the list file holds `ole32.dll`. Add that base WinPE's `ole32.dll` forwards `CoCreateInstance` to the API set `api-ms-win-core-com-l1-1-0`, whose default host is `combase.dll`, and that the API set and `combase.dll` both pass the list file's rule. Cite [Exports with code and forwarders](#exports-with-code-and-forwarders).
 7. [Windows Update](../architecture.md#windows-update) says that `ole32.dll` exports `CoCreateInstance`. In base WinPE, `ole32.dll` forwards it to `api-ms-win-core-com-l1-1-0`, whose default host is `combase.dll`. Say so, and cite [Exports with code and forwarders](#exports-with-code-and-forwarders).
+8. [Conditions](../architecture.md#conditions) says that the MDT 8450 binaries reference does not record which letters `PathMatchSpecW` matches in any case. Replace that with the result of [PathMatchSpecW letter case](#pathmatchspecw-letter-case) for this image, and cite MDT's call at `TsCore!0x1801aa078`. Say that the result rests on the short path of `LCMapStringEx` with the case table loaded, and that other Windows builds were not checked.
+9. [#402](https://github.com/Tsukidy/deployarr/issues/402) asks the owner to choose the case rule of `Like`. Give the owner what each choice means on this image, from [What it matches](#what-it-matches). The counts hold only when `LCMapStringEx` takes its short path with the `l_intl.nls` case table loaded. With the table pointer null, `PathMatchSpecW` matches only `A` to `Z` with `a` to `z`. This page does not record whether base WinPE loads the table.
+   - Keep folding by `char::to_lowercase`. `Like` then matches every pair that `PathMatchSpecW` matches here, and 215 more from U+0000 to U+FFFF, such as `k` with the Kelvin sign U+212A. `Like` compares `char` values, not UTF-16 units (`crates/deployarr-core/src/evaluate.rs`, `like` and `eq_ignore_case`). So `char::to_lowercase` also matches letters above U+FFFF, such as U+10400 with U+10428. This page does not record what `PathMatchSpecW` does with them. Conditions names that departure.
+   - Match only `A` to `Z` with `a` to `z`, as the rule from `Equals` to `GreaterEqual` does. With the table loaded, `Like` then misses 947 pairs that `PathMatchSpecW` matches here, such as `Ä` with `ä` and `Σ` with `σ`, and Conditions names that departure. With the table pointer null, this choice matches what `PathMatchSpecW` matches.
+   - Follow this image's case table. `deployarr-core` then carries the 973 changed units as data, and must still choose a rule for characters above U+FFFF and for the double-byte step, whose results this page does not record.
