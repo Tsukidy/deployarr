@@ -96,7 +96,9 @@ if [[ $firmware == uefi ]]; then
     )
 else
     args+=(
-        # With a 32-bit SMBIOS entry point, the iPXE ROM sends option 97.
+        # The lab's iPXE ROM, ipxe-qemu 969ce2c55, sends option 97 with or
+        # without this property. The older fbbdc3926 ROM, from Ubuntu 24.04,
+        # sends option 97 only with a 32-bit SMBIOS entry point (#56).
         -machine pc,smbios-entry-point-type=32
         -device "e1000,netdev=net0,mac=${VM_MAC[$name]},bootindex=1"
     )
