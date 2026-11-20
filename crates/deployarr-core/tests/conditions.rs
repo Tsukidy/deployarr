@@ -1386,6 +1386,31 @@ fn difference_registry_like_matches_wildcards() {
     }
 }
 
+/// MDT's condition parser reads the data's `<variable>` element through
+/// MSXML's `text` property when it parses the sequence (`TsCore!0x180165124`,
+/// called at `TsCore!0x18019a259`), and Microsoft documents that `text` trims
+/// white space at both ends. That this trims literal data for every value type
+/// is inferred from that page, because MSXML is outside the binary (#336). On
+/// its `REG_DWORD` path, MDT's evaluator also calls `trimLeft` and `trimRight`
+/// on the expanded data (`TsCore!0x1801a8303`, `TsCore!0x1801a8311`). That
+/// this trim matters only for white space that `%VAR%` expansion adds is
+/// inferred too, because the parse-time trim comes first. So MDT most likely
+/// finds ` 5` equal to a `REG_DWORD` value of 5 and a `REG_SZ` value `5`. The
+/// agent compares the data as written, as `docs/architecture.md#conditions`
+/// says, and an MDT importer trims the data instead (#328).
+#[test]
+fn difference_registry_data_is_not_trimmed() {
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Count", RegValue::Dword(5))
+        .value(HKLM_CONTOSO, "Label", RegValue::Sz("5".into()));
+    for value in ["Count", "Label"] {
+        let padded = registry(HKLM_CONTOSO, Some(value), json!({ "equals": " 5" }));
+        assert!(!check(padded, &Vars::new(), &machine), "{value}");
+        let trimmed = registry(HKLM_CONTOSO, Some(value), json!({ "equals": "5" }));
+        assert!(check(trimmed, &Vars::new(), &machine), "{value}");
+    }
+}
+
 // Registry value types.
 
 /// "On a mismatch the engine ... treats the value as missing, for every
