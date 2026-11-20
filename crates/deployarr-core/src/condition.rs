@@ -28,18 +28,18 @@ pub enum Condition {
     /// `REG_EXPAND_SZ` value.
     Registry(RegistryCondition),
     File {
-        path: Template,
+        path: PathTemplate,
         version: Option<Comparison<FileVersion>>,
         modified: Option<Comparison<Timestamp>>,
     },
     Folder {
-        path: Template,
+        path: PathTemplate,
         modified: Option<Comparison<Timestamp>>,
     },
     InstalledMsi(MsiProduct),
     Wmi {
         namespace: String,
-        query: Template,
+        query: QueryTemplate,
         ignore_failure: bool,
     },
 }
@@ -91,58 +91,102 @@ pub struct Comparison<T> {
     pub value: T,
 }
 
-/// The text that a `Var` condition compares against. It is a `Template` that
-/// is not empty, because `not_exists` is the test for an empty variable.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
-#[serde(try_from = "Template")]
-pub struct NonEmptyTemplate(Template);
+/// Defines a [`Template`] type that rejects empty text, and the error that
+/// empty text gives. The type is written as a JSON string, as a `Template` is.
+macro_rules! non_empty_template {
+    (
+        $(#[$meta:meta])*
+        $name:ident, $error:ident, $message:literal
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+        #[serde(try_from = "Template")]
+        pub struct $name(Template);
 
-impl NonEmptyTemplate {
-    pub fn as_template(&self) -> &Template {
-        &self.0
-    }
+        impl $name {
+            pub fn as_template(&self) -> &Template {
+                &self.0
+            }
 
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl TryFrom<Template> for NonEmptyTemplate {
-    type Error = EmptyTemplateError;
-
-    fn try_from(text: Template) -> Result<Self, Self::Error> {
-        if text.as_str().is_empty() {
-            Err(EmptyTemplateError)
-        } else {
-            Ok(Self(text))
+            pub fn as_str(&self) -> &str {
+                self.0.as_str()
+            }
         }
-    }
+
+        impl TryFrom<Template> for $name {
+            type Error = $error;
+
+            fn try_from(text: Template) -> Result<Self, Self::Error> {
+                if text.as_str().is_empty() {
+                    Err($error)
+                } else {
+                    Ok(Self(text))
+                }
+            }
+        }
+
+        impl From<$name> for Template {
+            fn from(text: $name) -> Self {
+                text.0
+            }
+        }
+
+        impl Serialize for $name {
+            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                self.0.serialize(serializer)
+            }
+        }
+
+        #[doc = concat!("The text of a [`", stringify!($name), "`] is empty.")]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub struct $error;
+
+        impl fmt::Display for $error {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str($message)
+            }
+        }
+
+        impl core::error::Error for $error {}
+    };
 }
 
-impl From<NonEmptyTemplate> for Template {
-    fn from(text: NonEmptyTemplate) -> Self {
-        text.0
-    }
+non_empty_template! {
+    /// The text that a `Var` condition compares against. It is a `Template`
+    /// that is not empty, because `not_exists` is the test for an empty
+    /// variable.
+    NonEmptyTemplate,
+    EmptyTemplateError,
+    "the text to compare against must not be empty. `not_exists` tests for an empty variable"
 }
 
-impl Serialize for NonEmptyTemplate {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.0.serialize(serializer)
-    }
+non_empty_template! {
+    /// The path that a `File` or `Folder` condition tests. It is a `Template`
+    /// that is not empty. MDT fails a condition whose path is empty after it
+    /// expands and trims it (`TsCore!0x1801a2c77`, `TsCore!0x1801a3eb6`).
+    PathTemplate,
+    EmptyPathError,
+    "a file or folder path must not be empty"
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EmptyTemplateError;
-
-impl fmt::Display for EmptyTemplateError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(
-            "the text to compare against must not be empty. `not_exists` tests for an empty variable",
-        )
-    }
+non_empty_template! {
+    /// The key that a `Registry` condition tests, such as
+    /// `HKEY_LOCAL_MACHINE\SOFTWARE\Contoso`. It is a `Template` that is not
+    /// empty. MDT fails a condition whose key is empty after it expands and
+    /// trims it (`TsCore!0x1801a747a`).
+    RegKeyTemplate,
+    EmptyRegKeyError,
+    "a registry key must not be empty"
 }
 
-impl core::error::Error for EmptyTemplateError {}
+non_empty_template! {
+    /// The query that a `Wmi` condition runs. It is a `Template` that is not
+    /// empty. MDT fails a condition whose query is empty after it expands and
+    /// trims it (`TsCore!0x1801aa872`).
+    QueryTemplate,
+    EmptyQueryError,
+    "a WMI query must not be empty"
+}
 
 /// A `Registry` condition: a key, the name of a value under it, the type that
 /// the value must have, and a test.
@@ -160,7 +204,7 @@ impl core::error::Error for EmptyTemplateError {}
 /// is left out or `null` names no type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RegistryCondition {
-    key: Template,
+    key: RegKeyTemplate,
     value: Option<RegValueName>,
     value_type: Option<RegType>,
     test: Test<RegData>,
@@ -170,7 +214,7 @@ impl RegistryCondition {
     /// Fails when `value` names no value and `test` takes data or
     /// `value_type` names a type.
     pub fn new(
-        key: Template,
+        key: RegKeyTemplate,
         value: Option<RegValueName>,
         value_type: Option<RegType>,
         test: Test<RegData>,
@@ -193,7 +237,7 @@ impl RegistryCondition {
 
     /// The key, such as `HKEY_LOCAL_MACHINE\SOFTWARE\Contoso`. It is a
     /// template, so its hive is known only after substitution.
-    pub fn key(&self) -> &Template {
+    pub fn key(&self) -> &RegKeyTemplate {
         &self.key
     }
 
@@ -273,7 +317,7 @@ impl<'de> Visitor<'de> for RegistryVisitor {
     }
 
     fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<RegistryCondition, A::Error> {
-        let mut key: Option<Template> = None;
+        let mut key: Option<RegKeyTemplate> = None;
         // `Some(None)` is a `value` or a `value_type` of `null`.
         let mut value: Option<Option<RegValueName>> = None;
         let mut value_type: Option<Option<RegType>> = None;

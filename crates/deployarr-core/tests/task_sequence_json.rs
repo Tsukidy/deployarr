@@ -8,8 +8,9 @@ use deployarr_core::action::{
     UpdateTimeouts, WsusUrl, WsusUrlError,
 };
 use deployarr_core::condition::{
-    Comparison, Condition, FileVersion, RegData, RegText, RegType, RegValueName, RegistryCondition,
-    RegistryConditionError, Test,
+    Comparison, Condition, EmptyPathError, EmptyQueryError, EmptyRegKeyError, FileVersion,
+    PathTemplate, QueryTemplate, RegData, RegKeyTemplate, RegText, RegType, RegValueName,
+    RegistryCondition, RegistryConditionError, Test,
 };
 use deployarr_core::sequence::{
     AuthoredSequence, DefaultVars, DefaultVarsError, Node, NodeMeta, ParseError, TaskSequenceId,
@@ -873,9 +874,15 @@ fn a_registry_key_test_needs_no_value_name() {
     }
 }
 
+/// The key that the registry tests in code use.
+fn deployarr_key() -> RegKeyTemplate {
+    RegKeyTemplate::try_from(Template::new(r"HKEY_LOCAL_MACHINE\SOFTWARE\Deployarr"))
+        .expect("a key that is not empty")
+}
+
 #[test]
 fn registry_conditions_built_in_code_cannot_compare_a_key() {
-    let key = Template::new(r"HKEY_LOCAL_MACHINE\SOFTWARE\Deployarr");
+    let key = deployarr_key();
     let pattern: RegText = "Pro*".parse().expect("text that is not empty");
     for test in [
         Test::Equals(RegData::Integer(1)),
@@ -916,7 +923,7 @@ const TYPE_WITHOUT_NAME: &str = "a registry value type needs a value name, becau
 
 #[test]
 fn registry_conditions_built_in_code_cannot_give_a_key_a_value_type() {
-    let key = Template::new(r"HKEY_LOCAL_MACHINE\SOFTWARE\Deployarr");
+    let key = deployarr_key();
     for test in [Test::Exists, Test::NotExists] {
         let error = RegistryCondition::new(key.clone(), None, Some(RegType::Sz), test)
             .expect_err("a value type without a value name");
@@ -939,7 +946,7 @@ fn registry_conditions_built_in_code_cannot_give_a_key_a_value_type() {
 /// `RegistryCondition::new` reports the comparison.
 #[test]
 fn registry_conditions_built_in_code_report_a_comparison_before_a_value_type() {
-    let key = Template::new(r"HKEY_LOCAL_MACHINE\SOFTWARE\Deployarr");
+    let key = deployarr_key();
     for test in [
         Test::Equals(RegData::Integer(1)),
         Test::Like(RegData::String("Pro*".parse().expect("text"))),
@@ -1230,6 +1237,76 @@ fn an_empty_all_or_any_fails() {
 
         assert_fails_at(&document, &format!("{STEP}.meta.condition.{path}"));
     }
+}
+
+/// MDT fails a condition whose path, key, or query is empty after it expands
+/// and trims it. The File check is at `TsCore!0x1801a2c77`, the Folder check
+/// at `TsCore!0x1801a3eb6`, the Registry check at `TsCore!0x1801a747a`, and
+/// the WMI check at `TsCore!0x1801aa872`. deployarr's parser rejects the empty
+/// text when the sequence is saved, as `docs/architecture.md#json-format`
+/// says.
+#[test]
+fn an_empty_path_key_or_query_fails_at_its_field() {
+    let cases = [
+        (
+            json!({ "file": { "path": "" } }),
+            "file.path",
+            "a file or folder path must not be empty",
+        ),
+        (
+            json!({ "folder": { "path": "" } }),
+            "folder.path",
+            "a file or folder path must not be empty",
+        ),
+        (
+            json!({ "registry": { "key": "", "test": "exists" } }),
+            "registry.key",
+            "a registry key must not be empty",
+        ),
+        (
+            json!({ "wmi": { "namespace": "root\\cimv2", "query": "", "ignore_failure": true } }),
+            "wmi.query",
+            "a WMI query must not be empty",
+        ),
+    ];
+
+    for (condition, path, message) in cases {
+        let document = sequence_with_condition(condition);
+
+        let error = assert_fails_at(&document, &format!("{STEP}.meta.condition.{path}"));
+        assert!(error.to_string().contains(message), "{path}: {error}");
+    }
+}
+
+/// The path, key, and query types reject empty text, so code that builds a
+/// sequence cannot hold an empty one. Each error names its field. Text of
+/// only white space is not empty.
+#[test]
+fn path_key_and_query_types_reject_empty_text() {
+    let empty = Template::new("");
+    assert_eq!(PathTemplate::try_from(empty.clone()), Err(EmptyPathError));
+    assert_eq!(
+        RegKeyTemplate::try_from(empty.clone()),
+        Err(EmptyRegKeyError)
+    );
+    assert_eq!(QueryTemplate::try_from(empty), Err(EmptyQueryError));
+    assert_eq!(
+        EmptyPathError.to_string(),
+        "a file or folder path must not be empty"
+    );
+    assert_eq!(
+        EmptyRegKeyError.to_string(),
+        "a registry key must not be empty"
+    );
+    assert_eq!(EmptyQueryError.to_string(), "a WMI query must not be empty");
+
+    let space = Template::new(" ");
+    let path = PathTemplate::try_from(space.clone()).expect("a space is not empty");
+    let key = RegKeyTemplate::try_from(space.clone()).expect("a space is not empty");
+    let query = QueryTemplate::try_from(space.clone()).expect("a space is not empty");
+    assert_eq!(path.as_template(), &space);
+    assert_eq!(key.as_str(), " ");
+    assert_eq!(Template::from(query), space);
 }
 
 #[test]

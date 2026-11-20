@@ -18,8 +18,8 @@ use core::fmt;
 use time::OffsetDateTime;
 
 use crate::condition::{
-    CompareOp, Comparison, Condition, FileVersion, MsiProduct, NonEmptyTemplate, RegData, RegType,
-    RegValueName, RegistryCondition, Test, Timestamp,
+    CompareOp, Comparison, Condition, FileVersion, MsiProduct, NonEmptyTemplate, PathTemplate,
+    RegData, RegType, RegValueName, RegistryCondition, Test, Timestamp,
 };
 use crate::store::{Value, Vars};
 use crate::substitution::SubstituteError;
@@ -30,7 +30,9 @@ use crate::variable::VarName;
 ///
 /// Every text argument has had its `%Name%` references substituted, so it can
 /// hold a secret value. An implementation must not write it to a log line or
-/// put it in an error.
+/// put it in an error. No path, key, or query that the evaluator passes is
+/// empty, because the evaluator fails a condition whose text substitutes to
+/// empty text before it asks.
 ///
 /// A missing file, folder, registry key, or registry value is an answer, not
 /// an error. A method returns `Err` only when it cannot tell, such as when
@@ -211,6 +213,31 @@ pub enum ProbeKind {
     WmiQuery,
 }
 
+/// A condition's text that must not substitute to empty text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TemplateField {
+    /// A `file` condition's path.
+    FilePath,
+    /// A `folder` condition's path.
+    FolderPath,
+    /// A `registry` condition's key.
+    RegistryKey,
+    /// A `wmi` condition's query.
+    WmiQuery,
+}
+
+impl TemplateField {
+    /// What the field is, such as `a file path`.
+    fn name(self) -> &'static str {
+        match self {
+            Self::FilePath => "a file path",
+            Self::FolderPath => "a folder path",
+            Self::RegistryKey => "a registry key",
+            Self::WmiQuery => "a WMI query",
+        }
+    }
+}
+
 /// Why a condition could not be evaluated. It is never false.
 ///
 /// No variant holds substituted text, so an error message cannot leak a
@@ -225,6 +252,16 @@ pub enum ConditionError {
     /// A `var` comparison's operand substitutes to empty text. MDT makes this
     /// an error too (`TsCore!0x1801a96c0`).
     EmptyOperand { template: Template },
+    /// A `file` or `folder` path, a `registry` key, or a `wmi` query
+    /// substitutes to empty text. MDT makes each an error before it asks the
+    /// machine (`TsCore!0x1801a2c77`, `TsCore!0x1801a3eb6`,
+    /// `TsCore!0x1801a747a`, `TsCore!0x1801aa872`). `ignore_failure` does not
+    /// cover it, because MDT's check skips the ignore-query-failure flag
+    /// (`TsCore!0x1801aae22`).
+    EmptyText {
+        field: TemplateField,
+        template: Template,
+    },
     /// A `var` comparison or `Like` test named a variable that holds a list.
     /// `Exists` and `NotExists` work on a list. A list in a `Template` fails
     /// to substitute, so both fail the step (owner decision on #177).
@@ -255,6 +292,12 @@ impl fmt::Display for ConditionError {
                 f,
                 "`{}` substitutes to empty text, and a comparison needs text to compare against",
                 template.as_str()
+            ),
+            Self::EmptyText { field, template } => write!(
+                f,
+                "`{}` substitutes to empty text, and {} must not be empty",
+                template.as_str(),
+                field.name()
             ),
             Self::List { name } => write!(
                 f,
@@ -357,7 +400,7 @@ impl Evaluator<'_> {
                 query,
                 ignore_failure,
             } => {
-                let query = self.substitute(query)?;
+                let query = self.required(query.as_template(), TemplateField::WmiQuery)?;
                 match self.probe.wmi_has_rows(namespace, &query) {
                     Ok(has_rows) => Ok(has_rows),
                     Err(WmiError::Query(_)) if *ignore_failure => Ok(false),
@@ -375,6 +418,23 @@ impl Evaluator<'_> {
                 template: template.clone(),
                 error,
             })
+    }
+
+    /// Substitutes a path, a key, or a query, which must not come out empty.
+    /// The check comes before any question to the probe, as in MDT.
+    fn required(
+        &self,
+        template: &Template,
+        field: TemplateField,
+    ) -> Result<String, ConditionError> {
+        let text = self.substitute(template)?;
+        if text.is_empty() {
+            return Err(ConditionError::EmptyText {
+                field,
+                template: template.clone(),
+            });
+        }
+        Ok(text)
     }
 
     /// Substitutes a comparison's operand, which must not come out empty.
@@ -413,8 +473,8 @@ impl Evaluator<'_> {
     }
 
     fn registry(&self, registry: &RegistryCondition) -> Result<bool, ConditionError> {
-        let key = registry.key();
-        let reg_key = RegKey::parse(&self.substitute(key)?)
+        let key = registry.key().as_template();
+        let reg_key = RegKey::parse(&self.required(key, TemplateField::RegistryKey)?)
             .ok_or_else(|| ConditionError::RegistryHive { key: key.clone() })?;
         let name = registry.value().map(RegValueName::as_str);
         let test = registry.test();
@@ -480,11 +540,12 @@ impl Evaluator<'_> {
 
     fn file(
         &self,
-        path: &Template,
+        path: &PathTemplate,
         version: Option<&Comparison<FileVersion>>,
         modified: Option<&Comparison<Timestamp>>,
     ) -> Result<bool, ConditionError> {
-        let text = self.substitute(path)?;
+        let path = path.as_template();
+        let text = self.required(path, TemplateField::FilePath)?;
         let file_error = failed(ProbeKind::File);
         if !self.probe.file_exists(&text).map_err(file_error)? {
             return Ok(false);
@@ -508,10 +569,10 @@ impl Evaluator<'_> {
 
     fn folder(
         &self,
-        path: &Template,
+        path: &PathTemplate,
         modified: Option<&Comparison<Timestamp>>,
     ) -> Result<bool, ConditionError> {
-        let text = self.substitute(path)?;
+        let text = self.required(path.as_template(), TemplateField::FolderPath)?;
         let folder_error = failed(ProbeKind::Folder);
         if !self.probe.folder_exists(&text).map_err(folder_error)? {
             return Ok(false);
@@ -579,23 +640,25 @@ fn compare_time(comparison: &Comparison<Timestamp>, found: OffsetDateTime) -> bo
 }
 
 /// Orders two texts as integers when both are integers, and otherwise as text
-/// without regard to case. These are the `var` rules (`TsCore!0x1801a96c0`).
-/// A `registry` comparison follows them too, as `RegData` in
-/// `docs/architecture.md#parameter-types` says.
+/// without regard to ASCII case. These are the `var` rules
+/// (`TsCore!0x1801a96c0`). A `registry` comparison follows them too, as
+/// `RegData` in `docs/architecture.md#parameter-types` says.
 fn compare_text(left: &str, right: &str) -> Ordering {
     match (Integer::parse(left), Integer::parse(right)) {
         (Some(left), Some(right)) => left.cmp(&right),
-        _ => cmp_ignore_case(left, right),
+        _ => cmp_ignore_ascii_case(left, right),
     }
 }
 
-fn cmp_ignore_case(left: &str, right: &str) -> Ordering {
-    let fold = |text: &str| {
-        text.chars()
-            .flat_map(char::to_lowercase)
-            .collect::<Vec<_>>()
-    };
-    fold(left).cmp(&fold(right))
+/// Orders two texts by code point after it folds `A` to `Z` to `a` to `z`.
+/// Every other character stays as it is, so `Ä` and `ä` differ. MDT compares
+/// through `CCM::Utility::String::compare_no_case` (`CcmCore!0x180085f08`),
+/// which calls `_wcsicmp`. That `_wcsicmp` runs in the C locale, where only
+/// ASCII letters fold, is inferred, as `docs/architecture.md#conditions` says.
+fn cmp_ignore_ascii_case(left: &str, right: &str) -> Ordering {
+    let left = left.chars().map(|c| c.to_ascii_lowercase());
+    let right = right.chars().map(|c| c.to_ascii_lowercase());
+    left.cmp(right)
 }
 
 fn eq_ignore_case(left: char, right: char) -> bool {
