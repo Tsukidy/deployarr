@@ -1528,6 +1528,36 @@ fn difference_registry_data_is_not_trimmed() {
     }
 }
 
+/// For a `REG_DWORD` value, MDT reads the data with
+/// `CCM::Utility::String::toULong` (`TsCore!0x1801a83a9`,
+/// `TsCore!0x1801a83c2`). That export (`CcmCore!0x18008810c`) calls `wcstoul`
+/// in base 0, so MDT most likely reads `0x10` as 16 and `010` as 8. What
+/// `wcstoul` reads is inferred from Microsoft's documentation, because the
+/// function is in the C runtime. The agent keeps the `var` rules, as
+/// `docs/architecture.md#conditions` says. `0x10` is not an integer, so it
+/// compares as text with `16`, and `010` reads as the integer 10. An MDT
+/// importer writes the number that MDT reads instead (#377).
+#[test]
+fn difference_registry_dword_data_is_not_read_in_base_0() {
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Sixteen", RegValue::Dword(16))
+        .value(HKLM_CONTOSO, "Eight", RegValue::Dword(8))
+        .value(HKLM_CONTOSO, "Ten", RegValue::Dword(10));
+    let cases = [
+        ("Sixteen", "0x10", false),
+        ("Eight", "010", false),
+        ("Ten", "010", true),
+    ];
+    for (value, data, expected) in cases {
+        let json = registry(HKLM_CONTOSO, Some(value), json!({ "equals": data }));
+        assert_eq!(
+            check(json, &Vars::new(), &machine),
+            expected,
+            "{value} {data}"
+        );
+    }
+}
+
 // Registry value types.
 
 /// "On a mismatch the engine ... treats the value as missing, for every
