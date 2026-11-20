@@ -68,14 +68,23 @@ For a later release, pass the new link and SHA-256 as the second and third argum
 bash tools/re/winpe/reproduce.sh "$SCRATCH/winpe"
 ```
 
-It writes four files to `"$SCRATCH/winpe/out"`:
+It writes five files to `"$SCRATCH/winpe/out"`:
 
 - `winpe-x64-dlls.txt`, the module and API set list
 - `system32-dlls.txt`, the modules in the case the image stores them
 - `apisets.tsv`, every API set and whether it resolves
+- `upper-case-map.tsv`, the upper case map that `PathMatchSpecW` applies, which `case_map.py` writes from the image's `Windows/System32/l_intl.nls`
 - `summary.txt`, the versions, sizes, hashes, and counts
 
-Copy `"$SCRATCH/winpe/out/winpe-x64-dlls.txt"` to `docs/research/winpe-<version>-x64-dlls.txt`. Copy `"$SCRATCH/winpe/out/system32-dlls.txt"` to `docs/research/winpe-<version>-system32-dlls.txt`. For a later add-on, pass the new link and SHA-256 as the second and third arguments. Then write a new research page for it, and point the import check at the new list.
+Copy `"$SCRATCH/winpe/out/winpe-x64-dlls.txt"` to `docs/research/winpe-<version>-x64-dlls.txt`. Copy `"$SCRATCH/winpe/out/system32-dlls.txt"` to `docs/research/winpe-<version>-system32-dlls.txt`. Copy `"$SCRATCH/winpe/out/upper-case-map.tsv"` to `crates/deployarr-core/data/winpe-<version>-upper-case-map.tsv`, which `Like` reads (see [Conditions](../../docs/architecture.md#conditions)).
+
+`case_map.py` applies the short path of `LCMapStringEx` that [PathMatchSpecW letter case](../../docs/research/winpe-10.1.26100.9457.md#pathmatchspecw-letter-case) records to every unit from U+0000 to U+FFFF. It writes a header line and one line for each unit that changes, as four hex digits for the unit and four for its upper case form. It stops with an error when an upper case form does not map to itself, when two units map to the same other unit, or when a surrogate unit changes. For the add-on below, `summary.txt` gives an `l_intl.nls` SHA-256 of `f8e9574c1c2ee28c669e903f5faf86ac24476f692076340b23881b4d0c82112b`, 973 changed units, and a map SHA-256 of `6a35edba840da0180a4f1c87c66263f3fc8fb64952a144c117278540024f1651`. To rebuild only the map from an `l_intl.nls` you already have:
+
+```bash
+python3 -I tools/re/winpe/case_map.py "$SCRATCH/winpe/wim/files/Windows/System32/l_intl.nls" "$SCRATCH/winpe/out/upper-case-map.tsv"
+```
+
+For a later add-on, pass the new link and SHA-256 as the second and third arguments. Then write a new research page for it, and point the import check at the new list.
 
 ## Pitfalls
 

@@ -490,6 +490,70 @@ fn mdt_var_like_matches_star_and_question_mark() {
     }
 }
 
+/// MDT's Variable evaluator matches `Like` with `PathMatchSpecW`
+/// (`TsCore!0x1801aa078`). In base WinPE 10.0.26100.1, `PathMatchSpecW` matches
+/// two UTF-16 units when `LCMapStringEx` upper-cases both to the same unit,
+/// through the case table in `l_intl.nls`
+/// (`docs/research/winpe-10.1.26100.9457.md#what-it-matches`). So `Ä` matches
+/// `ä` and `Σ` matches `σ`, but the final sigma `ς`, the Kelvin sign, `ß` and
+/// `ẞ`, and the dotless and dotted `i` match only themselves.
+#[test]
+fn mdt_var_like_matches_letters_by_the_winpe_case_table() {
+    let cases = [
+        ("x64", "X64", true),
+        ("Ä", "ä", true),
+        ("ä", "Ä", true),
+        ("ÄRGER", "ärger", true),
+        ("Σ", "σ", true),
+        ("σ", "Σ", true),
+        ("ÿ", "Ÿ", true),
+        ("Σ", "ς", false),
+        ("ς", "σ", false),
+        ("k", "\u{212a}", false),
+        ("\u{212a}", "K", false),
+        ("ß", "ẞ", false),
+        ("ı", "I", false),
+        ("i", "İ", false),
+        ("Ärger 7440", "ä*74?0", true),
+    ];
+    for (value, pattern, expected) in cases {
+        let vars = vars_of(&[("Model", value)]);
+        let json = var("Model", json!({ "like": pattern }));
+        assert_eq!(
+            check(json, &vars, &Machine::new()),
+            expected,
+            "{value:?} like {pattern:?}"
+        );
+    }
+}
+
+/// `PathMatchSpecW` steps one UTF-16 unit at a time, so it sees a character
+/// above U+FFFF as two surrogate units. The research does not record how
+/// `LCMapStringEx` maps a surrogate unit
+/// (`docs/research/winpe-10.1.26100.9457.md#how-lcmapstringex-upper-cases-one-unit`),
+/// so MDT's result is not recorded. deployarr matches a character above U+FFFF
+/// only with itself, so U+10400 does not match U+10428, which
+/// `char::to_lowercase` pairs.
+#[test]
+fn difference_like_matches_a_character_above_u_ffff_only_with_itself() {
+    let cases = [
+        ("\u{10400}", "\u{10400}", true),
+        ("\u{10400}", "\u{10428}", false),
+        ("\u{10428}", "\u{10400}", false),
+        ("A\u{10400}", "a?", true),
+        ("A\u{10400}", "a*", true),
+    ];
+    for (value, pattern, expected) in cases {
+        let vars = vars_of(&[("Model", value)]);
+        let json = var("Model", json!({ "like": pattern }));
+        assert_eq!(
+            check(json, &vars, &Machine::new()),
+            expected,
+            "{value:?} like {pattern:?}"
+        );
+    }
+}
+
 /// "Exists means 'not empty', so an unset variable and an empty one look the
 /// same" (`TsCore!0x1801a96c0`).
 #[test]
@@ -1519,6 +1583,34 @@ fn difference_registry_like_matches_wildcards() {
         ("Edition", "*", true),
         ("Build", "26*", true),
         ("Build", "19*", false),
+    ];
+    for (value, pattern, expected) in cases {
+        let json = registry(HKLM_CONTOSO, Some(value), json!({ "like": pattern }));
+        assert_eq!(
+            check(json, &Vars::new(), &machine),
+            expected,
+            "{value} {pattern}"
+        );
+    }
+}
+
+/// A `Registry` `Like` test applies the `Var` `Like` rule, so it matches
+/// letters by base WinPE's `l_intl.nls` case table
+/// (`docs/research/winpe-10.1.26100.9457.md#what-it-matches`). This departs
+/// from MDT, whose registry condition has no branch for `Like` and is true for
+/// every value that exists, whatever the pattern (`TsCore!0x1801a6bec`,
+/// `TsCore!0x1801ab054`).
+#[test]
+fn difference_registry_like_matches_letters_by_the_var_like_rule() {
+    let machine = Machine::new()
+        .value(HKLM_CONTOSO, "Region", RegValue::Sz("Österreich".into()))
+        .value(HKLM_CONTOSO, "Letter", RegValue::Sz("Σ".into()));
+    let cases = [
+        ("Region", "öster*", true),
+        ("Region", "ÖSTERREICH", true),
+        ("Letter", "σ", true),
+        ("Letter", "ς", false),
+        ("Region", "Oster*", false),
     ];
     for (value, pattern, expected) in cases {
         let json = registry(HKLM_CONTOSO, Some(value), json!({ "like": pattern }));

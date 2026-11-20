@@ -26,6 +26,8 @@ use crate::substitution::SubstituteError;
 use crate::template::Template;
 use crate::variable::VarName;
 
+mod upper_case;
+
 /// Answers the questions that a condition asks about the machine.
 ///
 /// Every text argument has had its `%Name%` references substituted, so it can
@@ -661,13 +663,25 @@ fn cmp_ignore_ascii_case(left: &str, right: &str) -> Ordering {
     left.cmp(right)
 }
 
+/// Whether two characters match in `Like`. MDT's `Like` calls
+/// `PathMatchSpecW` (`TsCore!0x1801aa078`), which matches two UTF-16 units when
+/// they have the same upper case form. `Like` follows the case map of base
+/// WinPE's `l_intl.nls`, as `docs/architecture.md#conditions` says. A
+/// character above U+FFFF matches only itself.
 fn eq_ignore_case(left: char, right: char) -> bool {
-    left == right || left.to_lowercase().eq(right.to_lowercase())
+    if left == right {
+        return true;
+    }
+    match (u16::try_from(left), u16::try_from(right)) {
+        (Ok(left), Ok(right)) => upper_case::upper(left) == upper_case::upper(right),
+        _ => false,
+    }
 }
 
-/// Whether `text` matches `pattern` without regard to case. `*` matches any
-/// run of characters, the empty run included, and `?` matches one character.
-/// Every other character matches itself.
+/// Whether `text` matches `pattern` without regard to case, by
+/// [`eq_ignore_case`]. `*` matches any run of characters, the empty run
+/// included, and `?` matches one character. Every other character matches
+/// itself.
 fn like(text: &str, pattern: &str) -> bool {
     let text: Vec<char> = text.chars().collect();
     let pattern: Vec<char> = pattern.chars().collect();
