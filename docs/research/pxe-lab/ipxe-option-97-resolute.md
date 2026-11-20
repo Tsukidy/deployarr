@@ -1,6 +1,6 @@
 # iPXE option 97 on Ubuntu 26.04's own machine types in the PXE lab
 
-This page records whether the iPXE ROM of the lab's SeaBIOS VM sends option 97 on Ubuntu 26.04's own machine types, `pc-i440fx-resolute` and `pc-q35-resolute`, and with no `-machine` option at all, for [#344](https://github.com/Tsukidy/deployarr/issues/344). It also records which SMBIOS entry point the guest had in each run, and how it was read. It compares each run with the `pc` and `q35` runs of [#217](ipxe-option-97.md). The runs are from 2026-11-20, on the lab host.
+This page records whether the iPXE ROM of the lab's SeaBIOS VM sends option 97 on Ubuntu 26.04's own machine types, `pc-i440fx-resolute` and `pc-q35-resolute`, and with no `-machine` option at all, for [#344](https://github.com/Tsukidy/deployarr/issues/344). It also records which SMBIOS entry point the guest had in each run, and how it was read. It compares each run with the `pc` and `q35` runs on the [#217 page](ipxe-option-97.md). The runs are from 2026-11-20, on the lab host.
 
 Paths in code font that start with `runs/` or `captures/` are relative to `~/deployarr-lab` on the lab host. They are outside the repository.
 
@@ -15,7 +15,7 @@ Paths in code font that start with `runs/` or `captures/` are relative to `~/dep
 The machine type and the property's value come from the HMP commands `qom-get /machine type` and `qom-get /machine smbios-entry-point-type` in each run, in `runs/344/<run>/hmp.txt`. `qom-get` prints the type with `-machine` at the end, such as `pc-i440fx-resolute-machine`.
 
 - The ROM, from ipxe-qemu 1.21.1+git-20250829.969ce2c55, sent option 97 in all three requests in every run. Each option 97 is 17 bytes long. It holds type 0 and the VM's UUID, `4c414200-0000-4000-8000-000000000021`.
-- With no `-machine` option, QEMU ran `pc-i440fx-resolute`. Run 3's `qom-get /machine type` reads `"pc-i440fx-resolute-machine"`. This confirms what the brief inferred from the `(default)` mark in `-machine help`.
+- With no `-machine` option, QEMU ran `pc-i440fx-resolute`. Run 3's `qom-get /machine type` reads `"pc-i440fx-resolute-machine"`. This confirms the `(default)` mark in `-machine help` (`runs/344/host/machine-help.txt`).
 - Run 3's SMBIOS dump is the same file as run 1's, byte for byte. Both have the SHA-256 `ea400fcb1cb92d765312a904300f9b8cc3c7bf6d4fa0ae19e5cbd0603ba8af30`.
 - Both resolute types gave the guest a 32-bit entry point, `_SM_`, and no 64-bit one.
 - In each run, the UUID in the guest's SMBIOS type 1 structure holds the same 16 bytes that follow the type byte in option 97.
@@ -32,8 +32,19 @@ The #217 values come from its [Result](ipxe-option-97.md#result), its run sectio
 
 - The result for option 97 is the same. Every request carries it, with the same length, type, and UUID.
 - The entry point type and version are the same, `_SM_` 2.8, with `smbios-entry-point-type` `auto`.
-- On each resolute type, the entry point sits 16 bytes lower than on the upstream type, and the structure table is 24 bytes longer. Each table still holds 11 structures of the same types, `0, 1, 2, 3, 4, 16, 17, 19, 19, 32, 127`. The page records these addresses and lengths as measured. It does not explain them.
+- On each resolute type, the entry point sits 16 bytes lower than on the upstream type, and the structure table is 24 bytes longer. Each table still holds 11 structures of the same types, `0, 1, 2, 3, 4, 16, 17, 19, 19, 32, 127`. [What is inferred](#what-is-inferred) covers the 16 bytes.
 - The type 1 and type 2 structures name the resolute type. On run 1, type 1 reads product `Ubuntu 26.04 PC (i440FX + PIIX, 1996)` and version `pc-i440fx-resolute`, where #217's run 1 read `Standard PC (i440FX + PIIX, 1996)` and `pc-i440fx-10.2`. Run 2 reads `Ubuntu 26.04 PC (Q35 + ICH9, 2009)` and `pc-q35-resolute`. The source is each run's `smbios-walk.txt`.
+- The longer strings account for all 24 bytes. On both machine types, the formatted area of each of the 11 structures is the same, byte for byte, as in the #217 run. Only the strings differ:
+
+| Structure | Strings that differ | Bytes longer |
+| --- | --- | --- |
+| Type 1 | Product and version | 8 |
+| Type 2 | Product and version | 8 |
+| Type 3 | Version | 4 |
+| Type 4 | Version | 4 |
+| Types 0, 16, 17, 19, 32, and 127 | None | 0 |
+
+The product string `Ubuntu 26.04 PC` is 4 bytes longer than `Standard PC`, and `resolute` is 4 bytes longer than `10.2`. Types 3 and 4 also carry the machine type as a string, such as `pc-i440fx-resolute` against `pc-i440fx-10.2`. `smbios-walk.txt` prints only types 0 to 2, so these sizes come from walking each dump's table with `runs/344/tools/struct_walk.py`, shown in [Commands](#commands). Its output is `runs/344/<run>/struct-walk.txt` and `runs/344/compare-217/<run>-r2-struct-walk.txt`. The walk compared `runs/344/i440fx/fseg-f0000.bin` with `runs/217/pc-r2/fseg-f0000.bin`, and `runs/344/q35/fseg-f0000.bin` with `runs/217/q35-r2/fseg-f0000.bin`.
 
 ## Setup
 
@@ -51,11 +62,13 @@ The #217 values come from its [Result](ipxe-option-97.md#result), its run sectio
 
 The runs did not use `tools/lab/vm.sh`, for the reason the #217 page's [Setup](ipxe-option-97.md#setup) gives. For the `bios` VM, that script always passes `-machine pc,smbios-entry-point-type=32`, and QEMU merges a later `-machine` into it. So each run started `qemu-system-x86_64` with the script's `bios` arguments in the script's order, and its own `-machine` value or none. The run script checked `/proc/<pid>/cmdline` of the QEMU process for exactly one `-machine` with the expected value, or for none in run 3 (`runs/344/tools/run.sh:379-384`). Each run's section gives the full command line.
 
-The three runs went one after another, from 17:01:30 to 17:02:28 UTC on 2026-11-20 (`runs/344/<run>/times.txt`). The run script wrote `$EPOCHREALTIME`, truncated to milliseconds, and `/proc/uptime` at each step.
+The three runs went one after another, from 17:01:30 to 17:02:28 UTC on 2026-11-20 (`runs/344/<run>/times.txt`). At each step the run script wrote three values: the wall-clock time in ISO form, truncated to milliseconds, the full `$EPOCHREALTIME` in microseconds as `epoch=`, and `/proc/uptime` as `uptime=` (`runs/344/tools/run.sh:114-119`).
 
 - Every `env.txt` and `env-before.txt` gives the boot time `2026-11-18 20:40:58`. That is the same boot as #217's runs, whose page puts the host's last start at about 20:41 UTC.
-- Uptime rises at every stamp, from 159,628.85 seconds in `runs/344/host/env-before.txt` to 159,732.14 seconds in `runs/344/host/env-after.txt`. So the host did not restart during the runs.
-- In each run, the wall clock less uptime stays within 10 ms across all stamps. So the wall-clock stamps did not jump, as some did in #217's runs. The intervals below come from the wall-clock stamps, truncated to milliseconds.
+- Uptime never falls between stamps. It goes from 159,628.85 seconds in `runs/344/host/env-before.txt` to 159,732.14 seconds in `runs/344/host/env-after.txt`. So the host did not restart during the runs.
+- In each run, the wall clock less uptime stays within 10 ms across all stamps. So the wall-clock stamps did not jump, as some did in #217's runs.
+- Each interval on this page is the difference of two `epoch=` values, truncated to milliseconds. The ISO stamps can give 1 ms more. For example, run 2's `vm-start` to `discover-seen` is 3.242724 s from the `epoch=` values, and 3.243 s from the ISO stamps.
+- The gaps between a dump's modification time and its DISCOVER are truncated the same way. Unrounded, they are 32.95, 20.92, and 22.70 ms.
 
 `free -m` before the runs shows 15,428 MB of memory, 12,049 MB free and 14,253 MB available (`runs/344/host/env-before.txt`). At the start of each run, free memory was 11,994, 12,089, and 12,065 MB (`runs/344/<run>/env.txt`).
 
@@ -76,9 +89,9 @@ pc-q35-10.2          Standard PC (Q35 + ICH9, 2009)
 
 - These lines are the same as the ones the #217 page's [Machine types on the lab host](ipxe-option-97.md#machine-types-on-the-lab-host) quotes.
 - `-machine help` marks `pc-i440fx-resolute` as the default. Run 3 shows that QEMU uses it when no `-machine` is given.
-- `-machine pc-i440fx-resolute,help` and `-machine pc,help` print the same 42 lines, except the first, which names the type (`runs/344/host/machine-pc-i440fx-resolute-help.txt` and `machine-pc-help.txt`). `-machine pc-q35-resolute,help` and `-machine q35,help` also differ only in the first line.
+- `-machine pc-i440fx-resolute,help` and `-machine pc,help` print the same 42 lines, except the first, which names the type (`runs/344/host/machine-pc-i440fx-resolute-help.txt` and `machine-pc-help.txt`). `-machine pc-q35-resolute,help` and `-machine q35,help` also differ only in the first line (`runs/344/host/machine-pc-q35-resolute-help.txt` and `machine-q35-help.txt`).
 - Each of the four lists `smbios-entry-point-type=<str> - SMBIOS Entry Point type [32, 64]`. None lists `auto`, but `qom-get` reads `auto` in all three runs.
-- The help output lists 75 Ubuntu types besides the aliases `ubuntu` and `ubuntu-q35`, from Ubuntu 17.04's `zesty` to 26.04's `resolute`, with variants such as `pc-i440fx-noble-v2` and `pc-q35-jammy-hpb`. The runs used only `resolute`.
+- The help output lists 75 Ubuntu types besides the aliases `ubuntu` and `ubuntu-q35`, from Ubuntu 16.10's `yakkety` to 26.04's `resolute`, with variants such as `pc-i440fx-noble-v2` and `pc-q35-jammy-hpb`. The runs used only `resolute`.
 
 ## Versions
 
@@ -97,7 +110,7 @@ pc-q35-10.2          Standard PC (Q35 + ICH9, 2009)
 | `swtpm` | 0.10.1+ds-1ubuntu3 | Same. These runs do not use it. |
 | `osslsigncode` | 2.13-1 | Same. These runs do not use it. |
 
-- None of the three packages that the Owner input on #344 names, `qemu-system-x86`, `seabios`, and `ipxe-qemu`, has changed since #217. So the page has no `-machine pc` control run, as the owner decided.
+- The owner's input on #344 names three packages: `qemu-system-x86`, `seabios`, and `ipxe-qemu`. None has changed since #217. So the page has no `-machine pc` control run, as the owner decided.
 - `runs/344/host/dpkg-since-217-before.txt` finds no change to these packages in `/var/log/dpkg.log` since 2026-11-18.
 - The HMP command `info version` prints `10.2.1Debian 1:10.2.1+ds-1ubuntu3.3` in each run. `qemu-system-x86_64 --version` prints `QEMU emulator version 10.2.1 (Debian 1:10.2.1+ds-1ubuntu3.3)` (`runs/344/host/qemu-version.txt`).
 - Each run's `env.txt` lists the same package versions and firmware hashes. `runs/344/host/versions-after.txt` and `firmware-sha256-after.txt`, recorded after the runs, match the files from before.
@@ -110,7 +123,7 @@ pc-q35-10.2          Standard PC (Q35 + ICH9, 2009)
 | `/usr/share/seabios/bios.bin`, from `seabios` | `b54fed696aee70cd4df5237d2b41e9e66282451cf0e10cfdd6f0152bb23d99b0` | Not listed. Recorded here only. |
 | `/usr/share/OVMF/OVMF_CODE_4M.ms.fd` and `OVMF_VARS_4M.ms.fd` | Not recorded | Not recorded there either. These runs do not use them. |
 
-`qemu-system-x86_64 -L help` lists `/usr/share/qemu` and `/usr/share/seabios` (`runs/344/host/qemu-datadirs.txt`). `runs/344/host/datadir-listing.txt` lists both folders. `/usr/share/qemu` holds no `bios-256k.bin`, so the only `bios-256k.bin` in QEMU's data folders is the one in `/usr/share/seabios`. That QEMU loaded this file for these machine types is inferred. The SMBIOS type 0 structure in each dump gives the BIOS version `1.17.0-debian-1.17.0-1ubuntu1`, which ends with the version of the `seabios` package that holds that file.
+`qemu-system-x86_64 -L help` lists `/usr/share/qemu` and `/usr/share/seabios` (`runs/344/host/qemu-datadirs.txt`). `runs/344/host/datadir-listing.txt` lists both folders. `/usr/share/qemu` holds no `bios-256k.bin`, so the only `bios-256k.bin` in QEMU's data folders is the one in `/usr/share/seabios`. QEMU loaded this file for these machine types (inferred). The SMBIOS type 0 structure in each dump gives the BIOS version `1.17.0-debian-1.17.0-1ubuntu1`, which ends with the version of the `seabios` package that holds that file.
 
 | File in the TFTP root | SHA-256 | In [Versions](ipxe-option-97.md#versions) of the #217 page |
 | --- | --- | --- |
@@ -118,14 +131,14 @@ pc-q35-10.2          Standard PC (Q35 + ICH9, 2009)
 | `boot/x64/bootmgr.exe` | `364c896a4fd4690949d1f7c386332f4f32541b01a05adfc13b7178258571a7ad` | Same. Run 1 stopped during its download. Runs 2 and 3 downloaded it in full. |
 | `boot/bios.bcd` | `5682186b6906955f5f5e610aee7dc9eb66e3d5314d31141c5ff9b1a0750e7b0d` | Not in the table. The same as #217's `runs/217/host/tftp-sha256.txt`. No run requested it. |
 
-The TFTP hashes are in `runs/344/host/tftp-sha256-before.txt`. No version or hash on this page differs from the #217 page.
+The TFTP hashes are in `runs/344/host/tftp-sha256-before.txt`. Every version and hash that both pages list is the same.
 
 ## How the entry point was read
 
 The method is the one in the #217 page's [How the entry point was read](ipxe-option-97.md#how-the-entry-point-was-read), with the same three readers. `runs/344/tools/smbios-tools.sha256` holds their hashes, which match #217's `runs/217/tools/smbios-tools.sha256`.
 
 - Each run dumped the guest's BIOS segment, `0xF0000` to `0xFFFFF`, with the HMP command `pmemsave 0xf0000 0x10000 "<absolute path>"`, with the file name in double quotes. The run script sent it as soon as the prototype logged the first DISCOVER from `52:54:00:41:00:21` (`runs/344/tools/run.sh:390-399`). That DISCOVER already carried option 97.
-- `pmemsave` printed nothing in each run (`runs/344/<run>/hmp-pmemsave.txt` is empty), and each dump is 65,536 bytes (`pmemsave_bytes=65536` in `times.txt`).
+- `pmemsave` printed no text in each run. `runs/344/<run>/hmp-pmemsave.txt` holds only an empty line, which `mon.py` prints when the reply has no lines. Each dump is 65,536 bytes (`pmemsave_bytes=65536` in `times.txt`).
 - The dump file's modification time came 20 to 32 ms after the captured DISCOVER, and before the lease REQUEST.
 - `smbios_scan.py` lists every `_SM_` and `_SM3_` string in the dump. It counts one as an entry point only when it starts on a 16-byte boundary and its checksum is valid. For `_SM_` it also checks the intermediate anchor `_DMI_` and its checksum (`smbios-scan.txt`).
 - `smbios_checksum.py`, a separate piece of code, repeated the checksum of each counted anchor (`smbios-checksum.txt`). It printed a sum of 0 modulo 256 for each.
@@ -207,7 +220,7 @@ qemu-system-x86_64 -accel kvm -cpu host -name deployarr-lab-bios
 
 ### Machine
 
-- `qom-get /machine type` reads `"pc-q35-resolute-machine"`. `qom-get /machine smbios-entry-point-type` reads `"auto"` (`runs/344/q35/hmp.txt`).
+- `qom-get /machine type` reads `"pc-q35-resolute-machine"`. `qom-get /machine smbios-entry-point-type` reads `"auto"`. `info status` reads `VM status: paused` (`runs/344/q35/hmp.txt`).
 - `info qtree` shows the `e1000` card at PCI address `03.0` with `romfile = "efi-e1000.rom"` (`runs/344/q35/hmp-qtree.txt`).
 
 ### SMBIOS entry point
@@ -257,7 +270,7 @@ qemu-system-x86_64 -accel kvm -cpu host -name deployarr-lab-bios
 
 ### Machine
 
-- `qom-get /machine type` reads `"pc-i440fx-resolute-machine"`. `qom-get /machine smbios-entry-point-type` reads `"auto"` (`runs/344/default/hmp.txt`).
+- `qom-get /machine type` reads `"pc-i440fx-resolute-machine"`. `qom-get /machine smbios-entry-point-type` reads `"auto"`. `info status` reads `VM status: paused` (`runs/344/default/hmp.txt`).
 - `info qtree` shows the `e1000` card at PCI address `04.0` with `romfile = "efi-e1000.rom"` (`runs/344/default/hmp-qtree.txt`).
 
 ### SMBIOS entry point
@@ -326,11 +339,19 @@ boot\x64\pxeboot.n12 : 25238 bytes [PXE-NBP]
 
 The full captures of runs 2 and 3 hold 1,622 packets each, and run 1's holds 73 (`runs/344/<run>/capture-checks.txt`). The extra packets are TFTP ACKs of `bootmgr.exe`.
 
-- `capture-checks.txt` counts 62 TFTP ACKs in run 1's full capture and 1,611 in each of runs 2 and 3. Each full capture holds the same 11 other packets, 7 DHCP, 2 RRQs, and 2 OACKs.
+- `capture-checks.txt` counts 62 TFTP ACKs in run 1's full capture and 1,611 in each of runs 2 and 3. Each full capture holds the same 11 other packets: 7 DHCP packets, 2 RRQs, and 2 OACKs.
 - Counted by the client's source port, the ACKs are 19 for `pxeboot.n12` in each run, and 43 for `bootmgr.exe` in run 1 against 1,592 in runs 2 and 3. [Commands](#commands) gives the count command.
 - The prototype logs `bootmgr.exe` with `outcome=stopped` and `blocks_sent=43` in run 1, and with `outcome=complete` and `blocks_sent=1591` in runs 2 and 3.
 
-Why `bootmgr.exe` finished in runs 2 and 3 is inferred. The script waits for the end of `pxeboot.n12` by reading the prototype's log every 0.2 s (`runs/344/tools/run.sh:404-405`). Its `pxeboot-finished` stamp came 14 ms after the prototype's `transfer-finished` line for `pxeboot.n12` in run 1, and 200 ms and 203 ms after it in runs 2 and 3. The whole `bootmgr.exe` transfer took 0.164 s and 0.165 s, so it ended before the script paused the VM. In run 1 the VM paused 13 ms after the RRQ for `bootmgr.exe`. The difference comes from where each run's end of `pxeboot.n12` fell in the 0.2 s poll (inferred). It does not touch the DHCP packets, which come before.
+The script's poll explains why `bootmgr.exe` finished in runs 2 and 3 (inferred).
+
+- The script waits for the end of `pxeboot.n12` by reading the prototype's log every 0.2 s (`runs/344/tools/run.sh:404-405`).
+- Its `pxeboot-finished` stamp came 14 ms after the prototype's `transfer-finished` line for `pxeboot.n12` in run 1, and 200 ms and 203 ms after it in runs 2 and 3 (`times.txt` and `prototype-summary.txt`).
+- The whole `bootmgr.exe` transfer took 0.164 s and 0.165 s in runs 2 and 3, so it ended before the script paused the VM.
+- In run 1 the VM paused 13 ms after the RRQ for `bootmgr.exe` (`vm-paused` in `runs/344/i440fx/times.txt`, and `runs/344/i440fx/tftp-rrq.tsv`).
+- The difference comes from where each run's end of `pxeboot.n12` fell in the 0.2 s poll.
+
+The timing difference comes after the DHCP packets, so it does not affect them.
 
 ## Captures
 
@@ -353,7 +374,7 @@ Why `bootmgr.exe` finished in runs 2 and 3 is inferred. The script waits for the
 
 The counts and hashes come from `runs/344/<run>/capture-checks.txt`.
 
-- The `dumpcap` logs, `captures/ipxe-option-97-resolute-<run>-dumpcap.log`, report 73/0 and 1,622/0 packets received and dropped, so no packets were dropped.
+- The `dumpcap` logs, `captures/ipxe-option-97-resolute-<run>-dumpcap.log`, report 73 packets received in run 1 and 1,622 in runs 2 and 3, and 0 dropped in each.
 - The TFTP data check from the lab guide, `tftp.opcode == 3 or ip.flags.mf == 1 or ip.frag_offset > 0`, matches no packet in the full or the committed captures. A filter on the raw payload, `udp.payload[0:2] == 00:03`, also matches no packet in any of them. `capture-checks.txt` records `data_or_fragments=0 raw_data=0` for each file.
 - Each committed copy holds the 7 DHCP packets, the two RRQs, and their two OACKs, as #217's do.
 - `dhcp97.py` read the same rows from each full capture and its reduced copy (`dhcp97.tsv` and `dhcp97-copy.tsv`).
@@ -363,7 +384,7 @@ The raw evidence stays on the lab host in `runs/344/`. Each run's folder holds t
 
 ## Commands
 
-The scripts live on the lab host in `~/deployarr-lab/runs/344/tools/`, outside the repository. `run.sh` is based on #217's `run-r2.sh`, which is kept beside it as `run-r2.sh.from-217`, with the diff in `run.sh.diff`. The plan the runs followed is `~/deployarr-lab/plans/344/plan.md`.
+The scripts live on the lab host in `~/deployarr-lab/runs/344/tools/`, outside the repository. `run.sh` starts from #217's `run-r2.sh`. A copy of that script sits beside it as `run-r2.sh.from-217`, and `run.sh.diff` holds the diff. The plan the runs followed is `~/deployarr-lab/plans/344/plan.md`.
 
 | File | SHA-256 | What it does |
 | --- | --- | --- |
@@ -389,7 +410,7 @@ bash ~/deployarr-lab/runs/344/tools/run.sh q35 pc-q35-resolute
 bash ~/deployarr-lab/runs/344/tools/run.sh default default
 ```
 
-`run.sh` refuses to start unless `idle.sh` prints `IDLE` and the lab checkout is clean. Each run's `preflight.txt` ends with `IDLE`. The script then creates the run's folders and disk, and starts the prototype, the capture, and QEMU, in the order that [Run an experiment](../../lab-setup.md#run-an-experiment) gives. These are the key lines, from `run.sh:300-302`, `323-324`, `357`, and `365`:
+`run.sh` refuses to start unless `idle.sh` prints `IDLE` and `tools/lab` and `tools/pxe-prototype` in the lab checkout have no changes (`run.sh:94-107`). Each run's `preflight.txt` ends with `IDLE`. `runs/344/host/env-before.txt` and `env-after.txt` show the whole lab checkout clean. The script then creates the run's folders and disk, and starts the prototype, the capture, and QEMU, in the order that [Run an experiment](../../lab-setup.md#run-an-experiment) gives. These are the key lines, from `run.sh:300-302`, `323-324`, `357`, and `365`:
 
 ```bash
 sudo -n python3 -B "$LAB/tools/pxe-prototype/pxe_prototype.py" --server-ip 10.41.0.1 --interface br-lab \
@@ -431,7 +452,13 @@ tshark -r - -Y 'tftp.opcode == 3 or ip.flags.mf == 1 or ip.frag_offset > 0' < $F
 tshark -r - -Y 'udp.payload[0:2] == 00:03' < $F
 ```
 
-The copy into the repository ran both checks again on the staged copy before `cp`, and on the repository copy after it. It compared the two with `cmp`, and compared a fresh `tshark -r - -Y dhcp -V` of the repository copy with its decode file.
+The step that copied the files into the repository follows `plans/344/plan.md:243-267`. These commands check its result from the repository root, with `n` set to `ipxe-option-97-resolute-<run>`. `runs/344/host/copy-checks.txt` holds their output and the leak checks, run again on 2026-11-20 at 17:23 UTC. Each `cmp` printed nothing, and both leak checks printed nothing on the staged copy and on the repository copy.
+
+```bash
+cmp ~/deployarr-lab/runs/344/commit/$n.pcapng docs/research/pxe-lab/captures/$n.pcapng
+cmp ~/deployarr-lab/runs/344/commit/$n-dhcp.txt docs/research/pxe-lab/captures/$n-dhcp.txt
+tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/$n.pcapng | cmp - docs/research/pxe-lab/captures/$n-dhcp.txt
+```
 
 This command counts the TFTP ACKs of each transfer in a full capture, by the client's source port, for [Why runs 2 and 3 captured more packets](#why-runs-2-and-3-captured-more-packets):
 
@@ -439,7 +466,25 @@ This command counts the TFTP ACKs of each transfer in a full capture, by the cli
 tshark -r - -Y 'tftp.opcode == 4' -T fields -e udp.srcport < ~/deployarr-lab/captures/ipxe-option-97-resolute-<run>.pcapng | sort | uniq -c
 ```
 
-The `_DMI_` at `0xf1934` came from a byte search of each `fseg-f0000.bin` for `_DMI_`, `_SM_`, and `_SM3_`, saved as `runs/344/<run>/anchor-search.txt`. It also finds the counted `_SM_` of each run, and the `_DMI_` 16 bytes after it.
+The `_DMI_` at `0xf1934` came from a byte search of each `fseg-f0000.bin` for `_SM_`, `_SM3_`, and `_DMI_`, saved as `runs/344/<run>/anchor-search.txt`. It also finds the counted `_SM_` of each run, and the `_DMI_` 16 bytes after it. `runs/344/tools/anchor_search.py` writes them, and it reproduces each file byte for byte. Run it from `~/deployarr-lab/runs`:
+
+```bash
+python3 -I 344/tools/anchor_search.py ~/deployarr-lab/runs/344/<run>/fseg-f0000.bin
+```
+
+This code walks the structure table of a dump, for [Compared with #217](#compared-with-217). It takes the first `_SM_` on a 16-byte boundary, which is the counted entry point in each dump here. For each structure it prints the type, the formatted length, the total length, the formatted area in hex, and the strings. It is `runs/344/tools/struct_walk.py`. Its output for each run is `runs/344/<run>/struct-walk.txt`, and for #217's dumps `runs/344/compare-217/pc-r2-struct-walk.txt` and `q35-r2-struct-walk.txt`.
+
+```python
+import struct, sys
+d = open(sys.argv[1], 'rb').read()
+ep = next(o for o in range(0, len(d), 16) if d[o:o + 4] == b'_SM_')
+tlen, taddr, n = struct.unpack_from('<HIH', d, ep + 0x16)
+o = taddr - 0xf0000
+for _ in range(n):
+    end = d.index(b'\0\0', o + d[o + 1]) + 2
+    print(d[o], d[o + 1], end - o, d[o:o + d[o + 1]].hex(), d[o + d[o + 1]:end].split(b'\0')[:-2])
+    o = end
+```
 
 After the runs, these commands recorded the host again:
 
@@ -459,7 +504,7 @@ bash ~/deployarr-lab/runs/344/tools/baseline.sh ~/deployarr-lab/runs/344/host/ba
 - The ROM takes the UUID for option 97 from the SMBIOS type 1 structure that the entry point leads to (inferred, as on the #217 page). In each run, option 97 holds the same 16 bytes as that structure's UUID field.
 - The dump shows the entry point that the ROM read (inferred). Each dump came 20 to 32 ms after a DISCOVER that already carried option 97, not at the moment the ROM read SMBIOS.
 - QEMU loaded `/usr/share/seabios/bios-256k.bin` (inferred). It is the only `bios-256k.bin` in the two data folders, and its package version matches the type 0 BIOS version.
-- The page records, and does not explain, why each resolute type puts the entry point 16 bytes lower and makes the table 24 bytes longer than the upstream type. The longer type 1 and type 2 strings are one visible difference. Whether they account for all of it is not shown.
+- The page records, and does not explain, why each resolute type puts the entry point 16 bytes lower than the upstream type. The table is 24 bytes longer because of the longer strings in types 1 to 4, as [Compared with #217](#compared-with-217) shows. That this also moves the entry point is not shown.
 - The reason `bootmgr.exe` finished in runs 2 and 3 and not in run 1 is inferred from the script's 0.2 s poll and the stamps, as [Why runs 2 and 3 captured more packets](#why-runs-2-and-3-captured-more-packets) says.
 - The unaligned `_DMI_` and `_SM3_` at `0xf1934` and `0xf1941` are strings in SeaBIOS's code, not entry points (inferred, as on the #217 page).
 - Nobody read Ubuntu's patches to QEMU, SeaBIOS, or iPXE, or the code that defines the resolute types.
@@ -474,10 +519,10 @@ bash ~/deployarr-lab/runs/344/tools/baseline.sh ~/deployarr-lab/runs/344/host/ba
 - The UEFI VMs, physical PCs, and other firmware.
 - The boot after `bootmgr.exe`. Each run stopped there.
 
-## What this changes in deployarr
+## What changes in deployarr
 
 The three runs match #217's `pc` and `q35` runs. On `pc-i440fx-resolute`, on `pc-q35-resolute`, and with no `-machine`, the guest had only a 32-bit entry point, `_SM_` 2.8. The iPXE ROM sent option 97, type 0 with the VM's UUID, in its DISCOVER, its lease REQUEST, and its boot file REQUEST.
 
 - The [PXE prototype's requirements](../../../tools/pxe-prototype/README.md#requirements) do not change.
-- The [DHCP](../../architecture.md#dhcp) section of the architecture does not change. With the lab's versions, Ubuntu 26.04's default machine type behaves for option 97 as the upstream `pc` and `q35` do.
+- The [DHCP](../../architecture.md#dhcp) section of the architecture does not change. With the lab's versions, Ubuntu 26.04's own machine types behave for option 97 as the upstream `pc` and `q35` do.
 - The lab does not change. The `bios` VM's settings, `tools/lab/vm.sh`, and the lab guide stay as they are.
