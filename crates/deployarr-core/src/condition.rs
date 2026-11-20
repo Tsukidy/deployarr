@@ -169,15 +169,86 @@ non_empty_template! {
     "a file or folder path must not be empty"
 }
 
-non_empty_template! {
-    /// The key that a `Registry` condition tests, such as
-    /// `HKEY_LOCAL_MACHINE\SOFTWARE\Contoso`. It is a `Template` that is not
-    /// empty. MDT fails a condition whose key is empty after it expands and
-    /// trims it (`TsCore!0x1801a747a`).
-    RegKeyTemplate,
-    EmptyRegKeyError,
-    "a registry key must not be empty"
+/// The key that a `Registry` condition tests, such as
+/// `HKEY_LOCAL_MACHINE\SOFTWARE\Contoso`. It is a `Template` that is not
+/// empty, and whose hive is one of the four full names when the hive is
+/// fixed text.
+///
+/// MDT fails a condition whose key is empty after it expands and trims it
+/// (`TsCore!0x1801a747a`). It checks the hive after that, and fails a key that
+/// does not start with `HKEY_LOCAL_MACHINE\`, `HKEY_CURRENT_USER\`,
+/// `HKEY_CURRENT_CONFIG\`, or `HKEY_USERS\` (`TsCore!0x1801ab5c0`). So empty
+/// text gives [`RegKeyError::Empty`], and a hive that is fixed text and not
+/// one of the four gives [`RegKeyError::Hive`]. The hive is fixed text when no
+/// `%` comes before the first `\`, or when the key has neither `%` nor `\`.
+/// The agent checks the hive of any other key after substitution, with
+/// [`RegKey::parse`](crate::evaluate::RegKey::parse), as it does for every
+/// key.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(try_from = "Template")]
+pub struct RegKeyTemplate(Template);
+
+impl RegKeyTemplate {
+    pub fn as_template(&self) -> &Template {
+        &self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
 }
+
+impl TryFrom<Template> for RegKeyTemplate {
+    type Error = RegKeyError;
+
+    fn try_from(text: Template) -> Result<Self, Self::Error> {
+        let key = text.as_str();
+        if key.is_empty() {
+            return Err(RegKeyError::Empty);
+        }
+        let hive = key.split_once('\\').map_or(key, |(hive, _)| hive);
+        if !hive.contains('%') && crate::evaluate::RegKey::parse(key).is_none() {
+            return Err(RegKeyError::Hive);
+        }
+        Ok(Self(text))
+    }
+}
+
+impl From<RegKeyTemplate> for Template {
+    fn from(text: RegKeyTemplate) -> Self {
+        text.0
+    }
+}
+
+impl Serialize for RegKeyTemplate {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.serialize(serializer)
+    }
+}
+
+/// The text of a [`RegKeyTemplate`] is empty, or its hive is fixed text that
+/// is not one of the four full names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegKeyError {
+    /// The key is empty.
+    Empty,
+    /// No `%` comes before the key's first `\`, or the key has neither `%`
+    /// nor `\`, and the key does not start with a full hive name and a `\`.
+    Hive,
+}
+
+impl fmt::Display for RegKeyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Empty => "a registry key must not be empty",
+            Self::Hive => {
+                "a registry key must start with `HKEY_LOCAL_MACHINE\\`, `HKEY_CURRENT_USER\\`, `HKEY_CURRENT_CONFIG\\`, or `HKEY_USERS\\`, unless a `%` comes before its first `\\`"
+            }
+        })
+    }
+}
+
+impl core::error::Error for RegKeyError {}
 
 non_empty_template! {
     /// The query that a `Wmi` condition runs. It is a `Template` that is not
@@ -236,7 +307,8 @@ impl RegistryCondition {
     }
 
     /// The key, such as `HKEY_LOCAL_MACHINE\SOFTWARE\Contoso`. It is a
-    /// template, so its hive is known only after substitution.
+    /// template. When a `%` comes before its first `\`, its hive is known
+    /// only after substitution.
     pub fn key(&self) -> &RegKeyTemplate {
         &self.key
     }

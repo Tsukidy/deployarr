@@ -8,8 +8,8 @@ use deployarr_core::action::{
     UpdateTimeouts, WsusUrl, WsusUrlError,
 };
 use deployarr_core::condition::{
-    Comparison, Condition, EmptyPathError, EmptyQueryError, EmptyRegKeyError, FileVersion,
-    PathTemplate, QueryTemplate, RegData, RegKeyTemplate, RegText, RegType, RegValueName,
+    Comparison, Condition, EmptyPathError, EmptyQueryError, FileVersion, PathTemplate,
+    QueryTemplate, RegData, RegKeyError, RegKeyTemplate, RegText, RegType, RegValueName,
     RegistryCondition, RegistryConditionError, Test,
 };
 use deployarr_core::sequence::{
@@ -1280,14 +1280,16 @@ fn an_empty_path_key_or_query_fails_at_its_field() {
 
 /// The path, key, and query types reject empty text, so code that builds a
 /// sequence cannot hold an empty one. Each error names its field. Text of
-/// only white space is not empty.
+/// only white space is not empty. A key of only white space still fails,
+/// because its hive is fixed text that is not a full hive name, as
+/// `docs/architecture.md#conditions` says.
 #[test]
 fn path_key_and_query_types_reject_empty_text() {
     let empty = Template::new("");
     assert_eq!(PathTemplate::try_from(empty.clone()), Err(EmptyPathError));
     assert_eq!(
         RegKeyTemplate::try_from(empty.clone()),
-        Err(EmptyRegKeyError)
+        Err(RegKeyError::Empty)
     );
     assert_eq!(QueryTemplate::try_from(empty), Err(EmptyQueryError));
     assert_eq!(
@@ -1295,18 +1297,108 @@ fn path_key_and_query_types_reject_empty_text() {
         "a file or folder path must not be empty"
     );
     assert_eq!(
-        EmptyRegKeyError.to_string(),
+        RegKeyError::Empty.to_string(),
         "a registry key must not be empty"
     );
     assert_eq!(EmptyQueryError.to_string(), "a WMI query must not be empty");
 
     let space = Template::new(" ");
     let path = PathTemplate::try_from(space.clone()).expect("a space is not empty");
-    let key = RegKeyTemplate::try_from(space.clone()).expect("a space is not empty");
     let query = QueryTemplate::try_from(space.clone()).expect("a space is not empty");
     assert_eq!(path.as_template(), &space);
-    assert_eq!(key.as_str(), " ");
+    assert_eq!(
+        RegKeyTemplate::try_from(space.clone()),
+        Err(RegKeyError::Hive)
+    );
     assert_eq!(Template::from(query), space);
+}
+
+/// Keys whose hive is fixed text and is not one of the four full names. MDT
+/// fails each when the condition runs (`TsCore!0x1801ab5c0`), and so would
+/// the agent. deployarr rejects each when the sequence is saved, as
+/// `docs/architecture.md#conditions` says.
+const KEYS_WITH_A_BAD_FIXED_HIVE: [&str; 7] = [
+    r"HKLM\SOFTWARE",
+    r"HKLM\%Sub%",
+    r"HKEY_CLASSES_ROOT\.txt",
+    "HKEY_LOCAL_MACHINE",
+    r"HKEY_LOCAL_MACHINE_X\SOFTWARE",
+    " ",
+    r" HKEY_LOCAL_MACHINE\SOFTWARE",
+];
+
+/// The message of [`RegKeyError::Hive`].
+const BAD_HIVE: &str = "a registry key must start with `HKEY_LOCAL_MACHINE\\`, `HKEY_CURRENT_USER\\`, `HKEY_CURRENT_CONFIG\\`, or `HKEY_USERS\\`, unless a `%` comes before its first `\\`";
+
+#[test]
+fn a_key_whose_fixed_hive_is_not_a_full_hive_name_fails_at_its_field() {
+    for key in KEYS_WITH_A_BAD_FIXED_HIVE {
+        let document = sequence_with_condition(json!({
+            "registry": { "key": key, "test": "exists" }
+        }));
+
+        let error = assert_fails_at(&document, &format!("{STEP}.meta.condition.registry.key"));
+        assert!(error.to_string().contains(BAD_HIVE), "{key:?}: {error}");
+    }
+}
+
+/// MDT checks for an empty key (`TsCore!0x1801a747a`) before it passes the key
+/// to its hive check (`TsCore!0x1801a7787` to `TsCore!0x1801a779d`). An empty
+/// key keeps the empty key error.
+#[test]
+fn an_empty_key_fails_with_the_empty_key_error_not_the_hive_error() {
+    let document = sequence_with_condition(json!({
+        "registry": { "key": "", "test": "exists" }
+    }));
+
+    let error = assert_fails_at(&document, &format!("{STEP}.meta.condition.registry.key"));
+    let message = error.to_string();
+    assert!(
+        message.contains("a registry key must not be empty"),
+        "{message}"
+    );
+    assert!(!message.contains(BAD_HIVE), "{message}");
+}
+
+/// A full hive name in any ASCII case, a key with an empty path, and a key
+/// whose hive comes from a `%VAR%` reference parse. The agent checks the hive
+/// of the last two after substitution.
+#[test]
+fn a_key_with_a_full_hive_name_or_a_percent_before_its_hive_ends_parses() {
+    for key in [
+        r"hkey_local_machine\software",
+        r"HKEY_USERS\",
+        r"HKEY_LOCAL_MACHINE\%Sub%",
+        r"%Root%\SOFTWARE",
+        "%Key%",
+    ] {
+        let document = sequence_with_condition(json!({
+            "registry": { "key": key, "test": "exists" }
+        }));
+
+        let sequence = parse(&document).unwrap_or_else(|error| panic!("{key:?}: {error}"));
+        let written = serde_json::to_value(&sequence).expect("the sequence is JSON");
+        assert_eq!(
+            written["root"]["children"][0]["step"]["meta"]["condition"]["registry"]["key"],
+            json!(key),
+            "{key:?}"
+        );
+        let template = RegKeyTemplate::try_from(Template::new(key)).expect(key);
+        assert_eq!(template.as_str(), key);
+    }
+}
+
+/// `RegistryCondition::new` takes a `RegKeyTemplate`, and `RegKeyTemplate`
+/// rejects the keys that parsing rejects. So code that builds a sequence
+/// cannot write a `registry` condition with such a key.
+#[test]
+fn registry_conditions_built_in_code_cannot_hold_a_bad_fixed_hive() {
+    for key in KEYS_WITH_A_BAD_FIXED_HIVE {
+        let error = RegKeyTemplate::try_from(Template::new(key)).expect_err(key);
+
+        assert_eq!(error, RegKeyError::Hive, "{key:?}");
+        assert_eq!(error.to_string(), BAD_HIVE);
+    }
 }
 
 #[test]
