@@ -1,6 +1,6 @@
 # WinPE add-on 10.1.26100.9457 reference
 
-This page records which DLLs and API sets base WinPE x64 provides. The source is the Windows PE add-on for the Windows ADK 10.1.26100.9457. `deployarr-agent` runs in base WinPE, so a module it imports must match a name in [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) by the rule in [The list file](#the-list-file). The CI check reads that file. Use this page when you add an import to the agent. The page also records which letters `PathMatchSpecW` matches in any case in this image, in [PathMatchSpecW letter case](#pathmatchspecw-letter-case).
+This page records which DLLs and API sets base WinPE x64 provides. The source is the Windows PE add-on for the Windows ADK 10.1.26100.9457. `deployarr-agent` runs in base WinPE, so a module it imports must match a name in [winpe-10.1.26100.9457-x64-dlls.txt](winpe-10.1.26100.9457-x64-dlls.txt) by the rule in [The list file](#the-list-file). The CI check reads that file. Use this page when you add an import to the agent. The page also records which letters `PathMatchSpecW` matches in any case in this image, in [PathMatchSpecW letter case](#pathmatchspecw-letter-case), and what it returns for an empty pattern, in [PathMatchSpecW with an empty pattern](#pathmatchspecw-with-an-empty-pattern).
 
 ## Sources
 
@@ -127,7 +127,7 @@ The DLLs come from `Windows\System32` in the `winpe.wim` that [Sources](#sources
 
 ## PathMatchSpecW letter case
 
-MDT's Variable condition matches `Like` with `PathMatchSpecW`. It passes the variable's value as `pszFile` and the expanded Value as `pszSpec` (`TsCore!0x1801aa078`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). This section records which letters `PathMatchSpecW` in this image matches in any case. It covers letter case only, not the wildcard rules.
+MDT's Variable condition matches `Like` with `PathMatchSpecW`. It passes the variable's value as `pszFile` and the expanded Value as `pszSpec` (`TsCore!0x1801aa078`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). This section records which letters `PathMatchSpecW` in this image matches in any case. It covers letter case only, not the wildcard rules. For an empty pattern, see [PathMatchSpecW with an empty pattern](#pathmatchspecw-with-an-empty-pattern).
 
 The image checked is the `winpe.wim` in [Sources](#sources), version 10.0.26100.1. Other Windows builds were not checked, and neither was a full Windows install.
 
@@ -214,6 +214,46 @@ The files come from the `winpe.wim` in [Sources](#sources). `KernelBase.dll` is 
 
 7-Zip 23.01 took the files from the WIM. `rz-bin` 0.7.4 read the export and import tables. `rizin` 0.7.4 and GNU `objdump` 2.42 disassembled the code. `tools/re/winpe/reproduce.sh` writes the same map as the Python reader, unit for unit, with `tools/re/winpe/case_map.py`. It does not repeat the disassembly, and the Python reader and the Rust program are not in the repository.
 
+## PathMatchSpecW with an empty pattern
+
+MDT's Variable condition passes the variable's value to `PathMatchSpecW` as `pszFile` and the expanded Value as `pszSpec`. It stores the return value as the result (`TsCore!0x1801aa078`, `TsCore!0x1801aa07e`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). MDT checks for an empty Value only before the six comparisons, so Like reaches this call with an empty pattern. This section records what `PathMatchSpecW` in this image returns when the pattern is empty as a whole, and when one part between `;` characters is empty. It covers no other wildcard rule.
+
+The image checked is the `winpe.wim` in [Sources](#sources), version 10.0.26100.1. Other Windows builds were not checked, and neither was a full Windows install.
+
+### Null pointers and an empty pattern
+
+- `PathMatchSpecW` (`KernelBase!0x1800d4dd0`) takes `pszFile` in `rcx` and `pszSpec` in `rdx`. It sets `ebx` to 0 at the start (`KernelBase!0x1800d4de9`) and returns `ebx` (`KernelBase!0x1800d4ed2`).
+- A null `pszSpec` (`KernelBase!0x1800d4df1`) or a null `pszFile` (`KernelBase!0x1800d4dfa`) jumps to the return at `KernelBase!0x1800d4ecd` with `ebx` still 0. So a null pointer gives FALSE.
+- Next, `KernelBase!0x1800d4e03` compares the first unit of `pszSpec` with `bx`, which is 0. When the pattern is empty, it jumps to `KernelBase!0x1800d4eeb`, which sets `ebx` to 1 and jumps to the return. So an empty `pszSpec` gives TRUE for any `pszFile` that is not null, the empty text included. The function does not read the text on this path.
+- This check comes before the copy of the pattern and the cut at each `;` (`KernelBase!0x1800d4e0c` onward). So it covers only a pattern that is empty as a whole.
+
+### An empty part after the cut
+
+- After the cut, `PathMatchSpecW` passes each part with the text to the matcher `KernelBase!0x18001b890` (`KernelBase!0x1800d4eaa`). It stops at the first part that matches, and returns TRUE when a part matched (`KernelBase!0x1800d4eb1` to `KernelBase!0x1800d4ebe`, `KernelBase!0x1800d4ec8` to `KernelBase!0x1800d4eca`). A part that the cut leaves empty, as in the pattern `;` or `a;`, goes to the matcher like any other part.
+- The matcher reads the first unit of the text and the first unit of the pattern. When both are 0, it returns TRUE (`KernelBase!0x18001b8cf` to `KernelBase!0x18001b8d7`, `KernelBase!0x18001ba4f`). When the text unit is not 0 and the pattern unit is 0, it returns FALSE (`KernelBase!0x18001b92b` to `KernelBase!0x18001b92e`, `KernelBase!0x18001b912`). So an empty part matches only empty text.
+
+| `pszFile` | `pszSpec` | Result |
+| --- | --- | --- |
+| `abc` | empty | TRUE |
+| empty | empty | TRUE |
+| `abc` | `;` | FALSE |
+| empty | `;` | TRUE |
+| `abc` or empty | null | FALSE |
+
+So `abc` does not match the pattern `;`, but it does match an empty pattern.
+
+### What MDT passes
+
+- MDT chooses `rdx` (`pszSpec`) as the address `rsp+0x1b0`, or as the pointer stored there when the 64-bit value at `rsp+0x1c8` is at least 8 (`TsCore!0x1801aa04c` to `TsCore!0x1801aa05d`). It chooses `rcx` (`pszFile`) the same way from `rsp+0x1d0` and `rsp+0x1e8` (`TsCore!0x1801aa03e`, `TsCore!0x1801aa066` to `TsCore!0x1801aa06f`).
+- Neither pointer can be null. This is inferred from the shape of the code. The shape matches an MSVC `std::wstring`, which keeps up to 7 units and a terminator in an 8-unit buffer inside the object, and its capacity at offset `0x18`. With a capacity of at least 8, the object holds a pointer to a heap buffer instead. The function's cleanup frees the pointer at `rsp+0x1b0` only when the value at `rsp+0x1c8` is at least 8 (`TsCore!0x1801aa222` to `TsCore!0x1801aa235`). This page does not trace where the heap buffers come from.
+- So on this image, MDT's Variable Like against a Value that expands to empty text is TRUE for every variable value. An unset variable is included, because the reference says that an unset variable and an empty one look the same ([Conditions](mdt-8450-binaries.md#conditions)). This result is inferred, because it rests on the pointers that cannot be null.
+
+### Files and tools for the empty pattern
+
+`KernelBase.dll` comes from the `winpe.wim` in [Sources](#sources), and it is in the table in [Exports with code and forwarders](#exports-with-code-and-forwarders). `TsCore.dll` is the x64 copy at `Microsoft Deployment Toolkit/Templates/Distribution/Tools/x64/TsCore.dll` in the MDT 8450 installer that [Sources](mdt-8450-binaries.md#sources) in the MDT 8450 binaries reference names. `msiextract` from msitools 0.103 unpacked it. It is 2,863,008 bytes, and its SHA-256 is `d0665be2469d52b2078c0153b82322da60fe98f0b5ef9912d01423901fda6bf6`.
+
+7-Zip 23.01 took `KernelBase.dll` from the WIM. GNU `objdump` 2.42 disassembled the code of both files. `rz-bin` 0.7.4 read the import table of `TsCore.dll`, whose slot `TsCore!0x1802b5a08` imports `PathMatchSpecW` from `SHLWAPI.dll`. `tools/re/winpe/reproduce.sh` does not repeat the disassembly.
+
 ## What changes in deployarr
 
 1. The [Agent](../architecture.md#agent) section says it is not yet checked whether base WinPE includes `tbs.dll`. It does not. Replace that sentence with this result, and drop the `tbs.dll` half of the M3 check in the [roadmap](../roadmap.md#m3-bare-metal-deployment-from-boot-media).
@@ -230,3 +270,9 @@ The files come from the `winpe.wim` in [Sources](#sources). `KernelBase.dll` is 
    - Keep folding by `char::to_lowercase`. `Like` then matches every pair that `PathMatchSpecW` matches here, and 215 more from U+0000 to U+FFFF, such as `k` with the Kelvin sign U+212A. `Like` compares `char` values, not UTF-16 units (`crates/deployarr-core/src/evaluate.rs`, `like` and `eq_ignore_case`). So `char::to_lowercase` also matches letters above U+FFFF, such as U+10400 with U+10428. This page does not record what `PathMatchSpecW` does with them. Conditions names that departure.
    - Match only `A` to `Z` with `a` to `z`, as the rule from `Equals` to `GreaterEqual` does. With the table loaded, `Like` then misses 947 pairs that `PathMatchSpecW` matches here, such as `Ä` with `ä` and `Σ` with `σ`, and Conditions names that departure. With the table pointer null, this choice matches what `PathMatchSpecW` matches.
    - Follow this image's case table. `deployarr-core` then carries the 973 changed units as data, and must still choose a rule for characters above U+FFFF and for the double-byte step, whose results this page does not record.
+10. [Conditions](../architecture.md#conditions), in the MDT importer rules that the owner chose on [#340](https://github.com/Tsukidy/deployarr/issues/340#issuecomment-7015289761), says "The reference does not record what `PathMatchSpecW` does with an empty pattern, so MDT's result is not recorded." Replace that sentence with the result from [PathMatchSpecW with an empty pattern](#pathmatchspecw-with-an-empty-pattern): on this image, MDT's Variable Like against a Value that expands to empty text is TRUE for every variable value, an unset variable included. Cite that section and MDT's call at `TsCore!0x1801aa078`. Say that the result is inferred because it rests on pointers that cannot be null, and that other Windows builds were not checked.
+11. In `deployarr-core`, a `Var` `Like` whose Value substitutes to empty text when the condition runs is true only for empty text. The `Var` evaluator's `Like` arm calls `like` with the substituted Value, and `like` returns true for an empty pattern only when the text is empty (`crates/deployarr-core/src/evaluate.rs`, `like`). Its unit test `like_backtracks_over_stars` asserts `!like("a", "")`. MDT gives TRUE for any text. [Conditions](../architecture.md#conditions) says only "`Like` against empty text is not an error" and names no result. Choose one of these:
+   - Follow MDT. A `Var` `Like` whose Value substitutes to empty text then matches any text, the empty text included.
+   - Keep the rule. Name it in Conditions as a departure from MDT, and add a `difference_` test for it in `crates/deployarr-core/tests/conditions.rs`.
+12. The MDT importer rule from [#340](https://github.com/Tsukidy/deployarr/issues/340#issuecomment-7015289761) for a Variable Like with an empty `Value` sets `enabled` to false on the node, and its note says that MDT's result is not recorded. Three texts in [Conditions](../architecture.md#conditions) rest on that and become stale: the note text "For a Variable Like, the note also says that MDT's result for an empty Like pattern is not recorded", the reason "MDT's result for a Variable Like with an empty pattern is not recorded, so these rules name no stand-in for it", and the departure "For a Variable Like, MDT may run the step or group on some PCs, because its result is not recorded". Whether the rule itself changes is the owner's call. For example, MDT's result now matches a condition that is always true.
+13. The [Conditions](mdt-8450-binaries.md#conditions) table row in `docs/research/mdt-8450-binaries.md` that starts "MDT reports a Variable comparison against an empty Value as an error" ends with "For Like, the note also says that MDT's result for an empty pattern is not recorded." Change that row to follow whatever the owner decides in item 12.
