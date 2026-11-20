@@ -1500,6 +1500,34 @@ fn difference_registry_data_is_not_trimmed() {
     }
 }
 
+/// MDT's condition parser reads each `<variable>` element, a Registry
+/// condition's value name and a Variable condition's `Value` included, through
+/// MSXML's `text` property when it parses the sequence (`TsCore!0x180165124`,
+/// called at `TsCore!0x18019a259`), and Microsoft documents that `text` trims
+/// white space at both ends. That MDT therefore trims both texts at both ends
+/// is inferred from that page, because MSXML is outside the binary (#336).
+/// Neither evaluator trims them again. The Registry evaluator expands the value
+/// name at `TsCore!0x1801a71d8` and gives the result no trim call, and the
+/// Variable evaluator (`TsCore!0x1801a96c0`) trims only the operator. So MDT
+/// most likely finds the value `Edition` for the value name ` Edition`, and
+/// finds `5 ` equal to a variable that holds `5`. The agent uses the value name
+/// and compares the `Value` as written, as `docs/architecture.md#conditions`
+/// says, and an MDT importer trims both instead (#383).
+#[test]
+fn difference_registry_value_name_and_var_value_are_not_trimmed() {
+    let machine = Machine::new().value(HKLM_CONTOSO, "Edition", RegValue::Sz("Pro".into()));
+    let padded = registry(HKLM_CONTOSO, Some(" Edition"), json!("exists"));
+    assert!(!check(padded, &Vars::new(), &machine));
+    let trimmed = registry(HKLM_CONTOSO, Some("Edition"), json!("exists"));
+    assert!(check(trimmed, &Vars::new(), &machine));
+
+    let vars = vars_of(&[("Count", "5")]);
+    let padded = var("Count", json!({ "equals": "5 " }));
+    assert!(!check(padded, &vars, &machine));
+    let trimmed = var("Count", json!({ "equals": "5" }));
+    assert!(check(trimmed, &vars, &machine));
+}
+
 // Registry value types.
 
 /// "On a mismatch the engine ... treats the value as missing, for every
