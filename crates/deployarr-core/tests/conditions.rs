@@ -1969,9 +1969,10 @@ fn difference_wmi_namespace_is_not_trimmed() {
 /// evaluator's exit, so the ignore-query-failure flag does not cover it
 /// (`TsCore!0x1801aae22`). For a literal namespace, MDT's parser most likely
 /// trims the text to empty even before that, through MSXML's `text` property
-/// (inferred, #336). deployarr's parser rejects only an empty namespace. A
-/// namespace of only a space parses, and the agent does not trim it, so it
-/// reaches the probe unchanged, as `docs/architecture.md#conditions` says.
+/// (inferred, `docs/research/mdt-8450-binaries.md#conditions`). deployarr's
+/// parser rejects only an empty namespace. A namespace of only a space parses,
+/// and the agent does not trim it, so it reaches the probe unchanged, as
+/// `docs/architecture.md#conditions` says.
 /// Nobody has recorded what WMI does with it.
 #[test]
 fn difference_wmi_a_namespace_of_only_white_space_reaches_the_probe() {
