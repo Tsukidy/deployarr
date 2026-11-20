@@ -66,7 +66,7 @@ Post the explanation as a comment first. Then close it.
 - MCP: `issue_write` with `method: update`, `state: closed`, and `state_reason` set to `completed`, `not_planned`, or `duplicate`. With `duplicate`, also set `duplicate_of` to the number of the kept issue.
 - `gh`: `gh issue close <number> --reason "not planned"`, or `gh issue close <number> --duplicate-of <kept number>` for a duplicate. On an issue that is already closed, `gh issue close --comment` drops the comment and still succeeds.
 
-A pull request that says `Closes #<number>` closes its issue as completed when it merges. Use it only when the merge completes the issue. Otherwise write `Refs #<number>`. A `wontfix` issue is closed by hand, as not planned or as a duplicate, never by a pull request.
+A pull request that says `Closes #<number>` closes its issue as completed when it merges. Use it only when the merge completes the issue. Otherwise write `Refs #<number>`. A `wontfix` issue is closed by hand, as not planned, as a duplicate, or as completed, never by a pull request.
 
 ## Blocking
 
