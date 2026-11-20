@@ -437,7 +437,7 @@ winpe     yes
 | MDT marks a pending reboot with a volatile registry key | The agent does the same and refuses to resume while the marker exists |
 | An empty `successCodeList` fails every exit code | The parser rejects an empty success list (#62). See [JSON format](../architecture.md#json-format) |
 | Exit code 3010 never reboots in MDT | deployarr reboots on 3010 and 1641 on purpose and documents the difference |
-| A `runIn` mismatch fails at run time | A step placed where its action cannot run is a compile error |
+| A `runIn` mismatch fails at run time | A step placed where its action cannot run is a compile error. An MDT importer reads `runIn` by the rules in [Core data shapes](../architecture.md#core-data-shapes) |
 | The engine ignores `startIn` | deployarr honors each command's working directory |
 | `%VAR%` expansion recurses, scans inserted text again, and can loop forever | `Template` substitutes once, from left to right |
 | Scripts reach variables through shared memory with no access control, and `Clear()` erases engine state | Steps reach variables through an agent channel that keeps names starting with `_` read-only and has no bulk clear |
@@ -445,7 +445,7 @@ winpe     yes
 | PnpEnum cannot tell a failed enumeration from a PC with no devices | The agent's device scan returns an error when enumeration fails |
 | `IsUEFI` in 8450 and in `TsCore.dll` misreports BIOS PCs | The agent calls `GetFirmwareType` |
 | Install Application overloads an empty GUID | deployarr's `AppSelection` has explicit variants for one application and for a list |
-| Every editor step gets `runIn="WinPEandFullOS"` | Each deployarr action type fixes where it can run |
+| Every editor step gets `runIn="WinPEandFullOS"` | Each deployarr action type fixes where it can run. An MDT importer reads `runIn` by the rules in [Core data shapes](../architecture.md#core-data-shapes) |
 | Monitoring has no history, reopens finished records, and has no authentication | deployarr keeps per-step events, makes Succeeded and Failed final, and authenticates the agent API |
 | Events block steps, and PowerShell steps send no heartbeat | The agent queues events, sends them in the background with retry, and sends a heartbeat on a timer |
 | The PowerShell host re-parses arguments as source and skips password masking | `RunPowerShell` passes arguments as an array and redacts secrets on every captured stream |
