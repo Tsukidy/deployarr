@@ -579,23 +579,25 @@ fn compare_time(comparison: &Comparison<Timestamp>, found: OffsetDateTime) -> bo
 }
 
 /// Orders two texts as integers when both are integers, and otherwise as text
-/// without regard to case. These are the `var` rules (`TsCore!0x1801a96c0`).
-/// A `registry` comparison follows them too, as `RegData` in
-/// `docs/architecture.md#parameter-types` says.
+/// without regard to ASCII case. These are the `var` rules
+/// (`TsCore!0x1801a96c0`). A `registry` comparison follows them too, as
+/// `RegData` in `docs/architecture.md#parameter-types` says.
 fn compare_text(left: &str, right: &str) -> Ordering {
     match (Integer::parse(left), Integer::parse(right)) {
         (Some(left), Some(right)) => left.cmp(&right),
-        _ => cmp_ignore_case(left, right),
+        _ => cmp_ignore_ascii_case(left, right),
     }
 }
 
-fn cmp_ignore_case(left: &str, right: &str) -> Ordering {
-    let fold = |text: &str| {
-        text.chars()
-            .flat_map(char::to_lowercase)
-            .collect::<Vec<_>>()
-    };
-    fold(left).cmp(&fold(right))
+/// Orders two texts by code point after it folds `A` to `Z` to `a` to `z`.
+/// Every other character stays as it is, so `Ä` and `ä` differ. MDT compares
+/// through `CCM::Utility::String::compare_no_case` (`CcmCore!0x180085f08`),
+/// which calls `_wcsicmp`. That `_wcsicmp` runs in the C locale, where only
+/// ASCII letters fold, is inferred, as `docs/architecture.md#conditions` says.
+fn cmp_ignore_ascii_case(left: &str, right: &str) -> Ordering {
+    let left = left.chars().map(|c| c.to_ascii_lowercase());
+    let right = right.chars().map(|c| c.to_ascii_lowercase());
+    left.cmp(right)
 }
 
 fn eq_ignore_case(left: char, right: char) -> bool {
