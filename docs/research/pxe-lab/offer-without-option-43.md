@@ -196,7 +196,7 @@ tshark -r - -Y dhcp -V < docs/research/pxe-lab/captures/offer-without-option-43-
 ## Not covered
 
 - A DHCP server on another address. In the lab, dnsmasq and the prototype both answer from `10.41.0.1`, so the runs do not show whether a firmware sends its port 4011 request to the proxy OFFER's `siaddr` or option 54, or to the DHCP server. [#139](https://github.com/Tsukidy/deployarr/issues/139) moves dnsmasq off the lab host's network stack.
-- An OFFER without option 97. The `bios` VM runs with `smbios-entry-point-type=32`, so its DISCOVER carries option 97, and every OFFER in the runs carries option 97. [DHCP](../../architecture.md#dhcp) gives a request with no option 97 an OFFER without one.
+- An OFFER without option 97. The `bios` VM's DISCOVER carries option 97, and every OFFER in the runs carries option 97. On the lab's versions, its iPXE ROM sends option 97 with or without the VM's `smbios-entry-point-type=32` ([iPXE option 97 in the PXE lab](ipxe-option-97.md#result)). [DHCP](../../architecture.md#dhcp) gives a request with no option 97 an OFFER without one.
 - The `uefi2023` VM. [#32](https://github.com/Tsukidy/deployarr/issues/32) runs it.
 - The two-stage chain. Its OFFER is the same, and the boots of #28 also passed through it, as [Two-stage boot chain in the PXE lab](two-stage-chain.md) records.
 - Relayed requests, a request that carries option 82, and physical PCs and other firmware.
