@@ -18,7 +18,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use deployarr_core::condition::{Condition, FileVersion, MsiProduct};
 use deployarr_core::evaluate::{
-    ConditionError, Probe, ProbeError, ProbeKind, RegKey, RegValue, WmiError, evaluate,
+    ConditionError, Probe, ProbeError, ProbeKind, RegKey, RegValue, TemplateField, WmiError,
+    evaluate,
 };
 use deployarr_core::non_empty::NonEmpty;
 use deployarr_core::store::{Sensitivity, SetSource, Vars};
@@ -1903,6 +1904,206 @@ fn difference_wmi_namespace_is_not_trimmed() {
         machine.asked(),
         [format!("wmi {namespace} SELECT * FROM Win32_Battery")]
     );
+}
+
+// Empty paths, keys, and queries.
+
+/// MDT fails a condition whose path, key, or query is empty after it expands
+/// and trims it, before it asks the machine. The File check at
+/// `TsCore!0x1801a2c77` comes before `File::Exists` (`TsCore!0x1801a31eb`).
+/// The Folder check at `TsCore!0x1801a3eb6` comes before `Directory::Exists`
+/// (`TsCore!0x1801a42c4`). The Registry check at `TsCore!0x1801a747a` comes
+/// before the key reaches the hive check in `TsCore!0x1801ab5c0`
+/// (`TsCore!0x1801a7787`). The WMI check at `TsCore!0x1801aa872` comes before
+/// the query runs. deployarr's parser rejects empty text, so only a template
+/// that substitutes to empty text reaches this rule. The probe is asked
+/// nothing. An empty key gets this error, not `RegistryHive`, because MDT
+/// checks for an empty key before it checks the hive name.
+#[test]
+fn mdt_an_empty_path_key_or_query_fails_to_evaluate() {
+    let machine = Machine::new()
+        .file(r"C:\x.txt", None, "2026-01-01T00:00:00Z")
+        .key(HKLM_CONTOSO);
+    let vars = vars_of(&[("Empty", "")]);
+    let cases = [
+        (file("%Empty%", None, None), TemplateField::FilePath),
+        (
+            file("%Empty%", Some(("equals", "1.0.0.0")), None),
+            TemplateField::FilePath,
+        ),
+        (folder("%Empty%", None), TemplateField::FolderPath),
+        (
+            registry("%Empty%", None, json!("exists")),
+            TemplateField::RegistryKey,
+        ),
+        (
+            registry("%Empty%", Some("Stage"), json!({ "equals": 1 })),
+            TemplateField::RegistryKey,
+        ),
+        (
+            wmi(r"root\cimv2", "%Empty%", false),
+            TemplateField::WmiQuery,
+        ),
+    ];
+    for (json, field) in cases {
+        let text = json.to_string();
+        assert_eq!(
+            run(json, &vars, &machine),
+            Err(ConditionError::EmptyText {
+                field,
+                template: Template::new("%Empty%"),
+            }),
+            "{text}"
+        );
+    }
+    assert_eq!(machine.asked(), Vec::<String>::new());
+}
+
+/// MDT's empty query check jumps straight to the WMI evaluator's exit, so the
+/// ignore-query-failure flag does not cover it (`TsCore!0x1801aa872`,
+/// `TsCore!0x1801aae22` to `TsCore!0x1801aae46`). A query that substitutes to
+/// empty text fails to evaluate whatever `ignore_failure` says.
+#[test]
+fn mdt_wmi_an_empty_query_is_an_error_even_when_ignored() {
+    let machine = Machine::new();
+    let vars = vars_of(&[("Empty", "")]);
+    for ignore_failure in [false, true] {
+        let json = wmi(r"root\cimv2", "%Empty%", ignore_failure);
+        assert_eq!(
+            run(json, &vars, &machine),
+            Err(ConditionError::EmptyText {
+                field: TemplateField::WmiQuery,
+                template: Template::new("%Empty%"),
+            }),
+            "{ignore_failure}"
+        );
+    }
+    assert_eq!(machine.asked(), Vec::<String>::new());
+}
+
+/// The error for a path, key, or query that substitutes to empty text names
+/// the template as written and the field. `EmptyText` fires only when the
+/// substituted text is empty, so it can never hold a non-empty value. The test
+/// pins the whole error and its whole message, so neither can hold any text
+/// but the template as written and the field's name.
+#[test]
+fn an_empty_text_error_names_the_template_not_a_value() {
+    let vars = vars_of(&[("Blank", "")]);
+    let cases = [
+        (
+            file("%Blank%", None, None),
+            TemplateField::FilePath,
+            "a file path",
+        ),
+        (
+            folder("%Blank%", None),
+            TemplateField::FolderPath,
+            "a folder path",
+        ),
+        (
+            registry("%Blank%", None, json!("exists")),
+            TemplateField::RegistryKey,
+            "a registry key",
+        ),
+        (
+            wmi(r"root\cimv2", "%Blank%", true),
+            TemplateField::WmiQuery,
+            "a WMI query",
+        ),
+    ];
+    for (json, field, field_name) in cases {
+        let text = json.to_string();
+        let error = run(json, &vars, &Machine::new()).expect_err(&text);
+        assert_eq!(
+            error,
+            ConditionError::EmptyText {
+                field,
+                template: Template::new("%Blank%"),
+            },
+            "{text}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("`%Blank%` substitutes to empty text, and {field_name} must not be empty"),
+            "{text}"
+        );
+        assert_eq!(
+            format!("{error:?}"),
+            format!("EmptyText {{ field: {field:?}, template: Template(\"%Blank%\") }}"),
+            "{text}"
+        );
+    }
+}
+
+/// MDT calls `trimLeft` on the expanded path (`TsCore!0x1801a2c01`,
+/// `TsCore!0x1801a3e78`), and `trimLeft` and `trimRight` on the expanded query
+/// right after `toUpper` (`TsCore!0x1801aa770`, `TsCore!0x1801aa77e`,
+/// `TsCore!0x1801aa78c`), before its empty checks
+/// (`TsCore!0x1801a2c77`, `TsCore!0x1801a3eb6`, `TsCore!0x1801aa872`). Both
+/// trims remove space, tab, CR, and LF
+/// (`docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`), so MDT
+/// fails a condition whose path or query is only a space. For a literal path
+/// or query, MDT's parser most likely trims the text to empty even before
+/// that, through MSXML's `text` property (inferred, #336). The agent does not
+/// trim, so a path or query of only a space is not empty. It reaches the
+/// probe as written, as `docs/architecture.md#conditions` says. That holds
+/// for a space that a variable's value gives too.
+#[test]
+fn difference_a_path_or_query_of_only_white_space_reaches_the_probe() {
+    let vars = vars_of(&[("Space", " ")]);
+    let cases = [
+        (file(" ", None, None), "file  "),
+        (file("%Space%", None, None), "file  "),
+        (folder(" ", None), "folder  "),
+        (folder("%Space%", None), "folder  "),
+        (wmi(r"root\cimv2", " ", false), r"wmi root\cimv2  "),
+        (wmi(r"root\cimv2", "%Space%", false), r"wmi root\cimv2  "),
+    ];
+    for (json, question) in cases {
+        let machine = Machine::new().wmi(" ", Ok(false));
+        let text = json.to_string();
+        assert!(!check(json, &vars, &machine), "{text}");
+        assert_eq!(machine.asked(), [question], "{text}");
+    }
+}
+
+/// A query of only a space reaches the probe, as the test above shows. When
+/// the probe fails it, `ignore_failure` covers that failure, so the condition
+/// is false. MDT fails the condition at its empty query check after its trims,
+/// whatever the ignore-query-failure flag says (`TsCore!0x1801aa770`,
+/// `TsCore!0x1801aa77e`, `TsCore!0x1801aa78c`, `TsCore!0x1801aa872`,
+/// `TsCore!0x1801aae22`).
+#[test]
+fn difference_wmi_a_failed_query_of_only_white_space_is_false_when_ignored() {
+    let machine = Machine::new().wmi(" ", Err(WmiError::Query(ProbeError::new(INVALID_QUERY))));
+    let json = wmi(r"root\cimv2", " ", true);
+
+    assert_eq!(run(json, &Vars::new(), &machine), Ok(false));
+    assert_eq!(machine.asked(), [r"wmi root\cimv2  "]);
+}
+
+/// MDT calls `trimLeft` on the expanded key (`TsCore!0x1801a73a5`), so a key
+/// of only a space is empty at its empty key check, which fails the condition
+/// (`TsCore!0x1801a747a`,
+/// `docs/research/mdt-8450-binaries.md#ccmcoredll-string-helpers`). The agent
+/// does not trim the key, so the key is not empty. It fails to evaluate with
+/// `RegistryHive`, because it does not start with a full hive name. The
+/// outcome matches MDT, and the error differs, as
+/// `docs/architecture.md#conditions` says.
+#[test]
+fn mdt_registry_a_key_of_only_white_space_fails_to_evaluate() {
+    let machine = Machine::new().key(HKLM_CONTOSO);
+    let vars = vars_of(&[("Space", " ")]);
+    for key in [" ", "%Space%"] {
+        assert_eq!(
+            run(registry(key, None, json!("exists")), &vars, &machine),
+            Err(ConditionError::RegistryHive {
+                key: Template::new(key)
+            }),
+            "{key}"
+        );
+    }
+    assert_eq!(machine.asked(), Vec::<String>::new());
 }
 
 // Errors.
