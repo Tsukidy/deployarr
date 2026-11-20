@@ -2,6 +2,13 @@
 
 This page holds the rules for how a session runs pull request reviews, subagents, and workflow agents. [Branches and pull requests](../../AGENTS.md#branches-and-pull-requests) links it.
 
+## Cargo builds by agents that run at once
+
+A session never lets two agents that run at the same time share one cargo target folder, through one checkout or through one `CARGO_TARGET_DIR`. Neither `.cargo/config.toml` nor the `env` environment sets a target folder, so cargo builds into the `target` folder of the checkout it runs in. A shared folder lets one agent's test run pick up another agent's build, so local test results stop being reliable.
+
+- Each subagent or workflow agent that runs `cargo` while another agent may run it too sets its own `CARGO_TARGET_DIR` before its first `cargo` command. A folder in the session scratchpad, such as `cargo-target-issue-361` for the agent that works issue #361, is an example.
+- The session that starts such an agent names that folder in the agent's prompt, because the agent does not read this page.
+
 ## Pull request reviews
 
 These rules hold at every effort level, and with ultracode on.
@@ -21,3 +28,14 @@ This round is the review that [Branches and pull requests](../../AGENTS.md#branc
 | A few lines that add one rule to a page in `docs/agents/` | One reviewer reads the diff against the ticket's acceptance criteria and checks that no other rule contradicts it. |
 | An owner answer that rewrites one sentence after the round | One reviewer reads that sentence against the answer. |
 | A research page with many new claims and citations | A few reviewers split the claims, and each opens the citations it checks. A skeptic checks each finding that changes a claim. |
+
+## GitHub work in a cloud session
+
+When a cloud session gives work on issues or pull requests to a subagent or a workflow agent, it says in that agent's prompt to:
+
+- load the `mcp__github__*` tools it needs with ToolSearch, and use them for issues and pull requests;
+- use `gh` only for REST search, as [Tools](issue-tracker.md#tools) on the issue tracker page shows.
+
+The agent's Bash tool description points it to `gh` for GitHub work, and its `mcp__github__*` tools start unloaded. Without these two lines, the agent reaches for `gh` first.
+
+This rule is for cloud sessions only. A local session and its agents can use `gh`, as [Tools](issue-tracker.md#tools) says.
