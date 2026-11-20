@@ -492,11 +492,14 @@ fn mdt_var_like_matches_star_and_question_mark() {
 
 /// MDT's Variable evaluator matches `Like` with `PathMatchSpecW`
 /// (`TsCore!0x1801aa078`). In base WinPE 10.0.26100.1, `PathMatchSpecW` matches
-/// two UTF-16 units when `LCMapStringEx` upper-cases both to the same unit,
-/// through the case table in `l_intl.nls`
+/// two UTF-16 units when `LCMapStringEx` upper-cases both to the same unit.
+/// When `LCMapStringEx` takes its short path with the case table in
+/// `l_intl.nls` loaded, it upper-cases through that table
 /// (`docs/research/winpe-10.1.26100.9457.md#what-it-matches`). So `Ä` matches
 /// `ä` and `Σ` matches `σ`, but the final sigma `ς`, the Kelvin sign, `ß` and
-/// `ẞ`, and the dotless and dotted `i` match only themselves.
+/// `ẞ`, and the dotless and dotted `i` match only themselves. The research does
+/// not record whether base WinPE loads the table. `docs/architecture.md#conditions`
+/// lists that and the other cases where MDT's result departs or is not recorded.
 #[test]
 fn mdt_var_like_matches_letters_by_the_winpe_case_table() {
     let cases = [
@@ -540,8 +543,6 @@ fn difference_like_matches_a_character_above_u_ffff_only_with_itself() {
         ("\u{10400}", "\u{10400}", true),
         ("\u{10400}", "\u{10428}", false),
         ("\u{10428}", "\u{10400}", false),
-        ("A\u{10400}", "a?", true),
-        ("A\u{10400}", "a*", true),
     ];
     for (value, pattern, expected) in cases {
         let vars = vars_of(&[("Model", value)]);

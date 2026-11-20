@@ -3,10 +3,14 @@
 //!
 //! `PathMatchSpecW` compares one UTF-16 unit at a time after it upper-cases
 //! each unit through `LCMapStringEx`. In the WinPE image of the add-on for
-//! ADK 10.1.26100.9457 (version 10.0.26100.1), that maps `a` to `z` to `A` to
-//! `Z`, keeps every other unit below U+00C0, and maps a unit from U+00C0 up
-//! through the case table in `l_intl.nls`
-//! (`docs/research/winpe-10.1.26100.9457.md#pathmatchspecw-letter-case`).
+//! ADK 10.1.26100.9457 (version 10.0.26100.1), when `LCMapStringEx` takes its
+//! short path with the case table in `l_intl.nls` loaded, that maps `a` to `z`
+//! to `A` to `Z`, keeps every other unit below U+00C0, and maps a unit from
+//! U+00C0 up through that table
+//! (`docs/research/winpe-10.1.26100.9457.md#pathmatchspecw-letter-case`). The
+//! research does not record whether base WinPE loads the table.
+//! `docs/architecture.md#conditions` lists that and the other cases where
+//! MDT's result departs or is not recorded.
 //!
 //! The map is generated data. `tools/re/winpe/case_map.py` writes it from
 //! that image's `l_intl.nls`, as `tools/re/README.md#winpe` says. The file has
