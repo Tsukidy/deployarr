@@ -34,7 +34,8 @@ mod upper_case;
 /// hold a secret value. An implementation must not write it to a log line or
 /// put it in an error. No path, key, or query that the evaluator passes is
 /// empty, because the evaluator fails a condition whose text substitutes to
-/// empty text before it asks.
+/// empty text before it asks. No WMI namespace is empty either, because the
+/// parser rejects an empty one and the evaluator does not substitute it.
 ///
 /// A missing file, folder, registry key, or registry value is an answer, not
 /// an error. A method returns `Err` only when it cannot tell, such as when
@@ -403,7 +404,7 @@ impl Evaluator<'_> {
                 ignore_failure,
             } => {
                 let query = self.required(query.as_template(), TemplateField::WmiQuery)?;
-                match self.probe.wmi_has_rows(namespace, &query) {
+                match self.probe.wmi_has_rows(namespace.as_str(), &query) {
                     Ok(has_rows) => Ok(has_rows),
                     Err(WmiError::Query(_)) if *ignore_failure => Ok(false),
                     Err(WmiError::Query(error)) => Err(failed(ProbeKind::WmiQuery)(error)),
