@@ -316,7 +316,7 @@ python3 -I ~/deployarr-lab/runs/222/tools/textrows.py compare <control frame> <r
 
 ## What is inferred
 
-- The boot manager drew the text with the served font (inferred). Each run's text matches its control's pixel for pixel. The two `wgl4_boot.ttf` files hold the same glyph, bitmap, and metric tables byte for byte ([The two font sets](#the-two-font-sets)), so either file gives the same pixels. #27's frames give the same pixels too. A boot manager that drew with a fallback of its own could also give these pixels. No run served an empty `boot/fonts`, so these runs cannot tell the two cases apart.
+- The boot manager drew the text with the served font (inferred). Each run's text matches its control's pixel for pixel. The two `wgl4_boot.ttf` files hold the same glyph, bitmap, and metric tables byte for byte ([The two font sets](#the-two-font-sets)), so either file gives the same pixels. #27's frames give the same pixels too. A boot manager that drew with a fallback of its own could also give these pixels. No run served an empty `boot/fonts`, so these runs cannot tell the two cases apart. [An empty boot fonts folder in the PXE lab](no-boot-fonts.md#the-inference-under-test) tests this inference.
 - On the `uefi2023` VM, the `UnlockToken.pol` request comes from the OS loader that the boot manager starts, as [What is inferred](single-stage-chain.md#what-is-inferred) of the single-stage page records. So it shows that the loader ran. Only the last screendump shows that WinPE started.
 - WinPE on the `uefi2023` VM sends no DHCP because it has no driver for the virtio-net card, as [What is inferred](single-stage-chain.md#what-is-inferred) of the single-stage page records for the `uefi` VM. Both VMs use the same card.
 
