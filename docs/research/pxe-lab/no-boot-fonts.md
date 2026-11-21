@@ -16,9 +16,9 @@ Paths in code font that start with `runs/`, `captures/`, `tftp/`, or `plans/` ar
 - Neither boot manager stopped at the missing font. Each asked for `\boot\fonts\wgl4_boot.ttf` twice, with `tsize=0` both times, and got File not found both times. Then each loaded `boot.sdi` and `boot.wim`, asked for `UnlockToken.pol`, and started WinPE.
 - Neither asked for another font, or for the font at another path. Each run's `derived/requests.txt` reads `fonts_requested=wgl4_boot.ttf`, `other_fonts=none`, and `default_path_fonts=none`.
 - Without the font, each boot manager drew the `Loading files...` screen in another way. On `bios`, the screen stayed 720x400, where #222's was 1024x768, and showed text-mode glyphs. On `uefi2023`, the screen was 1280x800 as in #222, but the glyphs were smaller, of another typeface, and higher and further right. For both runs, `textrows.py compare` against #222's control frame prints `text bands differ` (`runs/347/<run>/derived/compare-222.txt`).
-- Each fresh control served the #222 control's lab root, unchanged. Each made #222's requests and drew #222's text bands, and each `derived/control.txt` reads `FRESH-CONTROL-SAME-AS-222`. The `uefi2023-control` frame is the same file as #222's control frame. So the lab still draws #222's pixels when it serves the font, and the empty folder made the difference.
+- Each fresh control served the #222 control's lab root, unchanged. Each made #222's requests and drew #222's text bands, and each `derived/control.txt` reads `FRESH-CONTROL-SAME-AS-222`. The `uefi2023-control` frame is the same file as #222's control frame. So the lab still draws #222's pixels when it serves the font. The empty folder made the difference.
 - So the #222 inference holds. The boot managers drew #222's `Loading files...` pixels only when the font was served. [The inference under test](#the-inference-under-test) gives the reasoning.
-- No run paused before `boot.wim`. In every run, `frames.py select` found no gap of 3 seconds or more between TFTP log lines after the store (`derived/selected.txt`, `NONE hold`). So the owner's rule for a pause with equal text bands ([Owner input on #347](https://github.com/Tsukidy/deployarr/issues/347#issuecomment-7052242379)) had no case to apply to.
+- No run paused before `boot.wim`. In every run, `frames.py select` found no gap of 3 seconds or more between TFTP log lines after the store and before the `boot.wim` RRQ with `blksize`, while no transfer was open (`derived/selected.txt`, `NONE hold`). That is the hold rule in `frames.py` lines 54 to 57. So the owner's rule for a pause with equal text bands ([Owner input on #347](https://github.com/Tsukidy/deployarr/issues/347#issuecomment-7052242379)) did not apply.
 - WinPE's own screen did not change. Each run's last screendump shows WinPE's `cmd.exe` window after `wpeinit`, with the same text bands as its control's last screendump (`derived/selected.txt`, `LAST`).
 
 ## The inference under test
@@ -27,7 +27,7 @@ Paths in code font that start with `runs/`, `captures/`, `tftp/`, or `plans/` ar
 
 > The boot manager drew the text with the served font (inferred). Each run's text matches its control's pixel for pixel. The two `wgl4_boot.ttf` files hold the same glyph, bitmap, and metric tables byte for byte ([The two font sets](boot-fonts.md#the-two-font-sets)), so either file gives the same pixels. #27's frames give the same pixels too. A boot manager that drew with a fallback of its own could also give these pixels. No run served an empty `boot/fonts`, so these runs cannot tell the two cases apart.
 
-The brief set the reading. Different or missing text supports the inference. The same pixels would mean a fallback that draws them.
+The [agent brief on #347](https://github.com/Tsukidy/deployarr/issues/347#issuecomment-7022537044) sets how to read the result. Different or missing text supports the inference. The same pixels would mean that the boot manager has a fallback that draws them, so the #222 runs could not show which font drew the text.
 
 - Both runs drew different text ([Screens](#screens)).
 - Each run differs from its fresh control only in `boot/fonts`. Its root is the control's root less the 16 fonts, with every other file a hard link to the control's file ([The TFTP roots](#the-tftp-roots)). The request sequences differ only in the second font request, which carried `tsize=0` in the run and `tsize=0,blksize=1456` in the control (`derived/rrq-diff-222.txt`).
@@ -48,7 +48,7 @@ Each boot manager did draw a screen without the font, so it has a fallback. The 
 | `uefi2023` VM | As in [Setup](boot-fonts.md#setup) of the boot fonts page. Its variable store was a fresh copy of `OVMF_VARS_4M.win23.fd`, checked with `cmp` (`runs/347/<run>/vmfolder.txt`, `vars.fd-is-template-copy`). After each run, `virt-fw-vars` read `SecureBootEnable    : bool: ON` from it (`derived/secure-boot.txt`). |
 | `bios` VM | As in [Setup](boot-fonts.md#setup) of the boot fonts page |
 | VM folders | `runs/347/<run>/<vm>/`, new for each run, through `LAB_DIR=runs/347/<run>`. The run script did not touch `~/deployarr-lab/bios` or `~/deployarr-lab/uefi2023` (`host/labvm-before.txt` and `host/labvm-after.txt` are the same). |
-| Screendumps | One about every second, one more right after each log line for a font or `UnlockToken.pol`, and a last one before the stop (`runs/347/<run>/shots/shots.tsv`). #222 took one about every 2 seconds, so a `boot.wim` window here holds about twice as many frames. |
+| Screendumps | One in each pass of the run script's wait loop, about every second. One more in each pass that found a new log line for a font or `UnlockToken.pol`, and a last one before the stop (`run.sh` lines 520 to 533 and 563 to 564, `runs/347/<run>/shots/shots.tsv`). Each run took two such event frames, one for the font requests and one for `UnlockToken.pol` (`derived-page/shots-reasons.txt`). #222 took one about every 2 seconds, so a `boot.wim` window here holds about twice as many frames. |
 
 The prototype's `started` line names the run's root, `chain=single`, `dhcp_ports=67,4011`, and the default stores. On `bios`, the ACK named `boot\x64\pxeboot.n12` and option 252 = `boot\bios.bcd`. On `uefi2023`, the ACK named `boot\x64\bootmgfw.efi` and option 252 = `boot\uefi.bcd`.
 
@@ -56,10 +56,10 @@ The prototype's `started` line names the run's root, `chain=single`, `dhcp_ports
 | --- | --- | --- | --- |
 | `bios` | 22:33:44.813 | 22:35:55.554, 130.741 s after VM start | `loader+30` |
 | `bios-control` | 22:37:03.658 | 22:39:14.158, 130.500 s | `loader+30` |
-| `uefi2023` | 22:40:20.620 | 22:41:50.943, 90.323 s | `loader+30` |
-| `uefi2023-control` | 22:43:01.289 | 22:44:30.587, 89.299 s | `loader+30` |
+| `uefi2023` | 22:40:20.619 | 22:41:50.942, 90.323 s | `loader+30` |
+| `uefi2023-control` | 22:43:01.288 | 22:44:30.587, 89.299 s | `loader+30` |
 
-The VM start comes from each run's `times.txt`. The last screendump comes from the last row of `shots.tsv`, after the screendump returned (`runs/347/derived-page/stop-times.txt`). The runs ran in this order, one at a time. The run script wrote the wall clock and `/proc/uptime` at each step. Within each run, wall clock minus uptime stays within 0.010 seconds, and puts the host's start at 2026-11-18 20:40:58 UTC for all four runs (`derived-page/clock.txt`). So the host did not restart during the runs. It is the same boot as #222's run 2.
+The VM start comes from each run's `times.txt`. The last screendump comes from the last row of `shots.tsv`, after the screendump returned (`runs/347/derived-page/stop-times.txt`). Each time is cut to the millisecond, as `times.txt` prints it. The seconds come from the full epochs. The runs ran in this order, one at a time. The run script wrote the wall clock and `/proc/uptime` at each step. Within each run, wall clock minus uptime stays within 0.010 seconds. That puts the host's start at 2026-11-18 20:40:58 UTC for all four runs (`derived-page/clock.txt`). So the host did not restart during the runs. It is the same boot as #222's run 2, which [Setup](boot-fonts.md#setup) of the boot fonts page dates to 20:40:58 UTC.
 
 ### Lab changes since #222
 
@@ -69,7 +69,7 @@ The VM start comes from each run's `times.txt`. The last screendump comes from t
 - `tools/lab/network.sh` adds the opt-in NAT uplink, with `UPLINK=${LAB_UPLINK:-0}`. It stays off unless `LAB_UPLINK=1`.
 - `tools/pxe-prototype/README.md` changes text about option 97.
 
-`tools/lab/vm.sh` and the prototype's `.py` files are not in the diff. `host/lab-diff-after.txt` is the same as the record before. The run script refused to start unless `git diff --stat dbea61c HEAD -- tools/lab tools/pxe-prototype` printed nothing. With the uplink off, the runs used the same lab code as #222, and the fresh controls gave #222's requests and pixels.
+`tools/lab/vm.sh` and the prototype's `.py` files are not in the diff. `host/lab-diff-after.txt` is the same as the record before. The run script refused to start unless `git diff --stat dbea61c HEAD -- tools/lab tools/pxe-prototype` printed nothing. With the uplink off, `network.sh` runs dnsmasq with the same options as at `3fc0d3f` (`dnsmasq_args` in the diff). Before and after the runs, `network.sh status` printed `dnsmasq options: option:router,10.41.0.1`, with no DNS server option (`host/network-status-before.txt`, `host/network-status-after.txt`). So the runs used the same lab setup as #222. The fresh controls gave #222's requests and pixels.
 
 ### The TFTP roots
 
@@ -82,7 +82,7 @@ cp -al /home/user/deployarr-lab/tftp/2023 /home/user/deployarr-lab/runs/347/root
 find /home/user/deployarr-lab/runs/347/roots/uefi2023/boot/fonts -mindepth 1 -maxdepth 1 -type f -print -delete
 ```
 
-`cp -al` makes new directories and a hard link for each file. `find -print -delete` unlinks the 16 font names in the new `boot/fonts` and prints each one. No file was opened for writing, copied, or changed in mode. The new `boot/fonts` folder stays, with mode 775.
+`cp -al` makes new directories and a hard link for each file. `find -print -delete` unlinks the 16 font names in the new `boot/fonts` and prints each one. The commands open no file for writing, copy no file, and change no mode. The new `boot/fonts` folder stays, with mode 775 (`roots/<vm>-build.txt`, `## boot/fonts`).
 
 Each build file records this proof:
 
@@ -97,11 +97,11 @@ Each build file records this proof:
 
 Each run's `env.txt` printed `ABSENT boot/fonts/wgl4_boot.ttf` and `fonts_entries=0`. After each run, `times.txt` recorded `fonts_entries_after=0` and the store's inode unchanged.
 
-Building the roots raised 31 link counts in `tftp/` by one and changed no inode (`host/links-after-build.txt`, `derived-page/host-checks.txt`). After the runs, `remove_roots.sh` checked each root again, 15 files linked to the base and no symbolic link or single-link file, and then removed both (`host/roots-removed-20261120T224556Z.txt`, `REMOVED`). Every link count came back. `host/links-after.txt` is the same as `host/links-before.txt`.
+Building the roots changed 31 link counts in `tftp/` and changed no inode or path (`host/links-after-build.txt`, `derived-page/host-checks.txt`, `inodes-and-paths-unchanged-after-build`). 28 counts rose by one. The three names of `boot.wim`'s inode 2759775 rose by two, from 4 to 6, one for each root. After the runs, `remove_roots.sh` checked each root again. Each held 15 files linked to the base, no symbolic link, and no single-link file. The script then removed both roots (`host/roots-removed-20261120T224556Z.txt`, `REMOVED`). Every link count came back. `host/links-after.txt` is the same as `host/links-before.txt`.
 
 ## Versions
 
-`host/versions-before.txt` and `host/versions-after.txt` are the same. They list QEMU 10.2.1, SeaBIOS 1.17.0, OVMF 2025.11, ipxe-qemu 1.21.1+git-20250829.969ce2c55, swtpm 0.10.1, dnsmasq 2.92, tshark 4.6.4, Python 3.14.4, and OpenSSL 3.5.5, the versions of [Versions](boot-fonts.md#versions) on the boot fonts page. `host/firmware-before.txt` and `host/firmware-after.txt` are the same too. The `uefi2023` template `OVMF_VARS_4M.win23.fd` has the SHA-256 `16b2478518659d692b85cd6e400b23a28f924ec95a63da86e904d8e4792462d3`.
+`host/versions-before.txt` and `host/versions-after.txt` are the same. They list QEMU 10.2.1, SeaBIOS 1.17.0, OVMF 2025.11, ipxe-qemu 1.21.1+git-20250829.969ce2c55, swtpm 0.10.1, dnsmasq 2.92, tshark 4.6.4, and Python 3.14.4, the versions of [Versions](boot-fonts.md#versions) on the boot fonts page. They also list OpenSSL 3.5.5, which the boot fonts page does not give. `host/firmware-before.txt` and `host/firmware-after.txt` are the same too. The `uefi2023` template `OVMF_VARS_4M.win23.fd` has the SHA-256 `16b2478518659d692b85cd6e400b23a28f924ec95a63da86e904d8e4792462d3`.
 
 The runs served these files. Each size and SHA-256 comes from the `served` lines of `derived/requests.txt`, which hash the path the prototype logged for a complete transfer.
 
@@ -116,7 +116,7 @@ The runs served these files. Each size and SHA-256 comes from the `served` lines
 | `boot/uefi.bcd` | Both `uefi2023` runs | 12288 | `c0164082153aa4eeb826b68d9e3acb4ad815fbf64b8dc1b8a51ef0f02d010224` |
 | `boot/boot.sdi` | All four | 3170304 | `cd2c00ce027687ce4a8bdc967f26a8ab82f651c9becd703658ba282ec49702bd` |
 
-`boot/x64/boot.wim` is 572691590 bytes in every run. It is one inode, 2759775, linked into both lab roots and both run roots (`roots/<vm>-build.txt`). It is the image in [Versions](boot-fonts.md#versions) of the boot fonts page. Each file above is the one the boot fonts page gives for the same path.
+`boot/x64/boot.wim` is 572691590 bytes in every run. It is one inode, 2759775, linked into both lab roots and both run roots (`roots/<vm>-build.txt`). #347 did not hash `boot.wim` again. Its SHA-256 in `tftp/manifest.txt` is the one that [Versions](boot-fonts.md#versions) of the boot fonts page gives. The inode was born, and last modified, on 2026-11-12, before #222's runs on 2026-11-18 (`derived-page/boot-wim.txt`). So it is the image in [Versions](boot-fonts.md#versions) of the boot fonts page. Each file above is the one the boot fonts page gives for the same path.
 
 ## The `bios` VM
 
@@ -155,7 +155,7 @@ The run made 13 TFTP requests (`runs/347/bios/derived/requests.txt`).
 - The requests are those of #222's `bios` control, file for file, except RRQ 10. In #222's control and in the fresh control, RRQ 10 carried `tsize=0,blksize=1456` and completed. Here it carried `tsize=0` (`derived/rrq-diff-222.txt`).
 - Lines 33 to 36 of `prototype.log` hold the font requests. RRQ 9 came from `10.41.0.192:6702`, and the prototype sent `kind=ERROR code=1 message="File not found"` to the same client. RRQ 10 came from port 6703 and got the same reply. Both came at 22:33:52.553, and the second reply at 22:33:52.554. No `transfer-finished` line names either client (`font_late_finish=no`).
 - RRQ 11, for `boot.sdi`, came 61 ms after the second reply.
-- Frame `0010.png`, taken at 22:33:53.347 right after the font requests, shows `Loading files...`, a bar, and `IP: 10.41.0.1, File: \boot\boot.sdi` on a 720x400 screen. Every frame from `0001.png` to `0098.png` is 720x400. The screen turned 1024x768 only at `0099.png`, 22:35:25.264, after `boot.wim` completed (`derived-page/frame-sizes.txt`). In the fresh control, it turned 1024x768 at `0009.png`, 22:37:12.163, right after the font loaded.
+- Frame `0010.png`, the event frame for the font requests, was taken at 22:33:53.347, 0.793 s after the second reply. Tick frame `0009.png`, at 22:33:53.315, came between them (`derived-page/shots-reasons.txt`). `0010.png` shows `Loading files...`, a bar, and `IP: 10.41.0.1, File: \boot\boot.sdi` on a 720x400 screen. Every frame from `0001.png` to `0098.png` is 720x400. The screen turned 1024x768 only at `0099.png`, 22:35:25.264, after `boot.wim` completed (`derived-page/frame-sizes.txt`). In the fresh control, it turned 1024x768 at `0009.png`, 22:37:12.163, the first frame after the font loaded, 0.762 s later.
 - From `0012.png` to `0098.png`, the screen shows `Loading files...`, the bar, and `IP: 10.41.0.1, File: \boot\x64\boot.wim`.
 - WinPE's DISCOVER and REQUEST carry option 60 `MSFT 5.0`. They are frames 37 and 39 of the committed capture, and dnsmasq answers each from `10.41.0.2`, in frames 38 and 40 (`derived/winpe-dhcp.txt`, `derived-page/dhcp-fields.txt`). The prototype logs both as `dhcp-ignored` with `reason=no-option-93`.
 - The last screendump, `0130.png` at 22:35:55.548, shows the window `Administrator: X:\windows\system32\cmd.exe` at a prompt after `wpeinit` (`derived-page/winpe-read.txt`). So WinPE started.
@@ -207,8 +207,8 @@ RRQs 3 to 32 carried `tsize=0` unless the table names other options.
 
 - The requests are those of #222's `uefi2023` control, file for file, except RRQ 29. In #222's control and in the fresh control, RRQ 29 carried `tsize=0,blksize=1456` and completed. Here it carried `tsize=0` (`derived/rrq-diff-222.txt`).
 - RRQ 28 came from `10.41.0.177:10149` and RRQ 29 from port 10150, both at 22:40:28.088. The prototype sent `kind=ERROR code=1 message="File not found"` to each client. No `transfer-finished` line names either client (`font_late_finish=no`). RRQ 30, for `boot.sdi`, came 23 ms later.
-- The serial log is 24735 bytes. Its first 668 bytes are the control's whole serial log, which ends with OVMF's `BdsDxe: starting Boot0003`. After them, the run's log holds the boot manager's screen as text. It holds `Loading files...` twice, `IP: 10.41.0.1, File: \boot\boot.sdi` once, and `IP: 10.41.0.1, File: \boot\x64\boot.wim` once, each after a cursor escape to row 20 or row 23 and column 3. It also holds 196 updates of a bar on row 22, from column 3 (`derived-page/serial-logs.txt`).
-- Frame `0009.png`, taken at 22:40:28.236 right after the font requests, shows `Loading files...`, a short bar, and `IP: 10.41.0.1, File: \boot\boot.sdi` in small glyphs. From `0011.png` to `0058.png`, the screen shows `Loading files...`, the bar, and `IP: 10.41.0.1, File: \boot\x64\boot.wim` in the same glyphs.
+- The serial log is 24735 bytes. Its first 668 bytes are the control's whole serial log, which ends with OVMF's `BdsDxe: starting Boot0003`. After them, the run's log holds the boot manager's screen as text. It holds `Loading files...` twice, `IP: 10.41.0.1, File: \boot\boot.sdi` once, and `IP: 10.41.0.1, File: \boot\x64\boot.wim` once. Each follows a cursor escape to column 3 of row 20 or row 23. It also holds 196 updates of a bar on row 22, from column 3 (`derived-page/serial-logs.txt`).
+- Frame `0009.png`, the event frame for the font requests, was taken at 22:40:28.236, 0.148 s after the replies (`derived-page/shots-reasons.txt`). It shows `Loading files...`, a short bar, and `IP: 10.41.0.1, File: \boot\boot.sdi` in small glyphs. From `0011.png` to `0058.png`, the screen shows `Loading files...`, the bar, and `IP: 10.41.0.1, File: \boot\x64\boot.wim` in the same glyphs.
 - The last screendump, `0090.png` at 22:41:50.935, shows the window `Administrator: X:\windows\system32\cmd.exe` at a prompt after `wpeinit` (`derived-page/winpe-read.txt`). So WinPE started.
 
 ### Fresh control with `Fonts_EX`
@@ -252,7 +252,7 @@ A run's `boot.wim` window starts 1 second after the `boot.wim` RRQ with `blksize
 | `uefi2023` | 22:40:28.679 to 22:41:19.690 | 48, `0011.png` to `0058.png` | 48 | 1 |
 | `uefi2023-control` | 22:43:09.065 to 22:43:59.517 | 47, `0011.png` to `0057.png` | 1 | 0 |
 
-The text itself did not change within either run's window. `window_exit=1` comes from the bar row. `textrows.py` takes a band as the bar only when its first row has 600 or more lit pixels. In the run frames, the bar is a row of text cells, and its first row holds fewer lit pixels until the bar fills, so `textrows.py` counts it as a text band that changes with progress. `derived-page/band-presence.txt` shows this per band.
+The text itself did not change within either run's window. `window_exit=1` comes from the bar row. `textrows.py` takes a band as the bar only when its first row has 600 or more lit pixels. In the run frames, the bar is a row of text cells. Its first row holds fewer than 600 lit pixels until the bar fills. So `textrows.py` counts it as a text band that changes with progress. `derived-page/band-presence.txt` shows this per band.
 
 - On `bios`, rows 306 to 318 and rows 354 to 364 have one SHA-256 in all 87 frames. Rows 336 to 351 have 87 values. `textrows.py` called that band text in 77 frames and the bar in 10.
 - On `uefi2023`, rows 526 to 540 and rows 583 to 594 have one SHA-256 in all 48 frames. Rows 561 to 579 have 48 values.
@@ -269,7 +269,7 @@ Each run's `derived/control.txt` reads `same_text_as_222=no` and `CONTROL=needed
 - `window_exit=1`.
 - `match-222.txt` does not read `SCREENS-MATCH`.
 
-The first reason alone makes the text differ. The other two follow from it and from the bar row ([Screens](#screens)). As the owner chose ([Owner input on #347](https://github.com/Tsukidy/deployarr/issues/347#issuecomment-7050660624)), each VM then got a fresh control from #222's lab root, unchanged. Before it started each control, the run script checked the store, the boot manager, and `wgl4_boot.ttf` against `tftp/manifest.txt` (`run.sh` lines 129 to 154). Each control's `env.txt` lists their hashes. Each control's `control.txt` reads `same_text_as_222=yes` and `FRESH-CONTROL-SAME-AS-222`. Its requests are `SAME-AS-222`, its text bands equal #222's (`compare_exit=0`), its window holds one set of text bands (`window_exit=0`), and `match-222.txt` reads `SCREENS-MATCH`.
+The first reason alone makes the text differ. The other two follow from it and from the bar row ([Screens](#screens)). As the owner chose ([Owner input on #347](https://github.com/Tsukidy/deployarr/issues/347#issuecomment-7050660624)), each VM then got a fresh control from #222's lab root, unchanged. Before it started each control, the run script checked the store, the boot manager, and `wgl4_boot.ttf` against `tftp/manifest.txt`, and that `boot/fonts` held 16 entries (`run.sh` lines 130 to 156). Each control's `env.txt` lists their hashes. Each control's `control.txt` reads `same_text_as_222=yes` and `FRESH-CONTROL-SAME-AS-222`. Its requests are `SAME-AS-222`, its text bands equal #222's (`compare_exit=0`), its window holds one set of text bands (`window_exit=0`), and `match-222.txt` reads `SCREENS-MATCH`.
 
 Each control's full capture also has the packet and byte count of #222's control on the same VM, as [Captures](boot-fonts.md#captures) of the boot fonts page gives them.
 
@@ -293,7 +293,7 @@ Each capture has a `tshark -V` decode of its DHCP packets next to it, with `-dhc
 
 - The counts come from each run's `derived/capture-checks.txt`. The `dumpcap` logs, next to the full captures, report no dropped packets.
 - Each run's full capture has 37 packets fewer than its control's. It has 36 fewer TFTP ACKs, 2 fewer OACKs, and 1 more ERROR packet (`tftp_acks`, `tftp_oacks`, and `tftp_errors` in `capture-checks.txt`). That fits the font transfer of 35 blocks and the two OACKs that the run did not get (inferred).
-- The TFTP data and fragment check from the lab guide prints nothing for the full and the committed captures. So do the filters `udp.payload[0:2] == 00:03` and `ipv6.fragment or ipv6.fraghdr` (`derived/capture-checks.txt`, `data_or_fragments=0 raw_data=0 ipv6_fragments=0`). The same three filters print nothing for the copies in the repository either (`derived-page/repo-checks.txt`).
+- The TFTP data and fragment check from [Run an experiment](../../lab-setup.md#run-an-experiment) of the lab guide prints nothing for the full and the committed captures. So do the filters `udp.payload[0:2] == 00:03` and `ipv6.fragment or ipv6.fraghdr` (`derived/capture-checks.txt`, `data_or_fragments=0 raw_data=0 ipv6_fragments=0`). The same three filters print nothing for the copies in the repository either (`derived-page/repo-checks.txt`).
 - The committed copies come out byte for byte the same when made again from the full captures (`copy-reproducible`). The decodes made again from the copies in the repository are the same files too (`decode-remade-same`).
 
 The raw evidence stays on the lab host in `runs/347/`: the prototype logs, the serial logs, every screendump, the clock stamps, the build and removal records, and the scripts.
@@ -326,9 +326,9 @@ sudo -n dumpcap -i br-lab -f 'udp and udp[8:2] != 3' -a duration:600 -w - > ~/de
 LAB_DIR=~/deployarr-lab/runs/347/<run> timeout -k 15 420 $LAB/tools/lab/vm.sh <vm> -display none -monitor unix:~/deployarr-lab/runs/347/<run>/mon.sock,server,nowait
 ```
 
-After each pass, the script sent the HMP command `screendump <file> -f png` through the monitor socket. It stopped 30 seconds after the first `UnlockToken` line in the prototype's log (`run.sh` lines 111, 534 to 552). It counts with Bash's whole-second `SECONDS`, so the stops came 29.4 to 31.1 seconds after the request (`derived-page/stop-times.txt`). The other stop rules, `font-quiet+60`, `cap+240`, and `hard-cap+300`, did not fire. Then the HMP command `quit` stopped the VM, and `SIGINT` stopped the prototype and then `dumpcap`.
+In each pass of its wait loop, which ends with a one-second sleep, the script sent the HMP command `screendump <file> -f png` through the monitor socket (`run.sh` lines 509 to 561). The script stopped the run 30 seconds after the first `UnlockToken` line in the prototype's log (`run.sh` lines 111, 534 to 552). It counted with Bash's whole-second `SECONDS`, so the stops came 29.4 to 31.1 seconds after the request (`derived-page/stop-times.txt`). The other stop rules, `font-quiet+60`, `cap+240`, and `hard-cap+300`, did not fire. Then the HMP command `quit` stopped the VM, and `SIGINT` stopped the prototype and then `dumpcap`.
 
-`derive.sh` made the committed files in `runs/347/commit/`, and `copy.sh` copied them to `docs/research/pxe-lab/captures/`. These are its capture and screen commands:
+`derive.sh` made the committed files in `runs/347/commit/`, and `copy.sh` copied them to `docs/research/pxe-lab/captures/`. These are the capture and screen commands of `derive.sh`:
 
 ```bash
 tshark -r - -Y 'not tftp.opcode == 4' -w - < ~/deployarr-lab/captures/no-boot-fonts-<run>.pcapng > ~/deployarr-lab/runs/347/commit/no-boot-fonts-<run>.pcapng
@@ -342,7 +342,13 @@ python3 -I ~/deployarr-lab/runs/347/tools/textrows.py compare ~/deployarr-lab/ru
 
 The three filters ran on the full captures as well. `derive.sh` also ran `rrq.py` for the request tables and `frames.py` for the selection and the window-wide match.
 
-`derived-page/make.sh` makes every `derived-page` file this page cites, except `screens-read.txt` and `winpe-read.txt`, which record what the frames show. It reads the run evidence and the committed copies, writes only into `runs/347/derived-page/`, and starts no lab process.
+`derived-page/make.sh` makes every `derived-page` file this page cites, except `screens-read.txt` and `winpe-read.txt`, which record what the frames show. It reads the run evidence and the committed copies, writes only into `runs/347/derived-page/`, and starts no lab process. For `boot-wim.txt`, it reads only the metadata of the three lab names of `boot.wim`, with this command:
+
+```bash
+stat -c 'inode=%i links=%h size=%s mtime=%y birth=%w %n' ~/deployarr-lab/tftp/boot.wim ~/deployarr-lab/tftp/2011/boot/x64/boot.wim ~/deployarr-lab/tftp/2023/boot/x64/boot.wim
+```
+
+For `shots-reasons.txt`, it counts the reasons in each `shots.tsv` and gives each frame around the font requests with its time after the last font reply. For `host-checks.txt`, it gives each link count change that building the roots made, per name and per inode.
 
 | Script | SHA-256 |
 | --- | --- |
@@ -355,13 +361,13 @@ The three filters ran on the full captures as well. `derive.sh` also ran `rrq.py
 | `rrq.py` | `3e963061a982f9cbfbbf3e7de0e35d2f0691f1555849685b3f713d35852a282b` |
 | `mon.py` | `08ab1ac9343e872cfc954601a0ecce02d934379f28b5ecb7946ed91587f81bbe` |
 | `textrows.py` | `89e24a012b23d6c6841a1f0173dbd918cda6aad36063705b809580f64fd21e83`, #222's script unchanged |
-| `derived-page/make.sh` | `2dfe36236bbc814b59d89d752c329da0aa132816ec4e4b3b0e001f2824bf6621` |
+| `derived-page/make.sh` | `fcfe5193a799a631e50879e222fa1ddf216d0ec7267ad3b477cc397b5200992a` |
 
 ## What is inferred
 
-- Each boot manager fell back to a text console of 80 columns and 25 rows when it had no font (inferred). Every band of the run frames sits in one cell row of such a grid, at rows 20, 22, and 23 and column 3 ([Screens](#screens)). On `uefi2023`, the serial log carries the same text with cursor escapes to those rows and that column, and the control's serial log carries none. The same log carries OVMF's own console messages, such as `>>Start PXE over IPv4.`, so the run's text went to the firmware's text console (inferred). On `bios`, the 720x400 frame is the size of a VGA text mode of 80 by 25 cells of 9x16 pixels (inferred from the size). Which code drew the glyphs, the boot manager or the firmware, these runs do not show.
+- Each boot manager fell back to a text console of 80 columns and 25 rows when it had no font (inferred). Every band of the run frames sits in one cell row of such a grid, at rows 20, 22, and 23 and column 3 ([Screens](#screens)). On `uefi2023`, the serial log carries the same text with cursor escapes to those rows and that column, and the control's serial log carries none of that text. The same log carries OVMF's own console messages, such as `>>Start PXE over IPv4.`, so the run's text went to the firmware's text console (inferred). On `bios`, the 720x400 frame is the size of a VGA text mode of 80 by 25 cells of 9x16 pixels (inferred from the size). These runs do not show which code drew the glyphs, the boot manager or the firmware.
 - The runs show that serving `wgl4_boot.ttf` decides which pixels the boot manager draws. They do not show which code in the boot manager reads the font.
-- Each boot manager asks for the font twice whatever the reply (inferred from two runs). In #222 and the controls, the first request got an OACK with the size, the client ended it, and the second request added `blksize=1456`. Here both requests got File not found, and the second kept `tsize=0` only.
+- Each boot manager asks for the font twice whatever the reply (inferred from the four runs here and #222's runs). In #222 and the controls, the first request got an OACK with the size, the client ended it, and the second request added `blksize=1456`. Here both requests got File not found, and the second kept `tsize=0` only.
 - A missing `boot/fonts` folder would act as an empty one did here (inferred, not run). The prototype's `resolve` answers File not found when any part of the path is missing (`tools/pxe-prototype/tftp.py` lines 133 to 154). So a missing folder gives the client the same reply as an empty one.
 - On the `uefi2023` VM, the `UnlockToken.pol` request comes from the OS loader that the boot manager starts, as [What is inferred](single-stage-chain.md#what-is-inferred) of the single-stage page records. So it shows that the loader ran. Only the last screendump shows that WinPE started.
 - WinPE on the `uefi2023` VM sends no DHCP because it has no driver for the virtio-net card, as [What is inferred](single-stage-chain.md#what-is-inferred) of the single-stage page records for the `uefi` VM.
@@ -373,10 +379,10 @@ The three filters ran on the full captures as well. `derive.sh` also ran `rrq.py
 - Other boot locales, the boot menu, and error screens without the font. No such screen ran here.
 - The 2011-signed `bootmgfw.efi` on the `uefi` VM.
 - The two-stage chain and `wdsmgfw.efi`.
-- Other firmware, other builds of WinPE, and physical PCs. A text console fallback may look different on other firmware (inferred).
+- Other firmware, other builds of WinPE, and physical PCs. These runs show the fallback only on SeaBIOS 1.17.0 and OVMF 2025.11.
 
 ## What changes in deployarr
 
-- The design needs no change. The one font folder of [What changes in deployarr](boot-fonts.md#what-changes-in-deployarr) on the boot fonts page stands. With the font at `\boot\fonts`, both boot managers draw their usual screen, as the fresh controls show.
-- An empty `boot/fonts` does not stop either boot manager. Both loaded `boot.sdi` and `boot.wim`, and WinPE started. The boot manager's screen changed, to text in another typeface and place. The requests changed only in the second font request.
+- The design needs no change. The one font folder of [What changes in deployarr](boot-fonts.md#what-changes-in-deployarr) on the boot fonts page stands. With the font at `\boot\fonts`, both boot managers draw their usual screen. The fresh controls show this with each VM's #222 control set, `Fonts` on `bios` and `Fonts_EX` on `uefi2023`. [Run 2, with `Fonts`](boot-fonts.md#run-2-with-fonts) of the boot fonts page shows it for the 2023-signed `bootmgfw.efi` with `Fonts`.
+- An empty `boot/fonts` does not stop either boot manager. Both loaded `boot.sdi` and `boot.wim`, and WinPE started. The boot manager's screen changed to text in another typeface and place. The requests changed only in the second font request.
 - So a font that the server fails to serve is a fault in the screen, not in the boot. [Boot chain](../../architecture.md#boot-chain) does not say what happens without the font. A separate pull request can add this result there.
