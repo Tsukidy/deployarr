@@ -23,7 +23,7 @@ The lab host has a full GitHub login, so the cloud session limits in [GitHub fro
 - An account that can run `sudo`.
 - About 10 GB of downloads. The Windows ISO is 9 GB of it.
 
-By default the lab bridge has no uplink. The VMs reach only the host, and nothing on your network reaches the VMs. Only the [M7 check](roadmap.md#m7-applications) of the `InstallUpdates` step turns on the uplink. [Turn on the uplink](#turn-on-the-uplink) says how.
+By default the lab bridge has no uplink. The VMs reach only the host, and nothing on your network reaches the VMs. This stays true for IPv4 when the host forwards IPv4 for another reason. `up` adds rules that stop the host from forwarding IPv4 between the bridge and another interface. [Step 4](#4-start-the-lab-network) describes them. Only the [M7 check](roadmap.md#m7-applications) of the `InstallUpdates` step turns on the uplink. [Turn on the uplink](#turn-on-the-uplink) says how.
 
 ## 1. Install the packages
 
@@ -32,10 +32,12 @@ sudo apt-get update
 ```
 
 ```bash
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools dnsmasq-base ipxe-qemu seabios tshark wimtools p7zip-full osslsigncode python3-venv git
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y qemu-system-x86 qemu-utils ovmf swtpm swtpm-tools dnsmasq-base nftables ipxe-qemu seabios tshark wimtools p7zip-full osslsigncode python3-venv git
 ```
 
 The list has `dnsmasq-base` and not `dnsmasq`. The `dnsmasq` package adds a system service that holds UDP port 67 on every interface.
+
+`tools/lab/network.sh` sets its firewall rules with `nft`, from the `nftables` package. Without `nft`, `up` stops with `The lab network needs nft. Install the nftables package.` before it changes anything.
 
 Let your account use KVM, then sign out and sign in again:
 
@@ -105,9 +107,15 @@ sudo tools/lab/network.sh up
 
 The script creates the bridge `br-lab` with the address `10.41.0.1/24`, and one tap device for each VM. It starts a dnsmasq that hands out `10.41.0.100` to `10.41.0.199` and does nothing else. It has no DNS and no PXE. It gives each VM `10.41.0.1` as its gateway. It hands out no DNS server unless the uplink is on.
 
+When the uplink is off, the script adds the nftables table `ip deployarr_lab_isolate` before it creates the bridge. Its rules drop every IPv4 packet that the host forwards between `br-lab` and another interface, whatever `net.ipv4.ip_forward` says. So no IPv4 connection from outside the lab host reaches a VM. The VMs reach no IPv4 address past the host. Adding the table changes no `sysctl` setting. The script replaces the table in one transaction, so a second `up` adds no duplicate rule. While the uplink is on, the uplink's table takes the place of this one.
+
+The table accepts a packet that comes in and goes out through `br-lab`. So DHCP and other traffic between the ports of `br-lab` pass the table. The same holds when `br_netfilter` hands bridged traffic to the host's firewall. Another firewall on the host can still drop the bridged traffic, as [Troubleshooting](#troubleshooting) says. A packet that the host routes from `br-lab` back into `br-lab` passes too. It stays in the lab. The host's own connections to the VMs pass, because the host does not forward them.
+
+The table matches IPv4 only. The script gives the VMs no IPv6 address. Its dnsmasq serves no DHCPv6 and sends no router advertisements. So a VM has only its link-local IPv6 address, unless another program on the host sends router advertisements on `br-lab` or someone sets an address by hand. An IPv6 router must not forward a packet with a link-local source or destination address to another link, as [RFC 4291, section 2.5.6](https://www.rfc-editor.org/rfc/rfc4291#section-2.5.6) says.
+
 dnsmasq runs in its own network namespace, `deployarr-lab-dhcp`. A veth pair joins the namespace to `br-lab`. Its end on the bridge is `veth-lab-dhcp`, and its end in the namespace is `dhcp0`, with the address `10.41.0.2`. So dnsmasq holds UDP port 67 only in that namespace, and any program on the lab host, such as the PXE prototype or deployarr, can bind port 67 on `br-lab`. [DHCP](architecture.md#dhcp) says why deployarr needs that.
 
-The last lines show `dnsmasq is running in namespace deployarr-lab-dhcp`, `dnsmasq options: option:router,10.41.0.1`, `0.0.0.0%dhcp0:67`, and a line that starts with `The uplink is off`. dnsmasq writes its log to `/run/deployarr-lab/dnsmasq.log` and its leases to `/run/deployarr-lab/dnsmasq.leases`. Only root can read the log:
+The last lines show `dnsmasq is running in namespace deployarr-lab-dhcp`, `dnsmasq options: option:router,10.41.0.1`, `0.0.0.0%dhcp0:67`, and a line that starts with `The uplink is off`. A line that starts with `The host forwards no IPv4` follows, and then the rules of `ip deployarr_lab_isolate`, without their packet and byte counts. dnsmasq writes its log to `/run/deployarr-lab/dnsmasq.log` and its leases to `/run/deployarr-lab/dnsmasq.leases`. Only root can read the log:
 
 ```bash
 sudo tail /run/deployarr-lab/dnsmasq.log
@@ -119,7 +127,7 @@ Any user can read the leases:
 cat /run/deployarr-lab/dnsmasq.leases
 ```
 
-The network does not survive a reboot. Run the command again after each reboot. Running it again also moves a dnsmasq that an earlier version of the script started on the lab host into the namespace. To remove the network, run `sudo tools/lab/network.sh down`. It removes the namespace and the veth pair too. If the uplink is on, `down` also turns it off.
+The network does not survive a reboot. Run the command again after each reboot. Running it again also moves a dnsmasq that an earlier version of the script started on the lab host into the namespace. To remove the network, run `sudo tools/lab/network.sh down`. It removes the namespace and the veth pair too, and then the table `ip deployarr_lab_isolate`. If the uplink is on, `down` also turns it off.
 
 ## 5. Check the lab
 
@@ -286,11 +294,7 @@ To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. Th
 
 The lab bridge has no uplink by default. The uplink lets the VMs reach the internet through the lab host. Only the [M7 check](roadmap.md#m7-applications) of the `InstallUpdates` step uses it, because a failed Windows Update search fails that step. Run every other check and experiment with the uplink off.
 
-The uplink needs `nft`, from the `nftables` package. If `up` says `The uplink needs nft. Install the nftables package.`, install it:
-
-```bash
-sudo apt-get install -y nftables
-```
+The uplink uses `nft`, which [step 1](#1-install-the-packages) installs with the `nftables` package.
 
 Turn on the uplink:
 
@@ -303,7 +307,7 @@ sudo env LAB_UPLINK=1 tools/lab/network.sh up
 With the variable, `up` builds the lab network as in [step 4](#4-start-the-lab-network), and then it does four more things:
 
 1. It saves `net.ipv4.ip_forward` and `net.ipv4.conf.all.accept_redirects` in `/run/deployarr-lab/uplink-sysctl.conf`, unless an earlier `up` saved them already. So a second `up` keeps the values that the host had before the first.
-2. It replaces the nftables table `ip deployarr_lab` in one transaction. So a second `up` adds no duplicate rule.
+2. It replaces the nftables table `ip deployarr_lab`, and deletes the table `ip deployarr_lab_isolate` from [step 4](#4-start-the-lab-network), in one transaction. So a second `up` adds no duplicate rule. The bridge is never without rules either. The isolation table cannot stay while the uplink is on, because a drop in any base chain on the forward hook ends the packet.
 3. It turns on `net.ipv4.ip_forward`. The kernel then sets `net.ipv4.conf.all.accept_redirects` to `0`.
 4. It starts dnsmasq again with DHCP option 6, unless dnsmasq already runs with it. The option names the DNS servers in `UPLINK_DNS` in `tools/lab/lab.conf`, which are `1.1.1.1` and `9.9.9.9`. The router option stays `10.41.0.1`.
 
@@ -329,7 +333,7 @@ To turn off the uplink and keep the lab network, run `up` without the variable:
 sudo tools/lab/network.sh up
 ```
 
-`up` without the variable and `down` both put back the two settings that the first `up` saved, and both delete the table. `up` also restarts dnsmasq without option 6, and its last line starts with `The uplink is off`.
+`up` without the variable and `down` both put back the two settings that the first `up` saved. Then, in one transaction, both delete the table `ip deployarr_lab` and add the table `ip deployarr_lab_isolate` from [step 4](#4-start-the-lab-network) again. `down` then deletes `ip deployarr_lab_isolate`, after it removes the bridge. `up` also restarts dnsmasq without option 6. It ends with a line that starts with `The uplink is off`, a line that starts with `The host forwards no IPv4`, and the rules of `ip deployarr_lab_isolate`.
 
 The uplink loads the kernel's connection tracking and NAT modules, such as `nf_conntrack`, `nf_nat`, `nft_ct`, and `nft_masq`. They stay loaded after the uplink is off, until the host restarts.
 

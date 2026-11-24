@@ -3,13 +3,17 @@
 # Creates or removes the PXE lab network: an isolated bridge, one tap device
 # per lab VM, and a dnsmasq that only hands out addresses. dnsmasq runs in its
 # own network namespace, joined to the bridge by a veth pair, so it does not
-# hold UDP 67 in the lab host's network stack. See docs/lab-setup.md.
+# hold UDP 67 in the lab host's network stack. When the uplink is off, "up"
+# adds an nftables table before it creates the bridge. The table drops every
+# IPv4 packet that the host forwards between the bridge and another interface,
+# whatever net.ipv4.ip_forward says. "down" removes the table after the bridge.
+# See docs/lab-setup.md.
 #
 # LAB_UPLINK=1 also gives the bridge an uplink for the M7 Windows Update check:
 # the host forwards IPv4 from the bridge out of its default route with
-# masquerade NAT, and dnsmasq hands out a DNS server. It is off by default. An
-# "up" without it removes an uplink that an earlier "up" added, and "down"
-# always removes it.
+# masquerade NAT, and dnsmasq hands out a DNS server. The uplink's table takes
+# the place of the isolation table. It is off by default. An "up" without it
+# removes an uplink that an earlier "up" added, and "down" always removes it.
 # Usage: sudo tools/lab/network.sh up|down|status
 #        sudo env LAB_UPLINK=1 tools/lab/network.sh up
 set -euo pipefail
@@ -58,12 +62,37 @@ uplink_on() {
     command -v nft >/dev/null && nft list table ip "$UPLINK_TABLE" >/dev/null 2>&1
 }
 
+isolated() {
+    command -v nft >/dev/null && nft list table ip "$ISOLATE_TABLE" >/dev/null 2>&1
+}
+
+# The nft commands that replace the isolation table. The host forwards no IPv4
+# packet between the bridge and another interface. A packet that comes in and
+# goes out through the bridge passes. That covers a packet between two ports of
+# the bridge. br_netfilter hands such a packet to this hook with the bridge as
+# both devices (br_nf_forward_ip in the kernel's
+# net/bridge/br_netfilter_hooks.c). It also covers a packet that the host
+# routes back into the bridge, which stays in the lab. The host's own traffic
+# with the bridge takes the input and output hooks, so the table never sees
+# it. The rules match the bridge by name, so they work before the bridge
+# exists.
+isolation_nft() {
+    cat <<NFT
+table ip $ISOLATE_TABLE
+delete table ip $ISOLATE_TABLE
+table ip $ISOLATE_TABLE {
+    chain forward {
+        type filter hook forward priority filter; policy accept;
+        iifname "$BRIDGE" oifname "$BRIDGE" accept
+        iifname "$BRIDGE" counter drop
+        oifname "$BRIDGE" counter drop
+    }
+}
+NFT
+}
+
 add_uplink() {
     local out
-    if ! command -v nft >/dev/null; then
-        echo "The uplink needs nft. Install the nftables package." >&2
-        exit 1
-    fi
     out=$(ip -4 route show default | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
     if [[ -z $out || $out == "$BRIDGE" ]]; then
         echo "The host has no IPv4 default route, so the lab has no uplink." >&2
@@ -85,6 +114,9 @@ add_uplink() {
     # the bridge instead of forwarding it with its lab address. A packet from
     # another interface with a source in the lab's subnet is forged, so the
     # table drops it before the masquerade can rewrite it and let replies in.
+    # The same transaction deletes the isolation table. A drop in any base
+    # chain on the forward hook ends the packet, so its drops would also stop
+    # the uplink's traffic. The uplink's table drops the rest itself.
     nft -f - <<NFT
 table ip $UPLINK_TABLE
 delete table ip $UPLINK_TABLE
@@ -104,19 +136,27 @@ table ip $UPLINK_TABLE {
         ip saddr $SUBNET oifname "$out" counter masquerade
     }
 }
+table ip $ISOLATE_TABLE
+delete table ip $ISOLATE_TABLE
 NFT
     sysctl -qw net.ipv4.ip_forward=1
 }
 
 remove_uplink() {
     # Forwarding goes back to its saved value before the rules go, so
-    # forwarding that the uplink turned on never runs without the rules.
+    # forwarding that the uplink turned on never runs without the rules. One
+    # transaction then puts the isolation table back and deletes the uplink's
+    # table, so the bridge is never without rules.
     if [[ -e $SAVED_SYSCTL ]]; then
         sysctl -q -p "$SAVED_SYSCTL"
         rm -f "$SAVED_SYSCTL"
     fi
     if uplink_on; then
-        nft delete table ip "$UPLINK_TABLE"
+        {
+            isolation_nft
+            echo "table ip $UPLINK_TABLE"
+            echo "delete table ip $UPLINK_TABLE"
+        } | nft -f -
     fi
 }
 
@@ -125,6 +165,15 @@ up() {
     if [[ $UPLINK != 0 && $UPLINK != 1 ]]; then
         echo "LAB_UPLINK must be 0 or 1." >&2
         exit 2
+    fi
+    if ! command -v nft >/dev/null; then
+        echo "The lab network needs nft. Install the nftables package." >&2
+        exit 1
+    fi
+    # The isolation table goes in before the bridge exists. An uplink that is
+    # on keeps its own table until add_uplink or remove_uplink replaces it.
+    if ! uplink_on; then
+        isolation_nft | nft -f -
     fi
     mkdir -p "$RUN_DIR"
     ip link show "$BRIDGE" >/dev/null 2>&1 || ip link add "$BRIDGE" type bridge
@@ -177,6 +226,10 @@ down() {
         ip link show "$tap" >/dev/null 2>&1 && ip link del "$tap"
     done
     ip link show "$BRIDGE" >/dev/null 2>&1 && ip link del "$BRIDGE"
+    # The isolation table goes last, after the bridge that it guards.
+    if isolated; then
+        nft delete table ip "$ISOLATE_TABLE"
+    fi
     echo "Lab network removed."
 }
 
@@ -198,6 +251,13 @@ status() {
         nft list table ip "$UPLINK_TABLE"
     else
         echo "The uplink is off. net.ipv4.ip_forward = $(sysctl -n net.ipv4.ip_forward)."
+        if isolated; then
+            # Without counters (-s), so two status runs give the same text.
+            echo "The host forwards no IPv4 packet between $BRIDGE and another interface. The rules:"
+            nft -s list table ip "$ISOLATE_TABLE"
+        else
+            echo "Found no table ip $ISOLATE_TABLE, so no rule stops the host from forwarding IPv4 between $BRIDGE and another interface. Run sudo $0 up to add the table."
+        fi
     fi
 }
 
