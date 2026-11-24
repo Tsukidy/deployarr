@@ -637,8 +637,10 @@ fn mdt_var_comparing_against_empty_text_is_an_error() {
 /// pattern (`TsCore!0x1801aa078`). In base WinPE 10.0.26100.1, `PathMatchSpecW`
 /// returns TRUE for an empty pattern and any text
 /// (`docs/research/winpe-10.1.26100.9457.md#pathmatchspecw-with-an-empty-pattern`).
-/// So a `Like` whose Value substitutes to empty text is true for any scalar or
-/// unset variable. A list variable stays an error, as for every `Like`.
+/// So MDT's `Like` whose Value expands to empty text is true for any scalar or
+/// unset variable (inferred, because it rests on MDT passing pointers that
+/// cannot be null, `TsCore!0x1801aa04c` to `TsCore!0x1801aa06f`). A list
+/// variable stays an error, as for every `Like`.
 #[test]
 fn mdt_var_like_against_empty_text_matches_any_value() {
     let vars = vars_of(&[("Empty", ""), ("Model", "Latitude 7440")]);
