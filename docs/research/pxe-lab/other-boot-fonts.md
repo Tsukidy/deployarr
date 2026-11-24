@@ -580,7 +580,7 @@ cd docs/research/pxe-lab/captures && for f in other-boot-fonts-*; do printf '%s 
 ## Not covered
 
 - A boot MUI file. The lab's Windows image is `en-US`, so no root holds a `ja-JP` `.MUI` file, and the owner chose to run without one ([Owner input on #346](https://github.com/Tsukidy/deployarr/issues/346#issuecomment-7046495135)). With the `.MUI` file served, a boot manager may load a `ja-JP` font such as `jpn_boot.ttf` or `meiryo_boot.ttf` (inferred from the names). These runs do not show it.
-- The other locales built in `runs/346/stores/`, `ko-KR`, `zh-CN`, and `zh-TW`, and the `menu-ja-JP`, `missing-winload`, `textmode`, and `no-fontpath` variants. `build_stores.sh` built them, but no run served them, as the owner chose four variants. A boot with no `fontpath` or an empty `boot/fonts` is #347's.
+- The other locales built in `runs/346/stores/`, `ko-KR`, `zh-CN`, and `zh-TW`, and the `menu-ja-JP`, `missing-winload`, `textmode`, and `no-fontpath` variants. `build_stores.sh` built them, but no run served them, as the owner chose four variants. [An empty boot fonts folder in the PXE lab](no-boot-fonts.md) covers an empty `boot/fonts` for #347. A store with no `fontpath` and a root with no `boot/fonts` folder are #486's.
 - The standard boot menu, `BootMenuPolicy` 1, and any screen behind a key. No run sent a key, so no run saw the F8 advanced options or the `ENTER=OS Selection` screen after an error.
 - The last 1.006 s of run 7, which has no frame.
 - A `Fonts_EX` control and a table-by-table comparison of any font but `wgl4_boot.ttf`, because no run requested one.
