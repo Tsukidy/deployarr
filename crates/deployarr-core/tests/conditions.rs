@@ -633,6 +633,32 @@ fn mdt_var_comparing_against_empty_text_is_an_error() {
     assert!(check(like, &vars, &Machine::new()));
 }
 
+/// MDT's Variable Like calls `PathMatchSpecW` with the expanded Value as the
+/// pattern (`TsCore!0x1801aa078`). In base WinPE 10.0.26100.1, `PathMatchSpecW`
+/// returns TRUE for an empty pattern and any text
+/// (`docs/research/winpe-10.1.26100.9457.md#pathmatchspecw-with-an-empty-pattern`).
+/// So a `Like` whose Value substitutes to empty text is true for any scalar or
+/// unset variable. A list variable stays an error, as for every `Like`.
+#[test]
+fn mdt_var_like_against_empty_text_matches_any_value() {
+    let vars = vars_of(&[("Empty", ""), ("Model", "Latitude 7440")]);
+    for variable in ["Model", "Unset", "Empty"] {
+        let json = var(variable, json!({ "like": "%Empty%" }));
+        assert!(check(json, &vars, &Machine::new()), "{variable}");
+    }
+
+    let mut vars = lists_of(&[("Apps", &["7-Zip"])]);
+    vars.set(name("Empty"), "", Sensitivity::Plain, SetSource::Rule)
+        .expect("a name that does not start with `_`");
+    let error = run(
+        var("Apps", json!({ "like": "%Empty%" })),
+        &vars,
+        &Machine::new(),
+    )
+    .expect_err("a list");
+    assert_eq!(error, ConditionError::List { name: name("Apps") });
+}
+
 /// MDT counts empty text as the integer 0 when the other side is an integer
 /// (`TsCore!0x1801de96c`). deployarr needs a digit, so empty text compares as
 /// text.

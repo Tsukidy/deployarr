@@ -682,8 +682,13 @@ fn eq_ignore_case(left: char, right: char) -> bool {
 /// Whether `text` matches `pattern` without regard to case, by
 /// [`eq_ignore_case`]. `*` matches any run of characters, the empty run
 /// included, and `?` matches one character. Every other character matches
-/// itself.
+/// itself. An empty pattern matches any text, because `PathMatchSpecW` in base
+/// WinPE 10.0.26100.1 returns TRUE for an empty pattern before it reads the
+/// text, as `docs/architecture.md#conditions` says.
 fn like(text: &str, pattern: &str) -> bool {
+    if pattern.is_empty() {
+        return true;
+    }
     let text: Vec<char> = text.chars().collect();
     let pattern: Vec<char> = pattern.chars().collect();
     let (mut t, mut p) = (0, 0);
@@ -810,7 +815,7 @@ mod tests {
         assert!(!like("aXbYc", "a*b*d"));
         assert!(like("", "*"));
         assert!(like("", ""));
-        assert!(!like("a", ""));
+        assert!(like("a", ""));
         assert!(like("abc", "***"));
         assert!(!like("ab", "a?c"));
     }
