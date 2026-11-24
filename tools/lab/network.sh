@@ -3,10 +3,11 @@
 # Creates or removes the PXE lab network: an isolated bridge, one tap device
 # per lab VM, and a dnsmasq that only hands out addresses. dnsmasq runs in its
 # own network namespace, joined to the bridge by a veth pair, so it does not
-# hold UDP 67 in the lab host's network stack. Before it creates the bridge,
-# "up" adds an nftables table that drops every IPv4 packet the host forwards
-# into or out of the bridge, whatever net.ipv4.ip_forward says. "down" removes
-# the table after the bridge. See docs/lab-setup.md.
+# hold UDP 67 in the lab host's network stack. When the uplink is off, "up"
+# adds an nftables table before it creates the bridge. The table drops every
+# IPv4 packet that the host forwards between the bridge and another interface,
+# whatever net.ipv4.ip_forward says. "down" removes the table after the bridge.
+# See docs/lab-setup.md.
 #
 # LAB_UPLINK=1 also gives the bridge an uplink for the M7 Windows Update check:
 # the host forwards IPv4 from the bridge out of its default route with
@@ -66,11 +67,15 @@ isolated() {
 }
 
 # The nft commands that replace the isolation table. The host forwards no IPv4
-# packet into or out of the bridge. A packet between two ports of the bridge
-# passes, also when br_netfilter hands it to this hook with the bridge as both
-# devices. The host's own traffic with the bridge takes the input and output
-# hooks, so the table never sees it. The rules match the bridge by name, so
-# they work before the bridge exists.
+# packet between the bridge and another interface. A packet that comes in and
+# goes out through the bridge passes. That covers a packet between two ports of
+# the bridge. br_netfilter hands such a packet to this hook with the bridge as
+# both devices (br_nf_forward_ip in the kernel's
+# net/bridge/br_netfilter_hooks.c). It also covers a packet that the host
+# routes back into the bridge, which stays in the lab. The host's own traffic
+# with the bridge takes the input and output hooks, so the table never sees
+# it. The rules match the bridge by name, so they work before the bridge
+# exists.
 isolation_nft() {
     cat <<NFT
 table ip $ISOLATE_TABLE
@@ -248,10 +253,10 @@ status() {
         echo "The uplink is off. net.ipv4.ip_forward = $(sysctl -n net.ipv4.ip_forward)."
         if isolated; then
             # Without counters (-s), so two status runs give the same text.
-            echo "The host forwards no IPv4 into or out of $BRIDGE. The rules:"
+            echo "The host forwards no IPv4 packet between $BRIDGE and another interface. The rules:"
             nft -s list table ip "$ISOLATE_TABLE"
         else
-            echo "No rule keeps forwarded IPv4 out of $BRIDGE. Run up to add it."
+            echo "Found no table ip $ISOLATE_TABLE, so no rule stops the host from forwarding IPv4 between $BRIDGE and another interface. Run sudo $0 up to add the table."
         fi
     fi
 }

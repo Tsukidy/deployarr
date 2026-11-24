@@ -23,7 +23,7 @@ The lab host has a full GitHub login, so the cloud session limits in [GitHub fro
 - An account that can run `sudo`.
 - About 10 GB of downloads. The Windows ISO is 9 GB of it.
 
-By default the lab bridge has no uplink. The VMs reach only the host, and nothing on your network reaches the VMs. That holds even when the host forwards IPv4 for another reason, because `up` adds rules that keep forwarded traffic out of the bridge, as [step 4](#4-start-the-lab-network) says. Only the [M7 check](roadmap.md#m7-applications) of the `InstallUpdates` step turns on the uplink. [Turn on the uplink](#turn-on-the-uplink) says how.
+By default the lab bridge has no uplink. The VMs reach only the host, and nothing on your network reaches the VMs. This stays true for IPv4 when the host forwards IPv4 for another reason. `up` adds rules that stop the host from forwarding IPv4 between the bridge and another interface. [Step 4](#4-start-the-lab-network) describes them. Only the [M7 check](roadmap.md#m7-applications) of the `InstallUpdates` step turns on the uplink. [Turn on the uplink](#turn-on-the-uplink) says how.
 
 ## 1. Install the packages
 
@@ -107,7 +107,11 @@ sudo tools/lab/network.sh up
 
 The script creates the bridge `br-lab` with the address `10.41.0.1/24`, and one tap device for each VM. It starts a dnsmasq that hands out `10.41.0.100` to `10.41.0.199` and does nothing else. It has no DNS and no PXE. It gives each VM `10.41.0.1` as its gateway. It hands out no DNS server unless the uplink is on.
 
-Before it creates the bridge, the script adds the nftables table `ip deployarr_lab_isolate`. Its rules drop every IPv4 packet that the host forwards into or out of `br-lab`, whatever `net.ipv4.ip_forward` says. So no IPv4 connection from outside the lab host reaches a VM, and the VMs reach nothing past the host. The table matches IPv4 only. The lab gives the VMs no IPv6 address beyond link-local, and the host never forwards link-local traffic. The table itself lets DHCP and the traffic between the ports of `br-lab` pass, also when `br_netfilter` hands bridged traffic to the host's firewall. Another firewall can still drop that traffic, as [Troubleshooting](#troubleshooting) says. The host's own connections to the VMs pass too, because the host does not forward them. The script replaces the table in one transaction, so a second `up` adds no duplicate rule. Adding the table changes no `sysctl` setting. While the uplink is on, the uplink's table takes the place of this one.
+When the uplink is off, the script adds the nftables table `ip deployarr_lab_isolate` before it creates the bridge. Its rules drop every IPv4 packet that the host forwards between `br-lab` and another interface, whatever `net.ipv4.ip_forward` says. So no IPv4 connection from outside the lab host reaches a VM. The VMs reach no IPv4 address past the host. Adding the table changes no `sysctl` setting. The script replaces the table in one transaction, so a second `up` adds no duplicate rule. While the uplink is on, the uplink's table takes the place of this one.
+
+The table accepts a packet that comes in and goes out through `br-lab`. So DHCP and other traffic between the ports of `br-lab` pass the table. The same holds when `br_netfilter` hands bridged traffic to the host's firewall. Another firewall on the host can still drop the bridged traffic, as [Troubleshooting](#troubleshooting) says. A packet that the host routes from `br-lab` back into `br-lab` passes too. It stays in the lab. The host's own connections to the VMs pass, because the host does not forward them.
+
+The table matches IPv4 only. The script gives the VMs no IPv6 address. Its dnsmasq serves no DHCPv6 and sends no router advertisements. So a VM has only its link-local IPv6 address, unless another program on the host sends router advertisements on `br-lab` or someone sets an address by hand. An IPv6 router must not forward a packet with a link-local source or destination address to another link, as [RFC 4291, section 2.5.6](https://www.rfc-editor.org/rfc/rfc4291#section-2.5.6) says.
 
 dnsmasq runs in its own network namespace, `deployarr-lab-dhcp`. A veth pair joins the namespace to `br-lab`. Its end on the bridge is `veth-lab-dhcp`, and its end in the namespace is `dhcp0`, with the address `10.41.0.2`. So dnsmasq holds UDP port 67 only in that namespace, and any program on the lab host, such as the PXE prototype or deployarr, can bind port 67 on `br-lab`. [DHCP](architecture.md#dhcp) says why deployarr needs that.
 
@@ -290,7 +294,7 @@ To reset a VM, stop it and delete its folder, such as `~/deployarr-lab/uefi`. Th
 
 The lab bridge has no uplink by default. The uplink lets the VMs reach the internet through the lab host. Only the [M7 check](roadmap.md#m7-applications) of the `InstallUpdates` step uses it, because a failed Windows Update search fails that step. Run every other check and experiment with the uplink off.
 
-The uplink uses `nft`, which step 1 installs with the `nftables` package.
+The uplink uses `nft`, which [step 1](#1-install-the-packages) installs with the `nftables` package.
 
 Turn on the uplink:
 
@@ -303,7 +307,7 @@ sudo env LAB_UPLINK=1 tools/lab/network.sh up
 With the variable, `up` builds the lab network as in [step 4](#4-start-the-lab-network), and then it does four more things:
 
 1. It saves `net.ipv4.ip_forward` and `net.ipv4.conf.all.accept_redirects` in `/run/deployarr-lab/uplink-sysctl.conf`, unless an earlier `up` saved them already. So a second `up` keeps the values that the host had before the first.
-2. It replaces the nftables table `ip deployarr_lab`, and deletes the table `ip deployarr_lab_isolate` from [step 4](#4-start-the-lab-network), in one transaction. So a second `up` adds no duplicate rule, and the bridge is never without rules. A drop in any base chain on the forward hook ends the packet, so the isolation table cannot stay while the uplink is on.
+2. It replaces the nftables table `ip deployarr_lab`, and deletes the table `ip deployarr_lab_isolate` from [step 4](#4-start-the-lab-network), in one transaction. So a second `up` adds no duplicate rule. The bridge is never without rules either. The isolation table cannot stay while the uplink is on, because a drop in any base chain on the forward hook ends the packet.
 3. It turns on `net.ipv4.ip_forward`. The kernel then sets `net.ipv4.conf.all.accept_redirects` to `0`.
 4. It starts dnsmasq again with DHCP option 6, unless dnsmasq already runs with it. The option names the DNS servers in `UPLINK_DNS` in `tools/lab/lab.conf`, which are `1.1.1.1` and `9.9.9.9`. The router option stays `10.41.0.1`.
 
@@ -329,7 +333,7 @@ To turn off the uplink and keep the lab network, run `up` without the variable:
 sudo tools/lab/network.sh up
 ```
 
-`up` without the variable and `down` both put back the two settings that the first `up` saved. Then, in one transaction, both delete the table `ip deployarr_lab` and add the table `ip deployarr_lab_isolate` from [step 4](#4-start-the-lab-network) again. `down` deletes that table too, after the bridge. `up` also restarts dnsmasq without option 6. It ends with a line that starts with `The uplink is off`, a line that starts with `The host forwards no IPv4`, and the rules of `ip deployarr_lab_isolate`.
+`up` without the variable and `down` both put back the two settings that the first `up` saved. Then, in one transaction, both delete the table `ip deployarr_lab` and add the table `ip deployarr_lab_isolate` from [step 4](#4-start-the-lab-network) again. `down` then deletes `ip deployarr_lab_isolate`, after it removes the bridge. `up` also restarts dnsmasq without option 6. It ends with a line that starts with `The uplink is off`, a line that starts with `The host forwards no IPv4`, and the rules of `ip deployarr_lab_isolate`.
 
 The uplink loads the kernel's connection tracking and NAT modules, such as `nf_conntrack`, `nf_nat`, `nft_ct`, and `nft_masq`. They stay loaded after the uplink is off, until the host restarts.
 
