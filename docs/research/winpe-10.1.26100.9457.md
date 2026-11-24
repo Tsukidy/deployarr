@@ -234,7 +234,7 @@ The files come from the `winpe.wim` in [Sources](#sources). `KernelBase.dll` is 
 
 ## PathMatchSpecW with an empty pattern
 
-MDT's Variable condition passes the variable's value to `PathMatchSpecW` as `pszFile` and the expanded Value as `pszSpec`. It stores the return value as the result (`TsCore!0x1801aa078`, `TsCore!0x1801aa07e`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). MDT checks for an empty Value only before the six comparisons, so Like reaches this call with an empty pattern. This section records what `PathMatchSpecW` in this image returns when the pattern is empty as a whole, and when one part between `;` characters is empty. It covers no other wildcard rule.
+MDT's Variable condition passes the variable's value to `PathMatchSpecW` as `pszFile` and the expanded Value as `pszSpec`. It stores the return value as the result (`TsCore!0x1801aa078`, `TsCore!0x1801aa07e`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). MDT checks for an empty Value only before the six comparisons, so Like reaches this call with an empty pattern. This section records what `PathMatchSpecW` in this image returns when the pattern is empty as a whole, and when one part between `;` characters is empty. The other wildcard rules are in [PathMatchSpecW wildcard rules](#pathmatchspecw-wildcard-rules).
 
 The image checked is the `winpe.wim` in [Sources](#sources), version 10.0.26100.1. Other Windows builds were not checked, and neither was a full Windows install.
 
