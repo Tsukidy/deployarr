@@ -323,7 +323,7 @@ python3 -I ~/deployarr-lab/runs/222/tools/textrows.py compare <control frame> <r
 ## Not covered
 
 - Fonts other than `wgl4_boot.ttf`. Each set holds 16 fonts, and all 16 differ between the sets. The boot managers requested only `wgl4_boot.ttf`. Other boot locales, the boot menu, or error screens may load others, such as `segmono_boot.ttf` or `segoe_slboot.ttf` (inferred from the names).
-- A boot with no font at `boot/fonts`, which would show what the boot managers draw without one.
+- A root with no `boot/fonts` folder at all, which #486 holds. [An empty boot fonts folder in the PXE lab](no-boot-fonts.md) covers an empty `boot/fonts` for #347.
 - The 2011-signed `bootmgfw.efi` with `Fonts_EX`. The pair needs no run while the folder holds `Fonts`.
 - The two-stage chain and `wdsmgfw.efi`.
 - Other builds of WinPE, other boot locales, and physical PCs.
