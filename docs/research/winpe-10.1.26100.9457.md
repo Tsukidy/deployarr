@@ -216,7 +216,26 @@ A [Rust](https://www.rust-lang.org/) 1.99.1 program read the same map and compar
 
 ### A step for double-byte code pages
 
-After two units match, `KernelBase!0x18001b890` moves to the next unit when the 32-bit value at `KernelBase!0x18035321c` is `0xfde9` (`KernelBase!0x18001b9e7`). Otherwise it reads the pointer at `KernelBase!0x180354930`. When that pointer is null, it calls `KernelBase!0x180017dfc` with 2 and moves on (`KernelBase!0x18001ba70` to `KernelBase!0x18001ba82`). `KernelBase!0x180017dfc` jumps through the import slot at `KernelBase!0x180260a10`, which holds `ntdll!RtlSetLastWin32Error`. That this call sets the last error to 2 is inferred from that import's name. Otherwise it reads a table pointer at offset `0x30` of that structure. A null table moves on too. With a table, it looks up the low byte of the pattern unit as written. A zero entry moves on. A non-zero entry requires the text unit to equal the pattern unit exactly, and the next text unit to equal the next pattern unit exactly, and then moves past both (`KernelBase!0x18001b9f3` to `KernelBase!0x18001ba3a`). In that case the two units match only in the same letter case.
+After two units match, `KernelBase!0x18001b890` moves to the next unit when the 32-bit value at `KernelBase!0x18035321c` is `0xfde9` (`KernelBase!0x18001b9e7`). Otherwise it reads the pointer at `KernelBase!0x180354930`. When that pointer is null, it calls `KernelBase!0x180017dfc` with 2 and moves on (`KernelBase!0x18001ba70` to `KernelBase!0x18001ba82`). `KernelBase!0x180017dfc` jumps through the import slot at `KernelBase!0x180260a10`, which holds `ntdll!RtlSetLastWin32Error`. That this call sets the last error to 2 is inferred from that import's name. Otherwise it reads a table pointer at offset `0x30` of that structure. A null table moves on too. With a table, it looks up the low byte of the pattern unit as written. A zero entry moves on (`KernelBase!0x18001b9f3` to `KernelBase!0x18001ba1d`). Each of these moves on takes both pointers on one UTF-16 unit (`KernelBase!0x18001ba08`, `KernelBase!0x18001ba0c`, `KernelBase!0x18001ba7a`, `KernelBase!0x18001ba7e`).
+
+A non-zero entry takes both pointers on two UTF-16 units. The matcher holds the text pointer in `rbx` and the pattern pointer in `rdi` (`KernelBase!0x18001b8a5`, `KernelBase!0x18001b8a8`). It runs these steps:
+
+1. The text unit must equal the pattern unit exactly, or the matcher returns FALSE (`KernelBase!0x18001ba1f` to `KernelBase!0x18001ba25`).
+2. It reads the next pattern unit (`KernelBase!0x18001ba2b`). It moves both pointers on one unit (`KernelBase!0x18001ba2f`, `KernelBase!0x18001ba33`).
+3. The text unit there must equal that pattern unit exactly, or the matcher returns FALSE (`KernelBase!0x18001ba37` to `KernelBase!0x18001ba3c`).
+4. On equal, it jumps back to `KernelBase!0x18001ba08` (`KernelBase!0x18001ba3a`). That code moves both pointers on one more unit (`KernelBase!0x18001ba08`, `KernelBase!0x18001ba0c`) and jumps to the top of the loop (`KernelBase!0x18001ba10`). The loop reads the text unit and the pattern unit again (`KernelBase!0x18001b8c9`, `KernelBase!0x18001b8cc`).
+
+In that case the two units match only in the same letter case.
+
+The step does not test for the end of either string. When the next text unit and the next pattern unit are both 0, step 3 finds them equal, and step 4 moves both pointers past their terminators. The loop then reads the unit after each terminator (`KernelBase!0x18001b8c9`, `KernelBase!0x18001b8cc`). This happens when the marked pattern unit is the last unit of the part, and the text unit that matched it is the last unit of the text. When only one of the next units is 0, step 3 returns FALSE.
+
+What follows the pattern's terminator depends on where the part ends. `PathMatchSpecW` calls `KernelBase!0x1800463e0` with the pattern, adds one to the result, and calls `KernelBase!0x180044ca0` with flags `0x40` and twice that many bytes (`KernelBase!0x1800d4e0f` to `KernelBase!0x1800d4e21`). KernelBase's export table names the two callees `lstrlenW` and `LocalAlloc`. The function copies the pattern into the buffer that the second call returns, one unit at a time, and writes a 0 after the last unit it copies (`KernelBase!0x1800d4e37` to `KernelBase!0x1800d4e78`). That the buffer holds exactly the pattern and one 0 is inferred from those names.
+
+- A part that a `;` ended has its terminator where the `;` was (`KernelBase!0x1800d4e9c`). The unit after it is the first unit of the next part, or the copy's last 0 when the `;` was the pattern's last unit.
+- After the last part, the unit after its terminator lies past the end of the buffer (inferred, from the size that the function asks `LocalAlloc` for). This page does not record what the heap holds there.
+- What follows the text's terminator is the caller's memory. This page does not record it.
+
+So in this case the result of `PathMatchSpecW` depends on memory that this page does not record. This page also does not record whether a read there can fault. When the units after both terminators are 0, the loop returns TRUE (`KernelBase!0x18001b8cf` to `KernelBase!0x18001b8d7`, `KernelBase!0x18001ba4f`).
 
 That `0xfde9` is code page 65001 (UTF-8), and that the table marks the lead bytes of a double-byte ANSI code page, is inferred from the shape of the code. This page does not record what the structure and the table hold, which code page base WinPE uses, or which code pages give a non-zero entry.
 
@@ -234,7 +253,7 @@ The files come from the `winpe.wim` in [Sources](#sources). `KernelBase.dll` is 
 
 ## PathMatchSpecW with an empty pattern
 
-MDT's Variable condition passes the variable's value to `PathMatchSpecW` as `pszFile` and the expanded Value as `pszSpec`. It stores the return value as the result (`TsCore!0x1801aa078`, `TsCore!0x1801aa07e`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). MDT checks for an empty Value only before the six comparisons, so Like reaches this call with an empty pattern. This section records what `PathMatchSpecW` in this image returns when the pattern is empty as a whole, and when one part between `;` characters is empty. It covers no other wildcard rule.
+MDT's Variable condition passes the variable's value to `PathMatchSpecW` as `pszFile` and the expanded Value as `pszSpec`. It stores the return value as the result (`TsCore!0x1801aa078`, `TsCore!0x1801aa07e`, see [Conditions](mdt-8450-binaries.md#conditions) in the MDT 8450 binaries reference). MDT checks for an empty Value only before the six comparisons, so Like reaches this call with an empty pattern. This section records what `PathMatchSpecW` in this image returns when the pattern is empty as a whole, and when one part between `;` characters is empty. The other wildcard rules are in [PathMatchSpecW wildcard rules](#pathmatchspecw-wildcard-rules).
 
 The image checked is the `winpe.wim` in [Sources](#sources), version 10.0.26100.1. Other Windows builds were not checked, and neither was a full Windows install.
 
@@ -397,3 +416,4 @@ The MDT column follows the steps above. The deployarr column is what `like` in `
 
     `Registry` `Like` calls the same `like` (`difference_registry_like_matches_wildcards`), so either choice reaches it too.
 19. The test `mdt_var_like_matches_star_and_question_mark` in `crates/deployarr-core/tests/conditions.rs` holds the case `("", "?", false)` as MDT's result. By [The end of the text](#the-end-of-the-text), MDT gives TRUE for empty text and the pattern `?`. With the owner's choice for item 17, either change the case to `true`, or move it to a `difference_` test.
+20. [Conditions](../architecture.md#conditions) names the step for double-byte code pages as a case where `Like` departs from MDT. It says that `PathMatchSpecW` requires the marked unit and the next one to match exactly, in the same letter case. Add that when the marked unit is the last unit of the pattern part, and the text unit that matched it is the last unit of the text, `PathMatchSpecW` steps past both terminators and reads on, so MDT's result is not recorded. Cite [A step for double-byte code pages](#a-step-for-double-byte-code-pages). `like` in `crates/deployarr-core/src/evaluate.rs` needs no change. deployarr has no such step, and this page records no MDT result for it to follow.
